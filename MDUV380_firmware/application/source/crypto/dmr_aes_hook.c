@@ -2,6 +2,7 @@
 #ifdef ENABLE_AES
 #include "crypto/dmr_aes.h"
 #include "functions/codeplug.h"
+#include "functions/settings.h"   /* currentChannelData, for the per-channel RX detect gate below */
 #include "hardware/SPI_Flash.h"
 #include <stddef.h>
 #include <string.h>
@@ -75,6 +76,9 @@ static uint8_t       s_rxKeyId DMR_AES_CCM;      /* keyId of the last successful
 static int           s_rxPiSeeded DMR_AES_CCM;   /* 1 = call seeded from the chip PI-LC (use pure self-advance,
                                                   * stable & RF-independent); 0 = late-entry-bootstrapped rapid call
                                                   * (adopt diverging late entries so a wrong bootstrap self-corrects) */
+static uint32_t      s_rxPendMi DMR_AES_CCM;     /* unconfirmed PI candidate seen while idle (see dmrAesRxPI) */
+static uint8_t       s_rxPendKeyId DMR_AES_CCM;
+static uint8_t       s_rxPendValid DMR_AES_CCM;  /* 1 = s_rxPendMi/s_rxPendKeyId hold a candidate awaiting confirmation */
 
 /* Shared scratch for the (non-reentrant, foreground-only) key-store helpers. One
  * buffer instead of three per-function statics keeps CCM usage down. */
@@ -252,6 +256,9 @@ void dmrAesInit(void)
     memset(s_rxFrag, 0, sizeof s_rxFrag);
     s_rxKeyId = 0;
     s_rxPiSeeded = 0;
+    s_rxPendMi = 0;
+    s_rxPendKeyId = 0;
+    s_rxPendValid = 0;
     s_txPiMi = 0;
     s_txKeyId = 0;
     s_txFrameCnt = 0;
@@ -446,6 +453,30 @@ uint16_t dmrAesGetKeyMask(void)
     return mask;
 }
 
+/* RX detect gate: skip AES recognition entirely on a channel the user has explicitly
+ * set to "Encrypt TX: Off" in Channel Details (CodeplugChannel_t.encrypt == 0xFF) -
+ * the exact same per-channel byte hrc6000ResolveAesTxKeyId() already honours for TX.
+ * "Off" is a deliberate "this channel is clear-voice-only" declaration, so RX takes it
+ * at its word and does not even attempt to recognise a PI header or a late-entry MI
+ * there. That removes any possibility of a false CRC/Golay accept mis-tagging clear
+ * voice as encrypted on that channel (see dmrAesRxPI / dmrAesRxBurst below).
+ * Trade-off: genuinely encrypted traffic heard on a channel marked Off will no longer
+ * auto-decrypt - if a channel might legitimately carry encrypted calls, leave it on
+ * Inherit or a specific key instead of Off.
+ * Same CHANNEL_FLAG_OPTIONAL_DMRID guard as the TX resolver: on such a channel the
+ * encrypt byte is repurposed to hold the per-channel DMR ID, so 0xFF there is a DMR-ID
+ * byte, not "Off". */
+static int rxChannelAllowsAesDetect(void)
+{
+    if ((currentChannelData != NULL) &&
+        (codeplugChannelGetFlag(currentChannelData, CHANNEL_FLAG_OPTIONAL_DMRID) == 0) &&
+        (currentChannelData->encrypt == 0xFF))
+    {
+        return 0;
+    }
+    return 1;
+}
+
 /* ---- RX --------------------------------------------------------------------
  * The OFB keystream is applied to the 49 DECODED AMBE voice bits (in codecDecode),
  * not the 27 raw FEC octets — validated against DSD-FME (ground truth) on 690 frames.
@@ -460,6 +491,7 @@ void dmrAesRxPI(const uint8_t *pi, int len)
 #ifdef DMR_AES_DIAG_RX
     s_rxdMisc[0]++;   /* every CRC-valid LC handed to dmrAesRxPI (a seed/parse opportunity) */
 #endif
+    if (!s_rxActive && !rxChannelAllowsAesDetect()) { return; }  /* channel marked Off: never (re)seed here */
     if (dmr_pi_parse(pi, (size_t)len, &p) && p.valid)
     {
         /* Seed only when NOT already active. The per-superframe MI is now driven by the
@@ -474,17 +506,46 @@ void dmrAesRxPI(const uint8_t *pi, int len)
 #endif
         if (!s_rxActive)
         {
-            s_rxActive = (dmr_aes_rx_init(&s_rx, &p) == 0);  /* load key for keyId + seed MI */
-            if (s_rxActive)
+            /* Require the SAME (keyId, MI) on two consecutive CRC-valid LCs before trusting
+             * it enough to start decrypting. dmrAesRxPI is fed EVERY CRC-valid LC the chip
+             * reads (voice LC header, terminator LC, embedded talker-alias/GPS fragments -
+             * see hrc6000HandleLCData), and dmr_pi_parse only checks 2 signature bytes plus
+             * a key_id-in-loaded-slots match. On a weak/noisy signal a bit-damaged LC can
+             * still pass the chip's (short) CRC and, rarely, land on those few bytes by
+             * chance - which used to activate decryption instantly and XOR a keystream onto
+             * otherwise CLEAR voice for the rest of the reception (the "sounds encrypted and
+             * won't decode" reports on genuinely unencrypted traffic).
+             *
+             * A genuine PI header is re-surfaced by the chip on the very next LC read while
+             * a real encrypted call is starting (see the late-entry comment below: "the chip
+             * re-surfaces the same PI-LC every burst mid-call"), so a real call always
+             * reconfirms within one more LC cycle - one extra burst, tens of ms, inaudible.
+             * A one-off CRC false-accept on random bit damage essentially never reproduces
+             * the exact same keyId+MI on the following read, so it is rejected here instead
+             * of being trusted on a single sighting. This does not touch the late-entry
+             * bootstrap path below (dmrAesRxBurst), which already has its own self-correcting
+             * logic for rapid re-PTT calls the chip never surfaces a PI-LC for. */
+            if (s_rxPendValid && s_rxPendKeyId == p.key_id && s_rxPendMi == p.mi)
             {
-                s_rxInitMi = p.mi;
-                s_rxKeyId = p.key_id;  /* remember for late-entry bootstrap of a later rapid call */
-                s_rxPiSeeded = 1;      /* chip PI-LC seed: a normal call -> pure self-advance, stable */
-                s_rxIvReady = 0;     /* generate IV from the seeded MI on the next burst */
-                s_rxLastSeq = -1;
+                s_rxActive = (dmr_aes_rx_init(&s_rx, &p) == 0);  /* load key for keyId + seed MI */
+                if (s_rxActive)
+                {
+                    s_rxInitMi = p.mi;
+                    s_rxKeyId = p.key_id;  /* remember for late-entry bootstrap of a later rapid call */
+                    s_rxPiSeeded = 1;      /* chip PI-LC seed: a normal call -> pure self-advance, stable */
+                    s_rxIvReady = 0;     /* generate IV from the seeded MI on the next burst */
+                    s_rxLastSeq = -1;
 #ifdef DMR_AES_DIAG_RX
-                seeded = 1;
+                    seeded = 1;
 #endif
+                }
+                s_rxPendValid = 0;   /* candidate consumed either way */
+            }
+            else
+            {
+                s_rxPendKeyId = p.key_id;
+                s_rxPendMi = p.mi;
+                s_rxPendValid = 1;    /* awaiting confirmation on the next CRC-valid LC */
             }
         }
 #ifdef DMR_AES_DIAG_RX
@@ -559,9 +620,13 @@ void dmrAesRxBurst(int seq)
         {
             /* BOOTSTRAP a rapid call: only a DIVERGING late entry marks a genuinely new call,
              * not the previous call's residual stream the chip may still be feeding. Reuse the
-             * last call's keyId (rapid calls share the channel/key); fall back to any loaded key. */
+             * last call's keyId (rapid calls share the channel/key); fall back to any loaded key.
+             * Gated by rxChannelAllowsAesDetect(): this path runs every superframe (~360 ms) for
+             * ANY reception on ANY channel, encrypted or not, reading straight off the raw AMBE
+             * bits - the single biggest exposure window for a Golay+CRC4 false accept on a weak/
+             * noisy signal. A channel marked "Off" never attempts it, matching dmrAesRxPI above. */
             int act = 0;
-            if (diverge)
+            if (diverge && rxChannelAllowsAesDetect())
             {
                 dmr_pi_t p;
                 p.alg_id = DMR_ALG_AES256; p.mfid = DMR_MFID_DMRA;
@@ -627,7 +692,10 @@ void dmrAesRxCodecFrame(uint16_t *b49, int idxInBurst)
     if (!s_rxActive || !s_rxBurstEnc) { return; }
     dmr_aes_voice_frame(&s_rx, b49, s_rxBurstBase + (size_t)idxInBurst * 56);
 }
-void dmrAesRxEnd(void) { s_rxActive = 0; s_rxBurstEnc = 0; }
+void dmrAesRxEnd(void) { s_rxActive = 0; s_rxBurstEnc = 0; s_rxPendValid = 0; }
+/* 1 while the current call is being decrypted (mirrors s_txActive/dmrAesTxActive).
+ * UI-only: menuAESKeys/uiUtilities poll this to show a live "call is encrypted" cue. */
+int dmrAesRxActive(void) { return s_rxActive; }
 
 /* ---- TX (mirror of RX: encrypt the 49 AMBE params at the codec layer) ---- */
 void dmrAesTxStart(uint8_t keyId, uint32_t miSeed)
