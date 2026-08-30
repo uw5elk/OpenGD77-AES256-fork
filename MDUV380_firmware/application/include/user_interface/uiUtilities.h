@@ -202,6 +202,10 @@ uint32_t dmrIDCacheGetCount(void);
 bool dmrIDLookup(uint32_t targetId, dmrIdDataStruct_t *foundRecord);
 bool contactIDLookup(uint32_t id, ContactCalltype_t calltype, char *buffer);
 void uiUtilityRenderQSOData(void);
+#if defined(ENABLE_AES)
+int uiChannelHasAesEnabled(void);   /* 1 if the SELECTED channel resolves to a TX key (see uiUtilities.c) */
+void uiDrawAesEnabledIcon(void);    /* draws the padlock cue iff uiChannelHasAesEnabled() (see uiUtilities.c) */
+#endif
 void uiUtilityRenderHeader(bool isVFODualWatchScanning, bool isVFOSweepScanning, bool forceBatteryDisplay);
 void uiUtilityRedrawHeaderOnly(bool isVFODualWatchScanning, bool isVFOSweepScanning, bool forceBatteryDisplay);
 LinkItem_t *lastHeardFindInList(uint32_t id);

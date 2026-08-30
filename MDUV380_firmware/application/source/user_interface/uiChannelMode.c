@@ -1062,6 +1062,13 @@ void uiChannelModeUpdateScreen(int txTimeSecs)
 				}
 			}
 
+#if defined(ENABLE_AES)
+			// Persistent "this channel is set up for encryption" cue on the idle screen
+			// (this case runs on every idle redraw, live-talker or not -- unlike
+			// uiUtilityRenderQSOData(), which only draws during an active/last-heard call).
+			uiDrawAesEnabledIcon();
+#endif
+
 			displayRender();
 			break;
 

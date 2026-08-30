@@ -38,6 +38,74 @@
 #include "functions/trx.h"
 #include "functions/rxPowerSaving.h"
 #include "functions/dmr_sms.h"
+#include "crypto/dmr_aes_hook.h"
+
+#if defined(ENABLE_AES)
+// True while the CURRENTLY SELECTED channel is configured to encrypt (mirrors the TX key
+// resolution hrc6000ResolveAesTxKeyId() does in HR-C6000.c, without needing to export it):
+//   channel encrypt byte 0xFF        -> forced clear, no icon
+//   channel encrypt byte 1..15       -> that specific key, icon shown
+//   channel encrypt byte 0 (Inherit) -> icon shown iff the global TX key selector is set
+// Not evaluated on a CHANNEL_FLAG_OPTIONAL_DMRID channel (encrypt byte repurposed as DMR ID).
+int uiChannelHasAesEnabled(void)
+{
+	uint8_t keyId = dmrAesTxKeyId();
+
+	if ((currentChannelData != NULL) &&
+		(codeplugChannelGetFlag(currentChannelData, CHANNEL_FLAG_OPTIONAL_DMRID) == 0))
+	{
+		uint8_t chEnc = currentChannelData->encrypt;
+
+		if (chEnc == 0xFF)
+		{
+			keyId = 0;
+		}
+		else if (chEnc != 0)
+		{
+			keyId = chEnc;
+		}
+	}
+
+	return (keyId != 0);
+}
+
+// 10x9 padlock, XBM format (LSB-first, 2 bytes/row). Bold two-part silhouette: a plain
+// hollow arch (shackle) sitting on a fully solid rectangle (body). The previous design's
+// keyhole notch and 2px-thick shackle legs were too fine-grained to survive the LCD's
+// subpixel color fringing / camera blur at this size -- at a glance it read as an "8" or a
+// blob, not a lock. Dropping the keyhole and widening the body to the full icon width gives
+// two unambiguous, high-contrast blocks (open loop on top, filled block below), which is the
+// same simplification used by most tiny status-bar "secure/locked" glyphs.
+static const uint8_t uiAesPadlockBitmap[] = {
+	0x78, 0x00,
+	0x84, 0x00,
+	0x84, 0x00,
+	0xFF, 0x03,
+	0xFF, 0x03,
+	0xFF, 0x03,
+	0xFF, 0x03,
+	0xFF, 0x03,
+	0xFF, 0x03
+};
+#define UI_AES_PADLOCK_W 10
+#define UI_AES_PADLOCK_H 9
+
+// Single draw call shared by all three "is this channel/call encrypted" render sites
+// (uiUtilityRenderQSOData below, plus the idle screens in uiChannelMode.c / uiVFOMode.c) --
+// one place to nudge position/size instead of three.
+// Y=14: the RSSI/S-meter bar (uiUtilityDrawRSSIBarGraph) fills the FULL WIDTH of y=10..13
+// on every periodic idle refresh (every ~200 ticks, not just on a full screen redraw), which
+// was silently erasing the icon's top rows (the shackle) each time -- the body below survived
+// because that refresh never touches y>=14. Starting at y=14 sits entirely below that band,
+// and 9px tall ends at y=22, one clear pixel above DISPLAY_Y_POS_CONTACT (24).
+void uiDrawAesEnabledIcon(void)
+{
+	if (uiChannelHasAesEnabled())
+	{
+		displayDrawXBitmap(DISPLAY_SIZE_X - UI_AES_PADLOCK_W - 3, 14, uiAesPadlockBitmap, UI_AES_PADLOCK_W, UI_AES_PADLOCK_H, true);
+	}
+}
+#endif
 #if defined(PLATFORM_MD9600) || defined(PLATFORM_MD380) || defined(PLATFORM_MDUV380) || defined(PLATFORM_RT84_DM1701) || defined(PLATFORM_MD2017)
 #include "interfaces/batteryAndPowerManagement.h"
 #include "hardware/radioHardwareInterface.h"
@@ -1849,6 +1917,10 @@ void uiUtilityRenderQSOData(void)
 			}
 		}
 	}
+
+#if defined(ENABLE_AES)
+	uiDrawAesEnabledIcon();
+#endif
 
 	displayThemeResetToDefault();
 }
