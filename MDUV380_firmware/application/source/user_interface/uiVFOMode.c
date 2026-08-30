@@ -1109,9 +1109,10 @@ void uiVFOModeUpdateScreen(int txTimeSecs)
 				}
 			}
 #if defined(ENABLE_AES)
-			// Persistent "this channel is set up for encryption" cue on the idle screen
-			// (this case runs on every idle redraw, live-talker or not -- unlike
-			// uiUtilityRenderQSOData(), which only draws during an active/last-heard call).
+			// Постійна позначка "цей канал налаштовано на шифрування" на екрані очікування
+			// (цей case виконується на кожному оновленні екрана очікування, незалежно від
+			// активного співрозмовника -- на відміну від uiUtilityRenderQSOData(), яка малює
+			// лише під час активного виклику або останнього почутого).
 			uiDrawAesEnabledIcon();
 #endif
 
