@@ -1,80 +1,86 @@
 # OpenGD77-AES256 (TYT MD-UV390 Plus, 10W)
 
-An experimental fork of [OpenGD77](https://opengd77.com) for the **TYT MD-UV390 Plus (10W)** that adds
-**TYT-compatible DMRA AES-256 encrypted voice** — interoperable with the stock TYT "Universal" AES256
-firmware. Stock OpenGD77 has no encryption; this is a reverse-engineering / interop project, not an
-upstream feature.
+Експериментальний форк [OpenGD77](https://opengd77.com) для **TYT MD-UV390 Plus (10W)**, який додає
+**сумісне з TYT DMRA AES-256 шифрування голосу** — сумісне зі стоковою прошивкою TYT "Universal" AES256.
+У стоковому OpenGD77 шифрування немає; це проєкт реверс-інжинірингу/сумісності, а не офіційна
+можливість апстріму.
 
-It is built on the official OpenGD77 source release **R20260131**, target `MDUV380_10W_PLUS_FW`
-(`PLATFORM_MDUV380` + `PLATFORM_VARIANT_UV380_PLUS_10W`). All the normal OpenGD77 functionality
-(DMR/FM transmit + receive, hotspot, etc.) is unchanged — the AES code is compiled in behind
-`ENABLE_AES`, and the default `make` build is byte-for-byte stock OpenGD77.
+Побудовано на офіційному релізі вихідного коду OpenGD77 **R20260131**, ціль `MDUV380_10W_PLUS_FW`
+(`PLATFORM_MDUV380` + `PLATFORM_VARIANT_UV380_PLUS_10W`). Уся звичайна функціональність OpenGD77
+(прийом/передача DMR/FM, hotspot тощо) не змінена — код AES компілюється лише за умови
+`ENABLE_AES`, а типова збірка `make` побайтово ідентична стоковому OpenGD77.
 
-## ⚠️ Legal
+## ⚠️ Юридичний аспект
 
-AES-256 encrypted voice is **illegal on amateur radio bands in most countries**; it is only valid on
-licensed commercial / PMR allocations. Use this only where you are licensed to transmit encrypted
-voice. The source and binaries are also **non-commercial use only** — see [`license.txt`](license.txt).
+Зашифрований голос AES-256 **заборонений на аматорських діапазонах у більшості країн**; він
+законний лише на ліцензованих комерційних/PMR-частотах. Використовуй це лише там, де маєш
+ліцензію на передачу зашифрованого голосу. Вихідний код і бінарники теж **лише для
+некомерційного використання** — див. [`license.txt`](license.txt).
 
-## What it adds
+## Що додано
 
-Implements the standardized **DMR Association AES-256** scheme (Motorola/Hytera-compatible, ETSI TS
-102 361) that the MD-UV390 Plus "Universal" mode uses, so this firmware and a stock TYT radio can
-encrypt/decrypt each other:
+Реалізує стандартизовану схему **DMR Association AES-256** (сумісну з Motorola/Hytera, ETSI TS
+102 361), яку використовує режим "Universal" MD-UV390 Plus, тому ця прошивка й стокова рація TYT
+можуть шифрувати/розшифровувати одна одну:
 
-- **AES-256 in OFB mode**, the keystream XORed onto the decoded 49-bit AMBE voice parameters.
-- A 32-bit **Message Indicator (MI)** carried in the PI header, expanded to a 128-bit IV by an LFSR
-  (`dmr_lfsr128d`) and advanced one step per superframe.
-- The MI also conveyed **in-band in the AMBE codeword bits** (Late-Entry MI, Golay(24,12)+CRC4), with
-  the call announced over the air via the encrypted-call LC (FID `0x10` / SO `0x40`) and the burst-F
-  EMB **Late-Entry Single Block** (alg/key).
+- **AES-256 у режимі OFB**, потік ключа накладається (XOR) на декодовані 49-бітові параметри
+  голосу AMBE.
+- 32-бітовий **Message Indicator (MI)**, що передається в заголовку PI, розширюється до
+  128-бітового IV через LFSR (`dmr_lfsr128d`) і просувається на один крок кожен суперфрейм.
+- MI також передається **всередині бітів кодового слова AMBE** (Late-Entry MI, Golay(24,12)+CRC4),
+  а виклик анонсується в ефірі через LC зашифрованого виклику (FID `0x10` / SO `0x40`) і
+  **Late-Entry Single Block** з EMB burst-F (алгоритм/ключ).
 
-### Status — working on hardware
+### Статус — працює на залізі
 
-Validated on real MD-UV390 10W Plus radios, cross-checked with HackRF captures + DSD-FME.
+Перевірено на реальних раціях MD-UV390 10W Plus, звірено із захопленнями HackRF + DSD-FME.
 
-- **TX:** a bone-stock TYT MD-UV390 decodes this firmware's encrypted transmissions to clear voice —
-  full interoperable signalling (keystream + Late-Entry MI + encrypted-call LC + EMB Single Block +
-  PI-Header preamble).
-- **RX:** decrypts a stock TYT's AES-256 voice to clear audio, including **rapid back-to-back calls**
-  (the receiver locks the new call's MI directly from the in-band Late-Entry, like a stock receiver).
-- **Keys:** stored persistently in the SPI-flash custom-data region (survive reboots and firmware
-  flashes), loaded via a host tool over the OpenGD77 CPS USB protocol.
+- **TX:** абсолютно стокова TYT MD-UV390 декодує зашифровані передачі цієї прошивки в чистий
+  голос — повна сумісна сигналізація (потік ключа + Late-Entry MI + LC зашифрованого виклику +
+  EMB Single Block + преамбула PI-Header).
+- **RX:** розшифровує AES-256-голос стокової TYT у чистий звук, включно зі **швидкими
+  повторними викликами** (приймач блокується на MI нового виклику прямо з вбудованого
+  Late-Entry, як і стоковий приймач).
+- **Ключі:** зберігаються постійно в області кастомних даних SPI-flash (переживають
+  перезавантаження й перепрошивку), завантажуються через хост-утиліту по USB-протоколу
+  OpenGD77 CPS.
 
-## Build & flash
+## Збірка та прошивка
 
-See **[BUILD.md](BUILD.md)** for the full toolchain, the required AMBE codec donor (MD-9600 V5), and
-DFU flashing. In short:
+Дивись **[BUILD.md](BUILD.md)** — повний тулчейн, потрібний донор кодека AMBE (MD-9600 V5) і
+DFU-прошивка. Коротко:
 
 ```sh
 cd MDUV380_firmware
-make ENABLE_AES=1 -j$(nproc)        # or plain `make` for a stock (no-AES) build
+make ENABLE_AES=1 -j$(nproc)        # або просто `make` для стокової збірки (без AES)
 python3 tools/opengd77_stm32_firmware_loader.py -s <MD9600-V5-donor.bin> \
         -f build/openuv380-10w.bin -m MD-UV380
 ```
 
-DMR needs the proprietary AMBE+2 vocoder, which is **not** present in this (or any OpenGD77)
-source/binary; the loader merges it from an **MD-9600 V5** donor at flash time (see BUILD.md).
-**Do not flash a 5W build to a 10W radio.**
+Для DMR потрібен пропрієтарний вокодер AMBE+2, якого **немає** в цьому (чи будь-якому іншому
+OpenGD77) вихідному коді/бінарнику; завантажувач вбудовує його з донора **MD-9600 V5** під час
+прошивки (див. BUILD.md). **Не прошивай 5W-збірку в 10W-рацію.**
 
-### Optional diagnostics
+### Опційна діагностика
 
-AES decrypt/keystream diagnostics are compiled in behind off-by-default flags (`DMR_AES_DIAG_RX` /
-`DMR_AES_DIAG_PATTERN` / `DMR_AES_DIAG_ENCPAT`) — they add nothing to the default build. Build e.g.
-`make ENABLE_AES=1 DMR_AES_DIAG_RX=1` and read over USB with `tools/rxdiag.py` / `tools/fragcap.py`.
+Діагностика розшифровки/потоку ключа AES компілюється за прапорцями, вимкненими за замовчуванням
+(`DMR_AES_DIAG_RX` / `DMR_AES_DIAG_PATTERN` / `DMR_AES_DIAG_ENCPAT`) — вони нічого не додають до
+типової збірки. Збирай, наприклад, `make ENABLE_AES=1 DMR_AES_DIAG_RX=1` і читай по USB через
+`tools/rxdiag.py` / `tools/fragcap.py`.
 
-## License
+## Ліцензія
 
-This fork inherits the OpenGD77 license — **BSD-3-clause style with a non-commercial clause**. The full
-text is in [`license.txt`](license.txt); commercial use of the source or binaries is forbidden. All
-upstream source files and copyright headers are preserved.
+Цей форк успадковує ліцензію OpenGD77 — **у стилі BSD-3-clause з пунктом про
+некомерційність**. Повний текст у [`license.txt`](license.txt); комерційне використання
+вихідного коду чи бінарників заборонене. Усі файли й заголовки авторських прав апстріму
+збережені.
 
-## Credits
+## Подяки
 
-OpenGD77 was conceived by Kai DG4KLU and developed by Roger Clark VK3KYY, latterly assisted by Daniel
-F1RMB, Alex DL4LEX, Colin G4EML and many others (lead developer / source gatekeeper: Roger VK3KYY) —
-see the upstream project for the full contributor list. This fork only adds the DMRA AES-256 layer on
-top of their work. The DMRA AES scheme reference implementation is
-[DSD-FME](https://github.com/lwvmobile/dsd-fme) by lwvmobile.
+OpenGD77 задумав Kai DG4KLU, розробляв Roger Clark VK3KYY, пізніше долучились Daniel F1RMB,
+Alex DL4LEX, Colin G4EML та багато інших (провідний розробник / хранитель вихідного коду:
+Roger VK3KYY) — повний список учасників дивись у проєкті-апстрімі. Цей форк лише додає шар
+DMRA AES-256 поверх їхньої роботи. Еталонна реалізація схеми DMRA AES —
+[DSD-FME](https://github.com/lwvmobile/dsd-fme) від lwvmobile.
 
-User guide (general OpenGD77 operation): https://github.com/LibreDMR/OpenGD77_UserGuide
+Посібник користувача (загальна робота з OpenGD77): https://github.com/LibreDMR/OpenGD77_UserGuide
