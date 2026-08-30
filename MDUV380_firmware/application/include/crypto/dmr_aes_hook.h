@@ -25,7 +25,7 @@ void dmrAesRxBurst(int seq);                       /* per voice burst (seq 1..6)
 void dmrAesRxLateEntry(int seq, const uint8_t *ambe27); /* read Late-Entry MI bits from a burst */
 void dmrAesRxCodecFrame(uint16_t *b49, int idxInBurst); /* per decoded AMBE frame (idx 0..2) */
 void dmrAesRxEnd(void);
-int  dmrAesRxActive(void);                         /* 1 while the current call is being decrypted (UI indicator) */
+int  dmrAesRxActive(void);                         /* 1, поки триває розшифрування поточного виклику (індикатор UI) */
 /* TX */
 void dmrAesTxStart(uint8_t keyId, uint32_t miSeed);
 int  dmrAesTxBuildPI(uint8_t *piOut7);

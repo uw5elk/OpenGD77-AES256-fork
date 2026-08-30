@@ -2,7 +2,7 @@
 #ifdef ENABLE_AES
 #include "crypto/dmr_aes.h"
 #include "functions/codeplug.h"
-#include "functions/settings.h"   /* currentChannelData, for the per-channel RX detect gate below */
+#include "functions/settings.h"   /* currentChannelData, потрібен для канального гейта RX-детекції нижче */
 #include "hardware/SPI_Flash.h"
 #include <stddef.h>
 #include <string.h>
@@ -76,9 +76,9 @@ static uint8_t       s_rxKeyId DMR_AES_CCM;      /* keyId of the last successful
 static int           s_rxPiSeeded DMR_AES_CCM;   /* 1 = call seeded from the chip PI-LC (use pure self-advance,
                                                   * stable & RF-independent); 0 = late-entry-bootstrapped rapid call
                                                   * (adopt diverging late entries so a wrong bootstrap self-corrects) */
-static uint32_t      s_rxPendMi DMR_AES_CCM;     /* unconfirmed PI candidate seen while idle (see dmrAesRxPI) */
+static uint32_t      s_rxPendMi DMR_AES_CCM;     /* непідтверджений кандидат PI, побачений у режимі очікування (див. dmrAesRxPI) */
 static uint8_t       s_rxPendKeyId DMR_AES_CCM;
-static uint8_t       s_rxPendValid DMR_AES_CCM;  /* 1 = s_rxPendMi/s_rxPendKeyId hold a candidate awaiting confirmation */
+static uint8_t       s_rxPendValid DMR_AES_CCM;  /* 1 = s_rxPendMi/s_rxPendKeyId містять кандидата, що чекає підтвердження */
 
 /* Shared scratch for the (non-reentrant, foreground-only) key-store helpers. One
  * buffer instead of three per-function statics keeps CCM usage down. */
@@ -453,19 +453,20 @@ uint16_t dmrAesGetKeyMask(void)
     return mask;
 }
 
-/* RX detect gate: skip AES recognition entirely on a channel the user has explicitly
- * set to "Encrypt TX: Off" in Channel Details (CodeplugChannel_t.encrypt == 0xFF) -
- * the exact same per-channel byte hrc6000ResolveAesTxKeyId() already honours for TX.
- * "Off" is a deliberate "this channel is clear-voice-only" declaration, so RX takes it
- * at its word and does not even attempt to recognise a PI header or a late-entry MI
- * there. That removes any possibility of a false CRC/Golay accept mis-tagging clear
- * voice as encrypted on that channel (see dmrAesRxPI / dmrAesRxBurst below).
- * Trade-off: genuinely encrypted traffic heard on a channel marked Off will no longer
- * auto-decrypt - if a channel might legitimately carry encrypted calls, leave it on
- * Inherit or a specific key instead of Off.
- * Same CHANNEL_FLAG_OPTIONAL_DMRID guard as the TX resolver: on such a channel the
- * encrypt byte is repurposed to hold the per-channel DMR ID, so 0xFF there is a DMR-ID
- * byte, not "Off". */
+/* Гейт RX-детекції: повністю пропускати розпізнавання AES на каналі, де користувач
+ * явно поставив "Encrypt TX: Off" у Channel Details (CodeplugChannel_t.encrypt == 0xFF) -
+ * той самий канальний байт, який hrc6000ResolveAesTxKeyId() уже враховує для TX.
+ * "Off" - це свідома заява "цей канал лише з чистим голосом", тому RX сприймає це
+ * буквально й навіть не намагається розпізнати заголовок PI чи MI з late entry на
+ * такому каналі. Це прибирає будь-яку можливість, що хибне спрацювання CRC/Golay
+ * помилково позначить чистий голос як зашифрований на цьому каналі (див. dmrAesRxPI /
+ * dmrAesRxBurst нижче).
+ * Компроміс: справді зашифрований трафік, почутий на каналі з позначкою Off, більше не
+ * розшифровуватиметься автоматично - якщо на каналі законно можуть з'являтись
+ * зашифровані виклики, лишай там Inherit або конкретний ключ, а не Off.
+ * Та сама перевірка CHANNEL_FLAG_OPTIONAL_DMRID, що й у TX-резолвері: на такому каналі
+ * байт encrypt переозначений під канальний DMR ID, тому 0xFF там - це байт DMR ID,
+ * а не "Off". */
 static int rxChannelAllowsAesDetect(void)
 {
     if ((currentChannelData != NULL) &&
@@ -491,7 +492,7 @@ void dmrAesRxPI(const uint8_t *pi, int len)
 #ifdef DMR_AES_DIAG_RX
     s_rxdMisc[0]++;   /* every CRC-valid LC handed to dmrAesRxPI (a seed/parse opportunity) */
 #endif
-    if (!s_rxActive && !rxChannelAllowsAesDetect()) { return; }  /* channel marked Off: never (re)seed here */
+    if (!s_rxActive && !rxChannelAllowsAesDetect()) { return; }  /* канал позначено Off: тут ніколи не (пере)ініціалізовуємо */
     if (dmr_pi_parse(pi, (size_t)len, &p) && p.valid)
     {
         /* Seed only when NOT already active. The per-superframe MI is now driven by the
@@ -506,25 +507,27 @@ void dmrAesRxPI(const uint8_t *pi, int len)
 #endif
         if (!s_rxActive)
         {
-            /* Require the SAME (keyId, MI) on two consecutive CRC-valid LCs before trusting
-             * it enough to start decrypting. dmrAesRxPI is fed EVERY CRC-valid LC the chip
-             * reads (voice LC header, terminator LC, embedded talker-alias/GPS fragments -
-             * see hrc6000HandleLCData), and dmr_pi_parse only checks 2 signature bytes plus
-             * a key_id-in-loaded-slots match. On a weak/noisy signal a bit-damaged LC can
-             * still pass the chip's (short) CRC and, rarely, land on those few bytes by
-             * chance - which used to activate decryption instantly and XOR a keystream onto
-             * otherwise CLEAR voice for the rest of the reception (the "sounds encrypted and
-             * won't decode" reports on genuinely unencrypted traffic).
+            /* Вимагаємо ОДНАКОВИЙ (keyId, MI) на двох поспіль CRC-валідних LC, перш ніж
+             * довіряти цьому настільки, щоб почати розшифровку. dmrAesRxPI отримує КОЖЕН
+             * CRC-валідний LC, який читає чип (заголовок voice LC, termination LC, вбудовані
+             * фрагменти talker-alias/GPS - див. hrc6000HandleLCData), а dmr_pi_parse
+             * перевіряє лише 2 сигнатурні байти й збіг key_id із завантаженими слотами.
+             * На слабкому/зашумленому сигналі пошкоджений по бітах LC усе ще може пройти
+             * (короткий) CRC чипа й, зрідка, випадково потрапити саме в ці кілька байтів -
+             * раніше це миттєво вмикало розшифровку й накладало keystream (XOR) на інакше
+             * ЧИСТИЙ голос до кінця прийому (саме про це були повідомлення "хрипить ніби
+             * зашифроване й не декодується" на явно незашифрованому трафіку).
              *
-             * A genuine PI header is re-surfaced by the chip on the very next LC read while
-             * a real encrypted call is starting (see the late-entry comment below: "the chip
-             * re-surfaces the same PI-LC every burst mid-call"), so a real call always
-             * reconfirms within one more LC cycle - one extra burst, tens of ms, inaudible.
-             * A one-off CRC false-accept on random bit damage essentially never reproduces
-             * the exact same keyId+MI on the following read, so it is rejected here instead
-             * of being trusted on a single sighting. This does not touch the late-entry
-             * bootstrap path below (dmrAesRxBurst), which already has its own self-correcting
-             * logic for rapid re-PTT calls the chip never surfaces a PI-LC for. */
+             * Справжній заголовок PI чип повторно видає вже на наступному прочитанні LC,
+             * поки реально зашифрований виклик щойно починається (див. коментар про
+             * late entry нижче: "чип повторно видає той самий PI-LC кожен burst протягом
+             * виклику"), тому справжній виклик завжди підтверджується за ще один цикл LC -
+             * це один додатковий burst, десятки мс, непомітно на слух. Одноразове хибне
+             * спрацювання CRC на випадковому пошкодженні бітів практично ніколи не повторює
+             * той самий keyId+MI на наступному прочитанні, тому тут воно відхиляється, а не
+             * приймається з першого разу. Це не стосується шляху bootstrap із late entry
+             * нижче (dmrAesRxBurst), у якого вже є власна логіка самокорекції для швидких
+             * повторних натискань PTT, для яких чип узагалі не видає PI-LC. */
             if (s_rxPendValid && s_rxPendKeyId == p.key_id && s_rxPendMi == p.mi)
             {
                 s_rxActive = (dmr_aes_rx_init(&s_rx, &p) == 0);  /* load key for keyId + seed MI */
@@ -539,13 +542,13 @@ void dmrAesRxPI(const uint8_t *pi, int len)
                     seeded = 1;
 #endif
                 }
-                s_rxPendValid = 0;   /* candidate consumed either way */
+                s_rxPendValid = 0;   /* кандидата спожито в будь-якому разі */
             }
             else
             {
                 s_rxPendKeyId = p.key_id;
                 s_rxPendMi = p.mi;
-                s_rxPendValid = 1;    /* awaiting confirmation on the next CRC-valid LC */
+                s_rxPendValid = 1;    /* очікує підтвердження на наступному CRC-валідному LC */
             }
         }
 #ifdef DMR_AES_DIAG_RX
@@ -618,13 +621,15 @@ void dmrAesRxBurst(int seq)
 #endif
         if (!s_rxActive)
         {
-            /* BOOTSTRAP a rapid call: only a DIVERGING late entry marks a genuinely new call,
-             * not the previous call's residual stream the chip may still be feeding. Reuse the
-             * last call's keyId (rapid calls share the channel/key); fall back to any loaded key.
-             * Gated by rxChannelAllowsAesDetect(): this path runs every superframe (~360 ms) for
-             * ANY reception on ANY channel, encrypted or not, reading straight off the raw AMBE
-             * bits - the single biggest exposure window for a Golay+CRC4 false accept on a weak/
-             * noisy signal. A channel marked "Off" never attempts it, matching dmrAesRxPI above. */
+            /* BOOTSTRAP швидкого виклику: тільки late entry, що РОЗХОДИТЬСЯ з поточним станом,
+             * позначає справді новий виклик, а не залишковий потік попереднього виклику, який
+             * чип може ще й далі подавати. Повторно використовуємо keyId попереднього виклику
+             * (швидкі виклики зазвичай ділять канал/ключ); інакше - будь-який завантажений ключ.
+             * Гейтиться через rxChannelAllowsAesDetect(): цей шлях виконується кожен суперфрейм
+             * (~360 мс) для БУДЬ-ЯКОГО прийому на БУДЬ-ЯКОМУ каналі, зашифрованому чи ні,
+             * читаючи прямо з сирих бітів AMBE - це найбільше вікно ризику хибного спрацювання
+             * Golay+CRC4 на слабкому/зашумленому сигналі. Канал із позначкою "Off" ніколи цього
+             * не пробує, так само як і dmrAesRxPI вище. */
             int act = 0;
             if (diverge && rxChannelAllowsAesDetect())
             {
@@ -693,8 +698,8 @@ void dmrAesRxCodecFrame(uint16_t *b49, int idxInBurst)
     dmr_aes_voice_frame(&s_rx, b49, s_rxBurstBase + (size_t)idxInBurst * 56);
 }
 void dmrAesRxEnd(void) { s_rxActive = 0; s_rxBurstEnc = 0; s_rxPendValid = 0; }
-/* 1 while the current call is being decrypted (mirrors s_txActive/dmrAesTxActive).
- * UI-only: menuAESKeys/uiUtilities poll this to show a live "call is encrypted" cue. */
+/* 1, поки триває розшифрування поточного виклику (дзеркально до s_txActive/dmrAesTxActive).
+ * Лише для UI: menuAESKeys/uiUtilities опитують це, щоб показати живу позначку "виклик зашифровано". */
 int dmrAesRxActive(void) { return s_rxActive; }
 
 /* ---- TX (mirror of RX: encrypt the 49 AMBE params at the codec layer) ---- */

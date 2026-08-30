@@ -41,12 +41,12 @@
 #include "crypto/dmr_aes_hook.h"
 
 #if defined(ENABLE_AES)
-// True while the CURRENTLY SELECTED channel is configured to encrypt (mirrors the TX key
-// resolution hrc6000ResolveAesTxKeyId() does in HR-C6000.c, without needing to export it):
-//   channel encrypt byte 0xFF        -> forced clear, no icon
-//   channel encrypt byte 1..15       -> that specific key, icon shown
-//   channel encrypt byte 0 (Inherit) -> icon shown iff the global TX key selector is set
-// Not evaluated on a CHANNEL_FLAG_OPTIONAL_DMRID channel (encrypt byte repurposed as DMR ID).
+// Істина, поки ПОТОЧНИЙ ВИБРАНИЙ канал налаштований на шифрування (дублює логіку
+// hrc6000ResolveAesTxKeyId() з HR-C6000.c для TX-ключа, без потреби її експортувати):
+//   байт encrypt каналу 0xFF        -> примусово чисто, іконки нема
+//   байт encrypt каналу 1..15       -> конкретний ключ, іконка показується
+//   байт encrypt каналу 0 (Inherit) -> іконка показується, лише якщо встановлено глобальний TX-ключ
+// Не враховується на каналі з CHANNEL_FLAG_OPTIONAL_DMRID (байт encrypt переозначений під DMR ID).
 int uiChannelHasAesEnabled(void)
 {
 	uint8_t keyId = dmrAesTxKeyId();
@@ -69,13 +69,14 @@ int uiChannelHasAesEnabled(void)
 	return (keyId != 0);
 }
 
-// 10x9 padlock, XBM format (LSB-first, 2 bytes/row). Bold two-part silhouette: a plain
-// hollow arch (shackle) sitting on a fully solid rectangle (body). The previous design's
-// keyhole notch and 2px-thick shackle legs were too fine-grained to survive the LCD's
-// subpixel color fringing / camera blur at this size -- at a glance it read as an "8" or a
-// blob, not a lock. Dropping the keyhole and widening the body to the full icon width gives
-// two unambiguous, high-contrast blocks (open loop on top, filled block below), which is the
-// same simplification used by most tiny status-bar "secure/locked" glyphs.
+// Замок 10x9, формат XBM (LSB-first, 2 байти на рядок). Жирний двочастинний силует: проста
+// порожня дужка (shackle) на суцільному прямокутнику (тіло). Попередній варіант з виїмкою
+// під ключ і 2px-ніжками дужки був занадто дрібним, щоб пережити субпіксельне забарвлення
+// цього кольорового LCD й розмиття від фотографування -- на око читався як "8" або пляма,
+// а не замок. Прибравши виїмку й розширивши тіло на всю ширину іконки, отримуємо два
+// однозначні контрастні блоки (відкрита петля зверху, суцільний блок знизу) -- те саме
+// спрощення, яке використовують більшість крихітних піктограм "захищено/заблоковано"
+// у статус-барах.
 static const uint8_t uiAesPadlockBitmap[] = {
 	0x78, 0x00,
 	0x84, 0x00,
@@ -90,14 +91,15 @@ static const uint8_t uiAesPadlockBitmap[] = {
 #define UI_AES_PADLOCK_W 10
 #define UI_AES_PADLOCK_H 9
 
-// Single draw call shared by all three "is this channel/call encrypted" render sites
-// (uiUtilityRenderQSOData below, plus the idle screens in uiChannelMode.c / uiVFOMode.c) --
-// one place to nudge position/size instead of three.
-// Y=14: the RSSI/S-meter bar (uiUtilityDrawRSSIBarGraph) fills the FULL WIDTH of y=10..13
-// on every periodic idle refresh (every ~200 ticks, not just on a full screen redraw), which
-// was silently erasing the icon's top rows (the shackle) each time -- the body below survived
-// because that refresh never touches y>=14. Starting at y=14 sits entirely below that band,
-// and 9px tall ends at y=22, one clear pixel above DISPLAY_Y_POS_CONTACT (24).
+// Єдиний виклик малювання, спільний для всіх трьох місць, де перевіряється "чи цей
+// канал/виклик зашифровано" (uiUtilityRenderQSOData нижче, плюс екрани очікування в
+// uiChannelMode.c / uiVFOMode.c) -- одне місце, де підправити позицію/розмір замість трьох.
+// Y=14: смуга RSSI/S-метра (uiUtilityDrawRSSIBarGraph) заповнює ПОВНУ ШИРИНУ y=10..13 на
+// кожному періодичному оновленні екрана очікування (кожні ~200 тіків, а не лише при повній
+// перемальовці екрана), що непомітно стирало верхні рядки іконки (дужку) щоразу -- тіло
+// знизу виживало, бо це оновлення ніколи не чіпає y>=14. Початок з y=14 лежить повністю
+// нижче цієї смуги, а 9px висоти закінчуються на y=22 -- на один чистий піксель вище за
+// DISPLAY_Y_POS_CONTACT (24).
 void uiDrawAesEnabledIcon(void)
 {
 	if (uiChannelHasAesEnabled())
