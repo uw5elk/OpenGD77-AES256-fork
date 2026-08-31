@@ -39,6 +39,7 @@
 #include "functions/rxPowerSaving.h"
 #include "functions/dmr_sms.h"
 #include "crypto/dmr_aes_hook.h"
+#include "crypto/dmr_aes.h"   // DMR_AES_MAX_KEYS (межа діапазону слота ключа на каналі)
 
 #if defined(ENABLE_AES)
 // Істина, поки ПОТОЧНИЙ ВИБРАНИЙ канал налаштований на шифрування (дублює логіку
@@ -60,7 +61,7 @@ int uiChannelHasAesEnabled(void)
 		{
 			keyId = 0;
 		}
-		else if (chEnc != 0)
+		else if ((chEnc >= 1) && (chEnc < DMR_AES_MAX_KEYS))
 		{
 			keyId = chEnc;
 		}
