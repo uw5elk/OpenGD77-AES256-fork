@@ -37,7 +37,13 @@ import re
 import subprocess
 import sys
 
-_FW_DIR = "~/repo/MDUV380_firmware"
+# FW_DIR override: цей шлях жорстко припускав, що клон лежить саме в теці "repo" -- у
+# будь-кого, хто клонував під іншою назвою (напр. "OpenGD77-AES256"), --stamp падав з
+# "No such file or directory". Той самий bash -lc виконує це і на Linux/WSL, і коли сам
+# fwsym.py запущений з нативного Windows python (див. _run) -- тому це завжди POSIX-шлях
+# усередині WSL, а не шлях __file__ цього файлу (який на Windows міг би вказувати на
+# копію tools/ деінде, напр. C:\flash\tools).
+_FW_DIR = os.environ.get("FW_DIR", "~/repo/MDUV380_firmware")
 _BUILT_ELF = _FW_DIR + "/build/openuv380-10w.elf"
 # Deliberately NOT under build/: `make clean` is `rm -rf $(BUILD)`, so a stamp kept there
 # is destroyed by the very stock-build-and-clean cycle it exists to survive. (*.elf is
