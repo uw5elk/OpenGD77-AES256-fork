@@ -995,7 +995,13 @@ static inline void hrc6000SysReceivedDataInt(void)
 	hrc.rxCRCisValid = (((reg_0x51 >> 2) & 0x01) == 0);// CRC is OK if its 0
 	rxPrivacyIndicator = (reg_0x51 >> 3) & 0x01;
 	#ifdef ENABLE_AES
-	rxPrivacyIndicator = 0; // AES build: route encrypted voice to decrypt instead of dropping
+	if (dmr_aes_first_keyid() >= 0)
+	{
+		// AES-збірка: пропускаємо в розшифровку, а не скидаємо, але лише якщо реально
+		// завантажено хоч один ключ - інакше ця рація однаково нічого не розшифрує,
+		// тож немає сенсу послаблювати захист від сміттєвого/чужого приватного сигналу.
+		rxPrivacyIndicator = 0;
+	}
 	#endif
 
 	if (SPI0ReadPageRegByte(0x04, 0x5f, &reg_0x5F) != kStatus_Success)
@@ -2437,6 +2443,12 @@ static uint32_t hrc6000AesRngSeed(void)
 	RNG->CR |= RNG_CR_RNGEN;
 	for (int i = 0; i < 64; i++)
 	{
+		if (RNG->SR & (RNG_SR_CEIS | RNG_SR_SEIS))
+		{
+			// Апаратна помилка тактування/насіння RNG (errata-класу) - подальше очікування
+			// DRDY безглузде, одразу переходимо на резервне джерело нижче.
+			break;
+		}
 		if (RNG->SR & RNG_SR_DRDY)
 		{
 			return RNG->DR;

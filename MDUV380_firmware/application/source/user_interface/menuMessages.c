@@ -536,7 +536,6 @@ static void resultUpdate(void)
 		switch (s_msg.result)
 		{
 			case -2: why = "TX busy";   break;
-			case -3: why = "no key";    break;
 			case -1: why = "bad text";  break;
 			case -4: case -5: why = "too long"; break;
 		}

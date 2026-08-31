@@ -184,7 +184,14 @@ size_t dmr_aes_crypt_frame(dmr_aes_ctx_t *c, uint8_t *voice, size_t n, size_t oc
      * (e.g. a missed superframe reset) — a wrong assumption must not corrupt the stack. */
     for (size_t i=0; i<n; ++i) {
         size_t idx = DMR_AES_KS_DISCARD + octet_off + i;
-        if (idx < sizeof(ks)) { voice[i] ^= ks[idx]; }
+        if (idx < sizeof(ks)) {
+            voice[i] ^= ks[idx];
+        } else {
+            /* FAIL CLOSED (дзеркалить dmr_aes_voice_frame()): якщо колись цю октетну
+             * функцію підключать до реального TX-шляху, не можна тихо лишати хвіст без
+             * XOR - це витік відкритого тексту. М'ютимо байт замість цього. */
+            voice[i] = 0;
+        }
     }
     return octet_off + n;
 }
