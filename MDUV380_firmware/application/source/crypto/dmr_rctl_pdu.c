@@ -1,5 +1,5 @@
 /* dmr_rctl_pdu.c — see dmr_rctl_pdu.h for the design/trust-model notes. */
-#include "dmr_rctl_pdu.h"
+#include "crypto/dmr_rctl_pdu.h"
 #include <string.h>
 
 #define RCTL_MAGIC0 ((uint8_t)'R')
