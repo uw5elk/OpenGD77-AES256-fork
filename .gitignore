@@ -1,1 +1,3 @@
 MDUV380_firmware/build/
+MDUV380_firmware/.flashed.elf
+MDUV380_firmware/application/source/linkerdata/codec_bin_section_1.bin
