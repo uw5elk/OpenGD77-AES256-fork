@@ -1,10 +1,1 @@
 MDUV380_firmware/build/
-*.o
-*.d
-*.map
-*.elf
-*.bin
-*.hex
-arm-tc/
-*.tar.xz
-__pycache__/
