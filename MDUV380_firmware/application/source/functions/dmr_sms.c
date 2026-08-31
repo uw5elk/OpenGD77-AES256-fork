@@ -20,6 +20,7 @@
 #include "crypto/dmr_aes.h"
 #include "crypto/dmr_aes_hook.h"
 #include "user_interface/menuSystem.h"   /* uiNotificationShow + NOTIFICATION_* */
+#include "functions/sound.h"             /* soundSetMelody: audible RX alert */
 #include <string.h>
 
 /* ETSI slot data types as reported in HR-C6000 reg 0x51 [7:4]. */
@@ -900,10 +901,12 @@ void dmrSmsRxTick(void)
 	store_add(DMR_SMS_FLAG_UNREAD | (group ? DMR_SMS_FLAG_GROUP : 0), peer, text, got);
 	s_diagMsg++;
 
-	/* notify the user */
+	/* notify the user: visual banner (existing) + audible alert (new — раніше цей шлях був
+	 * німим, і вхідне SMS можна було пропустити, якщо не дивитись на екран саме в цю мить). */
 	char note[DMR_SMS_TEXT_MAX + 12];
 	snprintf(note, sizeof note, "SMS: %s", text);
 	uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 4000, note, true);
+	soundSetMelody(MELODY_SMS_RECEIVED_BEEP);
 }
 
 /* Clear all CCM runtime state to known values (see the forward decl up top). */

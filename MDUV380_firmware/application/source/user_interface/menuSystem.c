@@ -665,6 +665,11 @@ const menuItemNewData_t mainMenuItems[] =
 #if defined(HAS_GPS)
 	{ 195, MENU_GPS		        },
 #endif
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+	// Раніше лежало в Options - перенесено в головне меню як самостійну функцію, а не
+	// налаштування (2026-08-31). stringOffset обчислюється, як і для aes_keys нижче.
+	{ (int)(offsetof(stringsTable_t, messages) / LANGUAGE_TEXTS_LENGTH), MENU_MESSAGES },
+#endif
 };
 
 const menuItemsList_t menuDataMainMenu =
@@ -704,9 +709,8 @@ static const menuItemNewData_t optionsMenuItems[] =
 	// stringOffset = the ordinal of stringsTable_t.aes_keys (computed, so it can't drift)
 	{ (int)(offsetof(stringsTable_t, aes_keys) / LANGUAGE_TEXTS_LENGTH), MENU_AES_KEYS },
 #endif
-#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
-	{ (int)(offsetof(stringsTable_t, messages) / LANGUAGE_TEXTS_LENGTH), MENU_MESSAGES },
-#endif
+	// MENU_MESSAGES перенесено в mainMenuItems[] вище (2026-08-31) - Messages тепер у
+	// головному меню, а не в Options.
 };
 
 const menuItemsList_t menuDataOptions =

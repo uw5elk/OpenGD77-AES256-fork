@@ -2,11 +2,23 @@
  * menuMessages.c — on-radio encrypted DMR SMS UX (Inbox / Sent / New Message).
  *
  * Modelled on menuAESKeys.c. A small screen state-machine:
- *   HOME      : Inbox (n) / Sent (n) / New Message
- *   LIST      : the messages of a folder + a "[Delete all]" row
- *   READ      : full text of one message (SK2+GREEN deletes it)
- *   COMPOSE   : keypad text entry (multi-tap, like the contact-name editor)
- *   RECIPIENT : destination DMR ID / talkgroup + Group/Private + send
+ *   HOME         : Inbox (n) / Sent (n) / New Message
+ *   LIST         : the messages of a folder + a "[Delete all]" row
+ *   READ         : full text of one message
+ *   COMPOSE      : keypad text entry (multi-tap, like the contact-name editor)
+ *   RECIPIENT    : destination DMR ID / talkgroup + Group/Private + send
+ *   PICK_CONTACT : browse the existing codeplug Contact List instead of typing an ID
+ *
+ * Key combos (2026-08-31 pass — moved into the main menu, added Reply/Resend, a
+ * contacts-based recipient picker, and "mark all read", on top of what already existed):
+ *   HOME/LIST : GREEN opens/selects, SK2+GREEN deletes (single, or "[Delete all]" row),
+ *               SK2+RED marks every Inbox message read in one go.
+ *   READ      : SK2+GREEN deletes; plain GREEN = Reply (Inbox: blank text, recipient
+ *               pre-set to the sender) or Resend (Sent: text AND recipient both
+ *               pre-filled, lands straight on RECIPIENT); RED goes back.
+ *   RECIPIENT : SK1 opens PICK_CONTACT, browsing the Contact List filtered by the
+ *               current Group/Private toggle (U/D), so the entry you land on already
+ *               matches what you're about to pick.
  *
  * Sending and the store live in functions/dmr_sms.c (the on-air-validated AES-256-ECB
  * scheme a stock TYT decrypts). Compiles to nothing unless -DENABLE_AES -DENABLE_DMR_DATA.
@@ -19,6 +31,7 @@
 #include "user_interface/uiUtilities.h"
 #include "functions/trx.h"
 #include "functions/dmr_sms.h"
+#include "functions/codeplug.h"   /* Contact List browsing for the recipient picker */
 #include "crypto/dmr_aes.h"
 #include "io/keyboard.h"
 #include <string.h>
@@ -26,7 +39,7 @@
 
 #if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
 
-enum { MSG_HOME = 0, MSG_LIST, MSG_READ, MSG_COMPOSE, MSG_RECIPIENT, MSG_RESULT };
+enum { MSG_HOME = 0, MSG_LIST, MSG_READ, MSG_COMPOSE, MSG_RECIPIENT, MSG_PICK_CONTACT, MSG_RESULT };
 
 static struct
 {
@@ -39,6 +52,8 @@ static struct
 	int16_t  rcptPos;
 	uint8_t  rcptGroup;     // 1 = talkgroup, 0 = private call
 	int8_t   presetIdx;     // last quick-text preset cycled in (-1 = none)
+	uint8_t  rcptPreset;    // 1 = rcpt/rcptGroup already set by Reply/Resend; composeEvent's
+	                        // GREEN must not clobber it with the usual default-recipient prefill
 	int8_t   result;        // dmrSmsSend() return for the result screen
 	uint16_t resultTicks;
 } s_msg DMR_AES_CCM;
@@ -48,12 +63,14 @@ static void listUpdate(void);
 static void readUpdate(void);
 static void composeUpdate(void);
 static void recipientUpdate(void);
+static void pickContactUpdate(void);
 static void resultUpdate(void);
 static void homeEvent(uiEvent_t *ev, menuStatus_t *ec);
 static void listEvent(uiEvent_t *ev);
 static void readEvent(uiEvent_t *ev);
 static void composeEvent(uiEvent_t *ev);
 static void recipientEvent(uiEvent_t *ev);
+static void pickContactEvent(uiEvent_t *ev);
 
 static void gotoHome(void)
 {
@@ -91,11 +108,12 @@ menuStatus_t menuMessages(uiEvent_t *ev, bool isFirstRun)
 	{
 		switch (s_msg.view)
 		{
-			case MSG_HOME:      homeEvent(ev, &exitCode); break;
-			case MSG_LIST:      listEvent(ev);            break;
-			case MSG_READ:      readEvent(ev);            break;
-			case MSG_COMPOSE:   composeEvent(ev);         break;
-			case MSG_RECIPIENT: recipientEvent(ev);       break;
+			case MSG_HOME:         homeEvent(ev, &exitCode); break;
+			case MSG_LIST:         listEvent(ev);            break;
+			case MSG_READ:         readEvent(ev);            break;
+			case MSG_COMPOSE:      composeEvent(ev);         break;
+			case MSG_RECIPIENT:    recipientEvent(ev);       break;
+			case MSG_PICK_CONTACT: pickContactEvent(ev);     break;
 		}
 	}
 	return exitCode;
@@ -154,6 +172,10 @@ static void startCompose(void)
 	memset(s_msg.compose, 0, sizeof s_msg.compose);
 	s_msg.composePos = 0;
 	s_msg.presetIdx = -1;
+	// A plain "New Message" always falls back to the default-recipient prefill, never a
+	// stale Reply/Resend target left over from an earlier, possibly cancelled, attempt.
+	// startReplyOrResend() re-sets this to 1 itself AFTER calling this function.
+	s_msg.rcptPreset = 0;
 	s_msg.view = MSG_COMPOSE;
 	keypadAlphaEnable = true;
 	composeUpdate();
@@ -257,6 +279,14 @@ static void listEvent(uiEvent_t *ev)
 	if ((ev->events & KEY_EVENT) == 0) { return; }
 	int count = dmrSmsCount(s_msg.folder);
 
+	// SK2+RED marks every Inbox message read in one go (dmrSmsMarkAllRead() only ever
+	// touches unread Inbox entries, so calling it from the Sent view is a harmless no-op).
+	if (KEYCHECK_SHORTUP(ev->keys, KEY_RED) && BUTTONCHECK_DOWN(ev, BUTTON_SK2))
+	{
+		dmrSmsMarkAllRead();
+		listUpdate();
+		return;
+	}
 	if (KEYCHECK_SHORTUP(ev->keys, KEY_RED)) { gotoHome(); return; }
 
 	if (count == 0) { return; }
@@ -326,8 +356,43 @@ static void readUpdate(void)
 		displayPrintAt(2, y, line, FONT_SIZE_2);
 	}
 
-	displayPrintCentered(112, "SK2+GRN:del RED:back", FONT_SIZE_1);
+	displayPrintCentered(112, s_msg.folder ? "SK2+GRN:del GRN:resend" : "SK2+GRN:del GRN:reply", FONT_SIZE_1);
 	displayRender();
+}
+
+/* Reply (Inbox: blank text, recipient pre-set to the sender) or Resend (Sent: text AND
+ * recipient both pre-filled, straight to RECIPIENT — one GREEN press away from re-sending
+ * unedited, or RED to go back into COMPOSE and change the wording first). */
+static void startReplyOrResend(void)
+{
+	const dmrSmsMessage_t *m = dmrSmsGet(s_msg.folder, s_msg.readIdx);
+	if (m == NULL) { return; }
+
+	uint32_t peer = m->peerId;
+	uint8_t  group = (m->flags & DMR_SMS_FLAG_GROUP) ? 1 : 0;
+
+	if (s_msg.folder == 1)   // Sent -> Resend
+	{
+		int n = (m->textLen < (int)sizeof s_msg.compose - 1) ? m->textLen : (int)sizeof s_msg.compose - 1;
+		memset(s_msg.compose, 0, sizeof s_msg.compose);
+		memcpy(s_msg.compose, m->text, n);
+		s_msg.composePos = (int16_t)n;
+		s_msg.presetIdx = -1;
+		snprintf(s_msg.rcpt, sizeof s_msg.rcpt, "%lu", (unsigned long)peer);
+		s_msg.rcptPos = (int16_t)strlen(s_msg.rcpt);
+		s_msg.rcptGroup = group;
+		s_msg.view = MSG_RECIPIENT;
+		keypadAlphaEnable = false;
+		recipientUpdate();
+	}
+	else                     // Inbox -> Reply
+	{
+		startCompose();   // resets compose text/pos/presetIdx AND rcptPreset - must run first
+		snprintf(s_msg.rcpt, sizeof s_msg.rcpt, "%lu", (unsigned long)peer);
+		s_msg.rcptPos = (int16_t)strlen(s_msg.rcpt);
+		s_msg.rcptGroup = group;
+		s_msg.rcptPreset = 1;   // composeEvent's GREEN must skip the default-recipient prefill
+	}
 }
 
 static void readEvent(uiEvent_t *ev)
@@ -340,7 +405,12 @@ static void readEvent(uiEvent_t *ev)
 		openFolder(s_msg.folder);
 		return;
 	}
-	if (KEYCHECK_SHORTUP(ev->keys, KEY_RED) || KEYCHECK_SHORTUP(ev->keys, KEY_GREEN))
+	if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN))
+	{
+		startReplyOrResend();
+		return;
+	}
+	if (KEYCHECK_SHORTUP(ev->keys, KEY_RED))
 	{
 		openFolder(s_msg.folder);
 		return;
@@ -413,7 +483,8 @@ static void composeEvent(uiEvent_t *ev)
 	{
 		if (strlen(s_msg.compose) == 0) { return; }
 		keypadAlphaEnable = false;
-		prefillRecipient();
+		if (s_msg.rcptPreset) { s_msg.rcptPreset = 0; }   // Reply: rcpt/rcptGroup already set
+		else                  { prefillRecipient(); }
 		s_msg.view = MSG_RECIPIENT;
 		recipientUpdate();
 		return;
@@ -464,8 +535,9 @@ static void recipientUpdate(void)
 	snprintf(buf, sizeof buf, "Type: %s", s_msg.rcptGroup ? "Group" : "Private");
 	displayPrintAt(2, 52, buf, FONT_SIZE_2);
 
-	displayPrintCentered(84,  "0-9:id  L:del", FONT_SIZE_1);
-	displayPrintCentered(96,  "U/D:Group/Private", FONT_SIZE_1);
+	displayPrintCentered(82,  "0-9:id  L:del", FONT_SIZE_1);
+	displayPrintCentered(92,  "U/D:Group/Private", FONT_SIZE_1);
+	displayPrintCentered(102, "SK1:contacts", FONT_SIZE_1);
 	displayPrintCentered(112, "GRN:send  RED:back", FONT_SIZE_1);
 	displayRender();
 }
@@ -482,6 +554,22 @@ static void doSend(void)
 
 static void recipientEvent(uiEvent_t *ev)
 {
+	// SK1 is a plain button press, not a KEY_EVENT - must be checked before the
+	// KEY_EVENT-only early return below (same idiom as menuChannelDetails.c).
+	if (ev->events & BUTTON_EVENT)
+	{
+		if (BUTTONCHECK_SHORTUP(ev, BUTTON_SK1))
+		{
+			s_msg.view = MSG_PICK_CONTACT;
+			menuDataGlobal.currentItemIndex = 0;
+			// count тут той самий callType, який побачить pickContactUpdate()/pickContactEvent()
+			// нижче (rcptGroup визначає TG чи PC) - інакше UP/DOWN гортатиме за старим numItems.
+			menuDataGlobal.numItems = codeplugContactsGetCount(s_msg.rcptGroup ? CONTACT_CALLTYPE_TG : CONTACT_CALLTYPE_PC);
+			pickContactUpdate();
+			return;
+		}
+	}
+
 	if ((ev->events & KEY_EVENT) == 0) { return; }
 
 	if (KEYCHECK_SHORTUP(ev->keys, KEY_RED))
@@ -514,6 +602,92 @@ static void recipientEvent(uiEvent_t *ev)
 			s_msg.rcpt[n] = (char)ev->keys.key;
 			s_msg.rcpt[n + 1] = 0;
 		}
+		recipientUpdate();
+		return;
+	}
+}
+
+/* ============================ PICK CONTACT ============================= */
+/* Список контактів кодплагу (TG чи PC, залежно від s_msg.rcptGroup) для швидкого вибору
+ * адресата замість ручного набору ID цифрами. Вхід - SK1 з екрану RECIPIENT, вихід - назад
+ * туди ж (GREEN підставляє обраний контакт, RED повертається без змін). */
+static void pickContactUpdate(void)
+{
+	uint32_t callType = s_msg.rcptGroup ? CONTACT_CALLTYPE_TG : CONTACT_CALLTYPE_PC;
+	int count = codeplugContactsGetCount(callType);
+	char buf[24];
+
+	displayClearBuf();
+	menuDisplayTitle(s_msg.rcptGroup ? "Pick TG contact" : "Pick PC contact");
+
+	if (count == 0)
+	{
+		displayPrintCentered(56, "(no contacts)", FONT_SIZE_2);
+		displayPrintCentered(112, "RED:back", FONT_SIZE_1);
+		displayRender();
+		return;
+	}
+
+	for (int i = MENU_START_ITERATION_VALUE; i <= MENU_END_ITERATION_VALUE; i++)
+	{
+		int mNum = menuGetMenuOffset(count, i);
+		if (mNum == MENU_OFFSET_BEFORE_FIRST_ENTRY) { continue; }
+		if (mNum == MENU_OFFSET_AFTER_LAST_ENTRY)   { break; }
+
+		CodeplugContact_t c;
+		// 1-індексований API кодплагу: mNum йде з 0, тому +1.
+		if (codeplugContactGetDataForNumberInType(mNum + 1, callType, &c))
+		{
+			char name[17];
+			codeplugUtilConvertBufToString(c.name, name, 16);
+			snprintf(buf, sizeof buf, "%s", name);
+		}
+		else
+		{
+			snprintf(buf, sizeof buf, "?");
+		}
+		menuDisplayEntry(i, mNum, buf, 0, THEME_ITEM_FG_MENU_ITEM, THEME_ITEM_FG_OPTIONS_VALUE, THEME_ITEM_BG);
+	}
+	displayRender();
+}
+
+static void pickContactEvent(uiEvent_t *ev)
+{
+	if ((ev->events & KEY_EVENT) == 0) { return; }
+
+	uint32_t callType = s_msg.rcptGroup ? CONTACT_CALLTYPE_TG : CONTACT_CALLTYPE_PC;
+	int count = codeplugContactsGetCount(callType);
+
+	if (KEYCHECK_SHORTUP(ev->keys, KEY_RED))
+	{
+		// Відміна - повертаємось на RECIPIENT, s_msg.rcpt/rcptGroup не чіпаємо.
+		s_msg.view = MSG_RECIPIENT;
+		recipientUpdate();
+		return;
+	}
+
+	if (count == 0) { return; }   // порожній список - тільки RED працює
+
+	if (KEYCHECK_PRESS(ev->keys, KEY_DOWN))
+	{
+		menuSystemMenuIncrement(&menuDataGlobal.currentItemIndex, count); pickContactUpdate(); return;
+	}
+	if (KEYCHECK_PRESS(ev->keys, KEY_UP))
+	{
+		menuSystemMenuDecrement(&menuDataGlobal.currentItemIndex, count); pickContactUpdate(); return;
+	}
+
+	if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN))
+	{
+		CodeplugContact_t c;
+		if (codeplugContactGetDataForNumberInType(menuDataGlobal.currentItemIndex + 1, callType, &c))
+		{
+			snprintf(s_msg.rcpt, sizeof s_msg.rcpt, "%lu", (unsigned long)c.tgNumber);
+			s_msg.rcptPos = (int16_t)strlen(s_msg.rcpt);
+			// s_msg.rcptGroup вже дорівнює тому, за яким типом (TG/PC) гортали список -
+			// саме він визначив callType вище, тому явно його підтверджувати не потрібно.
+		}
+		s_msg.view = MSG_RECIPIENT;
 		recipientUpdate();
 		return;
 	}

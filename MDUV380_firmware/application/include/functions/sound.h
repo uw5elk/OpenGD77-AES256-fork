@@ -61,6 +61,7 @@ extern const int16_t MELODY_DTMF[];
 //extern const int16_t MELODY_SK2_BEEP[];
 //extern const int16_t MELODY_NSK2_BEEP[];
 extern const int16_t MELODY_BEEP_LOW_SHORT[];
+extern const int16_t MELODY_SMS_RECEIVED_BEEP[];   // encrypted-SMS RX alert (dmr_sms.c)
 
 extern volatile int16_t *melody_play;
 extern volatile int16_t melody_idx;
