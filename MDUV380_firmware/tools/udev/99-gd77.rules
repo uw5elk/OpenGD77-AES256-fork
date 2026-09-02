@@ -7,6 +7,12 @@ SUBSYSTEM=="usb", ATTRS{idVendor}=="15a2", ATTRS{idProduct}=="0073", MODE="0666"
 SUBSYSTEM=="usb", ATTRS{idVendor}=="15a2", ATTRS{idProduct}=="0073", MODE="0666", GROUP="plugdev"
 SUBSYSTEM=="usb", ATTRS{idVendor}=="1fc9", ATTRS{idProduct}=="0094", MODE="0666", GROUP="plugdev"
 
+# STM32 ROM DFU bootloader -- саме з цим пристроєм говорить
+# opengd77_stm32_firmware_loader.py (це його типові --vid/--pid). Правил на 1fc9:0094 вище
+# для прошивки НЕ досить: у режимі завантажувача рація перелічується вже як 0483:df11,
+# і без цього рядка pyusb упреться в помилку доступу без root.
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="df11", MODE="0666", GROUP="plugdev"
+
 # HIDAPI/hidraw
 KERNEL=="hidraw*", ATTRS{idVendor}=="15a2", ATTRS{idProduct}=="0073", MODE="0666", GROUP="plugdev"
 KERNEL=="hidraw*", ATTRS{idVendor}=="1fc9", ATTRS{idProduct}=="0094", MODE="0666", GROUP="plugdev"
