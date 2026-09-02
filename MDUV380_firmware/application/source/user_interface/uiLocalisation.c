@@ -31,9 +31,11 @@
 #include "user_interface/languages/english.h"
 #if defined(LANGUAGE_BUILD_JAPANESE)
 #include "user_interface/languages/japanese.h"
+#elif defined(LANGUAGE_BUILD_UKRAINIAN)
+#include "user_interface/languages/ukrainian.h"
 #endif
 
-#if ! defined(LANGUAGE_BUILD_JAPANESE)
+#if ! defined(LANGUAGE_BUILD_JAPANESE) && ! defined(LANGUAGE_BUILD_UKRAINIAN)
 #if defined(PLATFORM_GD77) || defined(PLATFORM_GD77S) || defined(PLATFORM_DM1801) || defined(PLATFORM_DM1801A) || defined(PLATFORM_RD5R)
 __attribute__((section(".upper_text")))
 #endif
@@ -54,6 +56,8 @@ const stringsTable_t languages[]=
 		englishLanguage,        // englishLanguageName
 #if defined(LANGUAGE_BUILD_JAPANESE)
 		japaneseLanguage       // japaneseLanguageName
+#elif defined(LANGUAGE_BUILD_UKRAINIAN)
+		ukrainianLanguage      // ukrainianLanguageName
 #else
 		userLanguage // User language, written by the CPS
 #endif
@@ -63,7 +67,7 @@ const stringsTable_t *currentLanguage;
 
 uint8_t languagesGetCount(void)
 {
-#if ! defined(LANGUAGE_BUILD_JAPANESE)
+#if ! defined(LANGUAGE_BUILD_JAPANESE) && ! defined(LANGUAGE_BUILD_UKRAINIAN)
 	uint8_t magic[3][4] = { LANGUAGE_TAG_MAGIC_NUMBER, LANGUAGE_TAG_VERSION };
 
 	return ((memcmp(languages[1].magicNumber, magic, sizeof(magic)) == 0) ? 2 : 1);

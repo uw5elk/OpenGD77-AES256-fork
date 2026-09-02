@@ -72,6 +72,15 @@ ifeq ($(ENABLE_FAST_SCAN),1)
 DEFS += -DENABLE_FAST_SCAN
 endif
 
+# Українська мова інтерфейсу: окремий кириличний шрифт (HX8353E_charset_UA.h)
+# + скомпільований у прошивку ukrainian.h замість "User"-слоту, що звично
+# пишеться CPS. Той самий підхід, що й LANGUAGE_BUILD_JAPANESE. Стандартний
+# HX8353E_charset.h цим прапорцем не зачіпається -- інші мови (польська,
+# чеська і т.д.) від нього не залежать.
+ifeq ($(LANGUAGE_UKRAINIAN),1)
+DEFS += -DLANGUAGE_BUILD_UKRAINIAN
+endif
+
 CFLAGS  = $(CPU) $(DEFS) $(INCS) -Os -g3 -ffunction-sections -fdata-sections -Wall -MMD -MP
 LDSCRIPT = STM32F405VGTX_FLASH.ld
 LDFLAGS = $(CPU) -T$(LDSCRIPT) --specs=nano.specs -Wl,--gc-sections -Wl,-Map=$(BUILD)/$(TARGET).map -lc -lm -lnosys

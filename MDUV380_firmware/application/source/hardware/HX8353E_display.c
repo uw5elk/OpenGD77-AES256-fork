@@ -32,6 +32,8 @@
 //vk3kyy #include "io/display.h"
 #if defined(LANGUAGE_BUILD_JAPANESE)
 #include "hardware/HX8353E_charset_JA.h"
+#elif defined(LANGUAGE_BUILD_UKRAINIAN)
+#include "hardware/HX8353E_charset_UA.h"
 #else
 #include <hardware/HX8353E_charset.h>
 #endif

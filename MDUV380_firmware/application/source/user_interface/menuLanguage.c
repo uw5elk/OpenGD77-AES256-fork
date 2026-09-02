@@ -40,6 +40,8 @@
 #elif (defined(PLATFORM_MDUV380) || defined(PLATFORM_MD380) || defined(PLATFORM_RT84_DM1701) || defined(PLATFORM_MD2017))
 	#if defined(LANGUAGE_BUILD_JAPANESE)
 		#include "hardware/HX8353E_charset_JA.h"
+	#elif defined(LANGUAGE_BUILD_UKRAINIAN)
+		#include "hardware/HX8353E_charset_UA.h"
 	#else
 		#include "hardware/HX8353E_charset.h"
 	#endif
@@ -58,7 +60,10 @@ static menuStatus_t menuLanguageExitCode = MENU_STATUS_SUCCESS;
 
 static void clearNonLatinChar(uint8_t *str)
 {
-#if ! defined(LANGUAGE_BUILD_JAPANESE)
+	// Коди 192-255 (і додаткові 160-191) у HX8353E_charset_UA.h означають кирилицю,
+	// а не латинські літери з діакритикою -- ця таблиця заміни тут недоречна, тож
+	// для української, як і для японської, функція нічого не робить.
+#if ! defined(LANGUAGE_BUILD_JAPANESE) && ! defined(LANGUAGE_BUILD_UKRAINIAN)
 	uint8_t *p = str;
 
 	while (*p != '\0')

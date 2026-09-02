@@ -36,10 +36,12 @@ extern const stringsTable_t *currentLanguage;
 typedef enum
 {
 	englishLanguageName = 0,
-#if ! defined(LANGUAGE_BUILD_JAPANESE)
-	userLanguageName
-#else
+#if defined(LANGUAGE_BUILD_JAPANESE)
 	japaneseLanguageName
+#elif defined(LANGUAGE_BUILD_UKRAINIAN)
+	ukrainianLanguageName
+#else
+	userLanguageName
 #endif
 } languageNamesOrder_t;
 

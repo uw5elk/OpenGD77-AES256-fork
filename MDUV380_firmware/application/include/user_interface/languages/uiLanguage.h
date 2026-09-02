@@ -32,6 +32,8 @@
 
 #if defined(LANGUAGE_BUILD_JAPANESE)
 #define LANGUAGE_TAG_MAGIC_NUMBER { 'I', 'G', 'N', 'R' }, { 'L', 'A', 'N', 'G' } // Never change this tag.
+#elif defined(LANGUAGE_BUILD_UKRAINIAN)
+#define LANGUAGE_TAG_MAGIC_NUMBER { 'U', 'K', 'R', 'A' }, { 'L', 'A', 'N', 'G' } // Never change this tag.
 #else
 #define LANGUAGE_TAG_MAGIC_NUMBER { 'G', 'D', '7', '7' }, { 'L', 'A', 'N', 'G' } // Never change this tag.
 #endif
