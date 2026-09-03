@@ -100,6 +100,72 @@ def read_build_info():
     return "збірка з джерела (без build_info.txt)"
 
 
+def enable_entry_clipboard(entry):
+    """Вмикає копіювання/вставляння/вирізання в текстовому полі Tkinter так, щоб
+    воно ГАРАНТОВАНО працювало на Windows з українською (чи будь-якою нелатинською)
+    розкладкою клавіатури.
+
+    Проблема, яку це виправляє: стандартні прив'язки Ctrl+C/Ctrl+V у Tk на Windows
+    спрацьовують за КОДОМ СИМВОЛУ, який дає поточна розкладка для фізичної клавіші --
+    а не за самою фізичною клавішею. З українською розкладкою фізична клавіша "V"
+    видає не 'v', а кирилицю ("м"), тому Ctrl+V не розпізнається як вставляння і
+    поле здається "заблокованим для вставки", хоча насправді просто не спрацьовує
+    прив'язка. Пункту контекстного меню (по правій кнопці миші) в ttk.Entry також
+    немає за замовчуванням -- тому користувачу взагалі нема як вставити ключ.
+
+    Рішення -- два незалежні шляхи, кожен обходить проблему розкладки по-своєму:
+      1) Контекстне меню правої кнопки миші (Вирізати/Копіювати/Вставити/Виділити
+         все) -- клік мишею не залежить від розкладки клавіатури взагалі, тому
+         працює завжди, на будь-якій ОС і розкладці.
+      2) Прив'язка по event.keycode (апаратний код фізичної клавіші), а не по
+         event.keysym (символ, залежний від розкладки) -- Ctrl+V/C/X/A тепер
+         спрацьовують незалежно від того, яка розкладка активна. Коди клавіш V/C/X/A
+         однакові на Windows (віртуальні коди VK_*) і на X11/Linux (evdev-коди) для
+         звичайної розкладки QWERTY-сумісної фізичної клавіатури.
+    """
+    # --- 1) контекстне меню правої кнопки миші --------------------------------
+    menu = tk.Menu(entry, tearoff=0)
+    menu.add_command(label="Вирізати", command=lambda: entry.event_generate("<<Cut>>"))
+    menu.add_command(label="Копіювати", command=lambda: entry.event_generate("<<Copy>>"))
+    menu.add_command(label="Вставити", command=lambda: entry.event_generate("<<Paste>>"))
+    menu.add_separator()
+    menu.add_command(label="Виділити все", command=lambda: entry.selection_range(0, "end"))
+
+    def _show_context_menu(event):
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    entry.bind("<Button-3>", _show_context_menu)
+
+    # --- 2) Ctrl+V/C/X/A за фізичним кодом клавіші, а не символом розкладки ---
+    # 'V','C','X','A' -- віртуальні коди Windows (VK_*) і типові X11/evdev-коди
+    # тих самих фізичних клавіш на PC-клавіатурі.
+    KEYCODES_PASTE = (86, 118, 47, 55)
+    KEYCODES_COPY = (67, 99, 54, 25)
+    KEYCODES_CUT = (88, 120, 53, 45)
+    KEYCODES_SELECT_ALL = (65, 97, 38, 24)
+
+    def _on_ctrl_key(event):
+        kc = event.keycode
+        if kc in KEYCODES_PASTE:
+            entry.event_generate("<<Paste>>")
+            return "break"
+        if kc in KEYCODES_COPY:
+            entry.event_generate("<<Copy>>")
+            return "break"
+        if kc in KEYCODES_CUT:
+            entry.event_generate("<<Cut>>")
+            return "break"
+        if kc in KEYCODES_SELECT_ALL:
+            entry.selection_range(0, "end")
+            return "break"
+        return None
+
+    entry.bind("<Control-Key>", _on_ctrl_key)
+
+
 class QueueWriter:
     """Перехоплює print() з бібліотечного коду (loader/reboot друкують прямо в
     stdout, це нормально для CLI) і жене рядки в чергу для показу у вікні -- без
@@ -518,6 +584,10 @@ class AesKeyManagerWindow(tk.Toplevel):
         self.key_var = tk.StringVar()
         self.key_entry = ttk.Entry(row2, textvariable=self.key_var, width=40, font=("Consolas", 9))
         self.key_entry.pack(side="left", padx=6, fill="x", expand=True)
+        # Явно вмикаємо вставку/копіювання -- інакше на Windows з українською
+        # розкладкою клавіатури Ctrl+V у це поле не спрацьовує (див. докладний
+        # коментар при enable_entry_clipboard() вище).
+        enable_entry_clipboard(self.key_entry)
 
         self.show_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(key_frame, text="показувати введений ключ", variable=self.show_var,
