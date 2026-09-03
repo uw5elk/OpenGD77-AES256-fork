@@ -50,7 +50,10 @@ static const char *creditTexts[] =
 #if defined(PLATFORM_RD5R)
 		"Dzmitry EW1ADG",
 #endif
-		"Jason VK7ZJA (SK)"
+		"Jason VK7ZJA (SK)",
+		// Автор цього форку (AES256, SMS, українська локалізація). Доданий ОСТАННІМ,
+		// щоб список авторів OpenGD77 лишився недоторканим у своєму порядку.
+		"Bohdan UW5ELK"
 };
 static const int maxCredits = (sizeof(creditTexts) / sizeof(creditTexts[0]));
 static const int maxCreditsPages = (maxCredits / maxDisplayedCreditsLines) + ((maxCredits % maxDisplayedCreditsLines) == 0 ? 0 : 1);
