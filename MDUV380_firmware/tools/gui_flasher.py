@@ -724,21 +724,25 @@ class AesKeyManagerWindow(tk.Toplevel):
 
 
 class RctlConfigWindow(tk.Toplevel):
-    """Налаштування allowlist "хто може видавати команди віддаленого керування"
-    (RCTL -- functions/dmr_rctl_cfg.c). Пише блок "RCTL" у custom-data (CHIRP-стиль:
-    прошивка лише читає, jamais пише сама).
+    """Увімк/вимк "приймати команди віддаленого керування" (RCTL --
+    functions/dmr_rctl_cfg.c). Пише блок "RCTL" у custom-data (CHIRP-стиль:
+    прошивка лише читає, сама не пише).
+
+    Модель довіри (2026-09-03, за зразком Motorola/Hytera): БІНАРНА -- увімкнено
+    означає "приймати команди від БУДЬ-КОГО з правильним AES-ключем каналу" (тим
+    самим, що й голос/SMS), вимкнено -- не приймати ні від кого. Жодного окремого
+    списку довірених ID тут немає -- сам канальний ключ і є межею довіри.
 
     ВАЖЛИВО: це вікно НЕ вміє надіслати саму команду Radio Check в ефір -- команда
-    йде рація-рації по DMR, а не через USB/CPS. Тут лише готується "хто кому
-    довіряє" (fail closed: enabled=0 і порожній allowlist за замовчуванням, доки
-    не налаштовано явно). Сам запит з рації -- окремий, ще не написаний пункт меню
-    (PLANS.md §3, "Що й досі відсутнє")."""
+    йде рація-рації по DMR, а не через USB/CPS. Тут лише перемикається "приймати
+    чи ні" (fail closed: enabled=0 за замовчуванням, доки не увімкнено явно). Сам
+    запит з рації -- окремий, ще не написаний пункт меню (PLANS.md §3)."""
 
     def __init__(self, parent):
         super().__init__(parent)
         self.title("OpenGD77 -- Віддалене керування (RCTL)")
-        self.geometry("480x480")
-        self.minsize(440, 420)
+        self.geometry("480x360")
+        self.minsize(440, 320)
 
         self.queue = queue.Queue()
         self.busy = False
@@ -751,30 +755,17 @@ class RctlConfigWindow(tk.Toplevel):
 
         note = ttk.Label(
             self,
-            text=("Тут лише СПИСОК ДОВІРЕНИХ ID (allowlist), не сама команда -- "
-                  "Radio Check шлеться рація-рації по ефіру, не через USB. "
-                  "Рація має бути УВІМКНЕНА У ЗВИЧАЙНОМУ РЕЖИМІ (не в DFU)."),
+            text=("Увімкнено = приймати команди RCTL (напр. Radio Check) від "
+                  "БУДЬ-КОГО, хто знає ключ шифрування каналу -- як у Motorola/"
+                  "Hytera. Вимкнено = не приймати ні від кого. Рація має бути "
+                  "УВІМКНЕНА У ЗВИЧАЙНОМУ РЕЖИМІ (не в DFU)."),
             wraplength=440, justify="left", foreground="#8a5300",
         )
         note.pack(anchor="w", **pad)
 
         self.enabled_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(self, text="Приймати команди RCTL на цій рації (enabled)",
-                        variable=self.enabled_var).pack(anchor="w", padx=12)
-
-        ids_frame = ttk.LabelFrame(self, text="Довірені DMR ID (до 8)")
-        ids_frame.pack(fill="both", expand=False, **pad)
-
-        row = ttk.Frame(ids_frame)
-        row.pack(fill="x", padx=8, pady=(6, 2))
-        ttk.Label(row, text="DMR ID:").pack(side="left")
-        self.newid_var = tk.StringVar()
-        ttk.Entry(row, textvariable=self.newid_var, width=12).pack(side="left", padx=6)
-        ttk.Button(row, text="Додати", command=self._on_add_id).pack(side="left")
-        ttk.Button(row, text="Видалити вибраний", command=self._on_remove_id).pack(side="left", padx=6)
-
-        self.ids_listbox = tk.Listbox(ids_frame, height=6)
-        self.ids_listbox.pack(fill="x", padx=8, pady=(2, 8))
+                        variable=self.enabled_var).pack(anchor="w", padx=12, pady=(4, 0))
 
         btn_row = ttk.Frame(self)
         btn_row.pack(fill="x", **pad)
@@ -814,27 +805,8 @@ class RctlConfigWindow(tk.Toplevel):
 
     def _apply_state(self, state):
         self.enabled_var.set(state["enabled"])
-        self.ids_listbox.delete(0, "end")
-        for aid in state["allowedId"]:
-            self.ids_listbox.insert("end", str(aid))
 
     # --- дії користувача -----------------------------------------------------------
-
-    def _on_add_id(self):
-        text = self.newid_var.get().strip()
-        if not text.isdigit():
-            messagebox.showerror("Невірний ID", "DMR ID -- це число.")
-            return
-        if self.ids_listbox.size() >= rctl.MAX_ALLOWED:
-            messagebox.showerror("Забагато ID", "Максимум {} довірених ID (DMR_RCTL_MAX_ALLOWED).".format(rctl.MAX_ALLOWED))
-            return
-        self.ids_listbox.insert("end", text)
-        self.newid_var.set("")
-
-    def _on_remove_id(self):
-        sel = self.ids_listbox.curselection()
-        if sel:
-            self.ids_listbox.delete(sel[0])
 
     def _on_read(self):
         if self.busy:
@@ -844,20 +816,16 @@ class RctlConfigWindow(tk.Toplevel):
     def _on_write(self):
         if self.busy:
             return
-        try:
-            ids = [int(self.ids_listbox.get(i)) for i in range(self.ids_listbox.size())]
-        except ValueError:
-            messagebox.showerror("Невірний список", "Список ID містить не-число.")
-            return
         enabled = self.enabled_var.get()
-        if enabled and not ids:
+        if enabled:
             if not messagebox.askokcancel(
-                "Порожній allowlist",
-                "enabled=1, але список довірених ID порожній -- рація й далі "
-                "ІГНОРУВАТИМЕ всі команди (fail closed за дизайном). Записати так?",
+                "Увімкнути RCTL?",
+                "Ця рація прийматиме команди віддаленого керування від БУДЬ-КОГО, "
+                "хто знає ключ шифрування каналу -- без окремого списку довірених "
+                "ID (як у Motorola/Hytera). Продовжити?",
             ):
                 return
-        self._run_worker(lambda: self._write_worker(enabled, ids), "Записую...")
+        self._run_worker(lambda: self._write_worker(enabled), "Записую...")
 
     # --- фонові операції -----------------------------------------------------------
 
@@ -875,19 +843,20 @@ class RctlConfigWindow(tk.Toplevel):
     def _read_worker(self):
         with self._connect() as ser:
             payload = cd.read_block(ser, rctl.TYPE_RCTL_CONFIG, rctl.PAYLOAD_LEN)
-            state = rctl.parse_payload(payload) if payload else {"version": 1, "enabled": False, "allowedId": []}
+            state = rctl.parse_payload(payload) if payload else {"version": rctl.VERSION, "enabled": False}
             self.queue.put(("state", state))
-            print("Стан: enabled={}, allowlist={}".format(state["enabled"], state["allowedId"]))
+            print("Стан: enabled={}".format(state["enabled"]))
 
-    def _write_worker(self, enabled, ids):
+    def _write_worker(self, enabled):
         with self._connect() as ser:
-            payload = rctl.build_payload(enabled, ids)
+            payload = rctl.build_payload(enabled)
             ok, msg = cd.write_block(ser, rctl.TYPE_RCTL_CONFIG, payload)
             if not ok:
                 raise RuntimeError(msg)
             rb = cd.read_block(ser, rctl.TYPE_RCTL_CONFIG, rctl.PAYLOAD_LEN)
             verify_ok = (rb == payload)
-            print("Записано ({}). Звірка читанням: {}.".format(msg, "OK" if verify_ok else "НЕЗБІГ"))
+            print("Записано ({}), enabled={}. Звірка читанням: {}.".format(
+                msg, enabled, "OK" if verify_ok else "НЕЗБІГ"))
 
     def _run_worker(self, fn, status_text):
         self.busy = True

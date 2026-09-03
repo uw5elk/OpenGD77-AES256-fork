@@ -12,12 +12,10 @@
 
 typedef struct
 {
-	char     magic[4];                         /* "RCTL" */
-	uint8_t  version;                          /* версія розкладки; наразі 1 */
-	uint8_t  enabled;                          /* 0 = вимкнено (default/CHIRP не задав), 1 = увімкнено */
-	uint8_t  numAllowed;                       /* 0..DMR_RCTL_MAX_ALLOWED, задає CHIRP */
-	uint8_t  reserved;                         /* про запас/майбутні прапорці, має бути 0 */
-	uint32_t allowedId[DMR_RCTL_MAX_ALLOWED];  /* на дроті мале-ендіан == рідний порядок */
+	char     magic[4];      /* "RCTL" */
+	uint8_t  version;       /* 2 -- 2026-09-03: без allowlist (див. dmr_rctl_pdu.h) */
+	uint8_t  enabled;       /* 0 = вимкнено (default/не налаштовано) = ніхто, 1 = увімкнено = будь-хто з канальним ключем */
+	uint8_t  reserved[2];   /* про запас/майбутні прапорці, мають бути 0 */
 } dmrRctlOnFlashCfg_t;
 
 /* На відміну від MSGC-структури в dmr_sms.c цей блок навмисно НЕ кладемо в CCM RAM
@@ -41,7 +39,7 @@ static void cfg_load(void)
 	{
 		return;
 	}
-	memset(&s_cfg, 0, sizeof s_cfg);   /* відсутній/побитий блок -> fail closed: enabled=0, allowlist порожній */
+	memset(&s_cfg, 0, sizeof s_cfg);   /* відсутній/побитий блок -> fail closed: enabled=0 (ніхто) */
 }
 
 static void cfg_ensure(void) { if (!s_cfgLoaded) { cfg_load(); } }
@@ -49,10 +47,9 @@ static void cfg_ensure(void) { if (!s_cfgLoaded) { cfg_load(); } }
 static void gate_load(void)
 {
 	cfg_ensure();
-	/* dmr_rctl_gate_init() сам обрізає numAllowed до DMR_RCTL_MAX_ALLOWED і скидає
-	 * всі лічильники anti-replay — саме те, що треба і при першому завантаженні,
-	 * і при примусовому reload(). */
-	dmr_rctl_gate_init(&s_gate, s_cfg.enabled, s_cfg.allowedId, s_cfg.numAllowed);
+	/* dmr_rctl_gate_init() скидає кеш anti-replay -- саме те, що треба і при
+	 * першому завантаженні, і при примусовому reload(). */
+	dmr_rctl_gate_init(&s_gate, s_cfg.enabled);
 	s_gateLoaded = 1;
 }
 
@@ -71,7 +68,7 @@ void dmrRctlConfigReload(void)
 int dmrRctlConfigEnabled(void)
 {
 	cfg_ensure();
-	return (s_cfg.enabled != 0) && (s_cfg.numAllowed > 0);
+	return (s_cfg.enabled != 0);
 }
 
 #endif /* ENABLE_DMR_DATA && ENABLE_AES */

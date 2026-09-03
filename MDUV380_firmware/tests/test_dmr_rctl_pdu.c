@@ -1,6 +1,6 @@
 /*
- * test_dmr_rctl_pdu.c — host unit tests for the remote-control PDU pack/unpack and
- * allowlist/anti-replay gate (pure logic, no STM32 dependencies).
+ * test_dmr_rctl_pdu.c — host unit tests for the remote-control PDU pack/unpack and the
+ * enabled/disabled gate + anti-replay cache (pure logic, no STM32 dependencies).
  * Build & run on a PC (no radio needed):
  *     gcc -O2 -Wall -o test_dmr_rctl_pdu test_dmr_rctl_pdu.c dmr_rctl_pdu.c && ./test_dmr_rctl_pdu
  */
@@ -52,47 +52,58 @@ int main(void)
     dmr_rctl_msg_t m3;
     CHECK(dmr_rctl_unpack(bad, &m3) == 0, "unpack rejects bad magic");
 
-    /* 4) gate: disabled rejects everything, even an allowed issuer */
+    /* ---- gate: бінарна модель (2026-09-03) -- enabled=1 приймає БУДЬ-ЯКОГО нового
+     * видавця, enabled=0 не приймає НІКОГО; anti-replay й далі per-issuer через кеш. */
+
+    /* 4) disabled gate rejects everyone, even a never-seen issuer */
     dmr_rctl_gate_t g;
-    uint32_t allow[2];
-    allow[0] = 0x111111;
-    allow[1] = 0x222222;
-    dmr_rctl_gate_init(&g, 0, allow, 2);
-    CHECK(dmr_rctl_gate_check(&g, 0x111111, 1) == 0, "disabled gate rejects allowed issuer");
+    dmr_rctl_gate_init(&g, 0);
+    CHECK(dmr_rctl_gate_check(&g, 0x111111, 1) == 0, "disabled gate rejects any issuer");
 
-    /* 5) gate: enabled + empty allowlist rejects everyone (no implicit trust-by-key) */
+    /* 5) enabled gate accepts ANY new issuer immediately (no pre-approval needed) */
     dmr_rctl_gate_t g2;
-    dmr_rctl_gate_init(&g2, 1, allow, 0);
-    CHECK(dmr_rctl_gate_check(&g2, 0x111111, 1) == 0, "enabled+empty allowlist rejects everyone");
+    dmr_rctl_gate_init(&g2, 1);
+    CHECK(dmr_rctl_gate_check(&g2, 0x999999, 1) == 1, "enabled gate accepts a never-before-seen issuer");
 
-    /* 6) gate: enabled + allowlist accepts a listed issuer with increasing seq */
+    /* 6) enabled + strictly increasing seq from the same (now-tracked) issuer accepted */
     dmr_rctl_gate_t g3;
-    dmr_rctl_gate_init(&g3, 1, allow, 2);
-    CHECK(dmr_rctl_gate_check(&g3, 0x111111, 1) == 1, "accepts first command from allowed issuer");
+    dmr_rctl_gate_init(&g3, 1);
+    CHECK(dmr_rctl_gate_check(&g3, 0x111111, 1) == 1, "accepts first command from a new issuer");
     CHECK(dmr_rctl_gate_check(&g3, 0x111111, 2) == 1, "accepts strictly increasing seq");
 
-    /* 7) gate: replay (same or lower seq) rejected */
+    /* 7) replay (same or lower seq) rejected once the issuer is tracked */
     CHECK(dmr_rctl_gate_check(&g3, 0x111111, 2) == 0, "rejects replayed seq (equal)");
     CHECK(dmr_rctl_gate_check(&g3, 0x111111, 1) == 0, "rejects replayed seq (lower)");
 
-    /* 8) gate: issuer not in allowlist rejected */
-    CHECK(dmr_rctl_gate_check(&g3, 0x999999, 1) == 0, "rejects issuer not on allowlist");
-
-    /* 9) gate: two allowed issuers track sequence independently */
+    /* 8) a different issuer is unaffected -- and, since it's new, accepted at any seq */
     CHECK(dmr_rctl_gate_check(&g3, 0x222222, 1) == 1, "second issuer starts its own seq stream");
     CHECK(dmr_rctl_gate_check(&g3, 0x111111, 3) == 1, "first issuer's stream unaffected by second's");
 
-    /* 10) gate: a rejected (replayed) attempt does not disturb the stored high-water mark */
+    /* 9) a rejected (replayed) attempt does not disturb the stored high-water mark */
     CHECK(dmr_rctl_gate_check(&g3, 0x111111, 3) == 0, "seq 3 now itself counts as replayed");
     CHECK(dmr_rctl_gate_check(&g3, 0x111111, 4) == 1, "next real seq after a replay attempt still accepted");
 
-    /* 11) allowlist longer than DMR_RCTL_MAX_ALLOWED is safely clamped, not overrun */
-    uint32_t manyIds[16];
-    for (int i = 0; i < 16; i++) { manyIds[i] = (uint32_t)(0x1000 + i); }
+    /* 10) disabling mid-session (gate re-init, as dmrRctlConfigReload() would do) rejects again */
+    dmr_rctl_gate_init(&g3, 0);
+    CHECK(dmr_rctl_gate_check(&g3, 0x111111, 5) == 0, "re-init with enabled=0 rejects a previously-tracked issuer too");
+
+    /* 11) replay cache: more than DMR_RCTL_REPLAY_CACHE distinct issuers safely evict
+     * the oldest (round-robin) instead of overrunning the fixed-size arrays. */
     dmr_rctl_gate_t g4;
-    dmr_rctl_gate_init(&g4, 1, manyIds, 16);
-    CHECK(g4.numAllowed == DMR_RCTL_MAX_ALLOWED, "oversized allowlist clamped to DMR_RCTL_MAX_ALLOWED");
-    CHECK(dmr_rctl_gate_check(&g4, manyIds[0], 1) == 1, "first (kept) id after clamping still works");
+    dmr_rctl_gate_init(&g4, 1);
+    for (uint32_t i = 0; i < DMR_RCTL_REPLAY_CACHE; i++)
+    {
+        CHECK(dmr_rctl_gate_check(&g4, 0x1000 + i, 1) == 1, "cache fills up to capacity without overrun");
+    }
+    CHECK(g4.used == DMR_RCTL_REPLAY_CACHE, "cache reports itself full at capacity");
+    /* one more distinct issuer beyond capacity -- must not crash/overrun, evicts slot 0 */
+    CHECK(dmr_rctl_gate_check(&g4, 0x1000 + DMR_RCTL_REPLAY_CACHE, 1) == 1,
+          "(N+1)th distinct issuer accepted, evicting the oldest tracked entry");
+    CHECK(g4.used == DMR_RCTL_REPLAY_CACHE, "cache size stays capped after eviction");
+    /* the evicted issuer (0x1000) is now "forgotten" -- treated as new again, even at seq 1
+     * (a documented trade-off of the bounded cache, not a bug: see dmr_rctl_pdu.h) */
+    CHECK(dmr_rctl_gate_check(&g4, 0x1000, 1) == 1,
+          "evicted issuer is re-admitted as 'new' (documented bounded-cache trade-off)");
 
     if (fails)
     {

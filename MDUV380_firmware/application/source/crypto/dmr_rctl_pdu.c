@@ -40,32 +40,42 @@ int dmr_rctl_unpack(const uint8_t in[DMR_RCTL_PDU_LEN], dmr_rctl_msg_t *out)
     return 1;
 }
 
-void dmr_rctl_gate_init(dmr_rctl_gate_t *g, uint8_t enabled, const uint32_t *allowedIds, uint8_t numAllowed)
+void dmr_rctl_gate_init(dmr_rctl_gate_t *g, uint8_t enabled)
 {
     memset(g, 0, sizeof *g);
     g->enabled = enabled;
-    if (numAllowed > DMR_RCTL_MAX_ALLOWED) { numAllowed = DMR_RCTL_MAX_ALLOWED; }
-    g->numAllowed = numAllowed;
-    for (uint8_t i = 0; i < numAllowed; i++) { g->allowedId[i] = allowedIds[i]; }
 }
 
 int dmr_rctl_gate_check(dmr_rctl_gate_t *g, uint32_t issuerId, uint32_t seq)
 {
-    /* Порожній/невизначений allowlist навмисно НЕ означає "дозволити всім" - лише сам ключ
-     * шифрування не є достатнім доказом права видавати команди керування (на відміну від
-     * голосу/SMS, де мета - зв'язок, а не примусова дія над чужою рацією). Enabled=1 без
-     * жодного налаштованого ID означає "увімкнено, але ще нікому не довіряю". */
-    if (!g->enabled || (g->numAllowed == 0)) { return 0; }
+    /* enabled=0 -> ніхто, enabled=1 -> будь-хто з правильним канальним ключем (див.
+     * коментар у dmr_rctl_pdu.h -- модель узгоджена з користувачем 2026-09-03, за
+     * зразком Motorola/Hytera: єдиний бінарний перемикач, без окремого allowlist). */
+    if (!g->enabled) { return 0; }
 
-    int idx = -1;
-    for (uint8_t i = 0; i < g->numAllowed; i++)
+    for (uint8_t i = 0; i < g->used; i++)
     {
-        if (g->allowedId[i] == issuerId) { idx = (int)i; break; }
+        if (g->issuerId[i] == issuerId)
+        {
+            if (seq <= g->lastSeq[i]) { return 0; } /* replay or out-of-order: reject, state untouched */
+            g->lastSeq[i] = seq;
+            return 1;
+        }
     }
-    if (idx < 0) { return 0; }
 
-    if (seq <= g->lastSeq[idx]) { return 0; } /* replay or out-of-order: reject, state untouched */
-
-    g->lastSeq[idx] = seq;
+    /* Новий видавець (ще немає запису в кеші anti-replay) -- перша команда від нього
+     * завжди приймається, поки gate увімкнено; далі відстежуємо його seq окремо. */
+    uint8_t slot;
+    if (g->used < DMR_RCTL_REPLAY_CACHE)
+    {
+        slot = g->used++;
+    }
+    else
+    {
+        slot = g->nextEvict;
+        g->nextEvict = (uint8_t)((g->nextEvict + 1) % DMR_RCTL_REPLAY_CACHE);
+    }
+    g->issuerId[slot] = issuerId;
+    g->lastSeq[slot] = seq;
     return 1;
 }
