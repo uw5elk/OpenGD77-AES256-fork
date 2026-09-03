@@ -53,6 +53,7 @@
 #include "interfaces/adc.h"
 #include "functions/rxPowerSaving.h"
 #include "functions/dmr_sms.h"
+#include "functions/dmr_rctl_tx.h"
 #if defined(ENABLE_AES)
 // dmr_aes_hook.h уже підключено вище; тут лише тексти сповіщення.
 #if defined(LANGUAGE_BUILD_UKRAINIAN)
@@ -1445,6 +1446,7 @@ void applicationMainTask(void)
 		settingsSaveIfNeeded(false);
 #if defined(ENABLE_DMR_DATA) && defined(ENABLE_AES)
 		dmrSmsRxTick();   // decrypt + store + notify any received encrypted SMS
+		dmrRctlTick();    // RCTL: allowlist/replay-gate + auto-CHECK_ACK (Фаза 1, PLANS.md §3)
 #endif
 
 		if (settingsIsOptionBitSet(BIT_DISPLAY_TIME_IN_HEADER))

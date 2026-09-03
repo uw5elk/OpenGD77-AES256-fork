@@ -32,6 +32,7 @@
 #include "crypto/dmr_aes.h"   // DMR_AES_MAX_KEYS (per-channel key-slot range check)
 #include "functions/dmr_data.h"   // DMR data-frame TX harness (ENABLE_DMR_DATA)
 #include "functions/dmr_sms.h"    // encrypted-SMS RX reassembly (ENABLE_DMR_DATA + ENABLE_AES)
+#include "functions/dmr_rctl_tx.h" // RCTL RX reassembly (ENABLE_DMR_DATA + ENABLE_AES), паралельно з SMS
 #include "functions/settings.h"
 #if defined(USING_EXTERNAL_DEBUGGER)
 #include "SeggerRTT/RTT/SEGGER_RTT.h"
@@ -1075,6 +1076,7 @@ static inline void hrc6000SysReceivedDataInt(void)
 			dmrAesRxEnd(); // AES: call ended (no-op unless ENABLE_AES)
 #if defined(ENABLE_DMR_DATA) && defined(ENABLE_AES)
 			dmrSmsRxReset(); // drop any partial SMS data-PDU reassembly
+			dmrRctlRxReset(); // те саме для RCTL (окремий, паралельний збирач)
 #endif
 			trxIsTransmitting = false;
 
@@ -1110,6 +1112,7 @@ static inline void hrc6000SysReceivedDataInt(void)
 			if (SPI0ReadPageRegByteArray(0x02, 0x00, dataBurst, LC_DATA_LENGTH) == kStatus_Success)
 			{
 				dmrSmsRxBurst(rxDataType, dataBurst);
+				dmrRctlRxBurst(rxDataType, dataBurst); // паралельний, незалежний збирач RCTL
 			}
 		}
 	}
