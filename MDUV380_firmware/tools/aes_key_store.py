@@ -18,6 +18,14 @@ TX-ключа лишився саме тут, у заголовку AESK).
     коректна реалізація — tools/stock_key_table.py).
 Дивись PLANS.md, розділ 15.
 
+*** ВИПРАВЛЕННЯ (2026-09-03): читання/запис цього блоку тепер через custom_data.py. ***
+До цього скрипт (а) шукав AES-блок лише в перших 1024 Б custom-data регіону — на рації
+з великим блоком SMS-повідомлень AES-блок фізично міг лежати ДАЛІ й просто не знаходився;
+(б) записував НАСЛІП з початку регіону, що могло затерти БУДЬ-ЯКИЙ інший блок (тему,
+заставку, повідомлення), який фізично лежить у перших ~600 байтах. Обидва виправлено:
+tools/custom_data.py — той самий scan-find-or-append алгоритм, що й у прошивці
+(codeplug.c), без обмеження на 1024 Б і без ризику для сусідніх блоків.
+
 The keys live in a standard OpenGD77 custom-data block (CODEPLUG_CUSTOM_DATA_TYPE_AES_KEYS
 = 6) in the SPI-flash custom-data region (FLASH_ADDRESS_OFFSET = 0x20000 on MDUV380).
 This is the same region/format the CPS manages themes, boot screens, DMR-ID data, etc.
@@ -99,21 +107,6 @@ def flash_write_block(ser, addr, data):
     if not r or r[0] == ord("-"):
         raise RuntimeError("flash write/commit failed: %r" % r)
 
-def find_aes_block(region):
-    """Return (block_offset, payload) of the AES_KEYS block within the region bytes,
-    or (None, None). region[0:] starts at the custom-data region base."""
-    if region[:8] != CUSTOM_MAGIC:
-        return None, None
-    off = HDR_LEN
-    while off + 8 <= len(region):
-        dtype, dlen = struct.unpack_from("<ii", region, off)
-        if dtype == TYPE_AES_KEYS and 0 < dlen <= AESK_BLOCK_LEN:
-            return off, region[off + 8: off + 8 + dlen]
-        if dlen == 0 or dlen == -1 or (dtype & 0xFFFFFFFF) == 0xFFFFFFFF:
-            return None, None  # hit empty/end without finding it
-        off += 8 + dlen
-    return None, None
-
 def fresh_payload():
     p = bytearray(AESK_BLOCK_LEN)
     p[0:4] = b"AESK"; p[4] = 1; p[5] = 0  # magic, version, txKeyId=0
@@ -154,11 +147,16 @@ def main():
 
     with serial.Serial(port, 115200, timeout=0.6) as ser:
         show_cps(ser)
-        region = flash_read(ser, FLASH_BASE, 1024)
-        has_magic = region[:8] == CUSTOM_MAGIC
-        boff, payload = find_aes_block(region)
-        print("region magic:", "OpenGD77" if has_magic else region[:8].hex(),
-              "| AES block:", ("@+%d" % boff) if boff is not None else "none")
+        # custom_data.py: правильний, безпечний для СУСІДНІХ блоків (тема/повідомлення/
+        # заставка/RCTL) читач/писар -- дивись коментар там (2026-09-03: до цього тут
+        # був прямий запис "з початку регіону", що міг зіпсувати будь-який блок, який
+        # фізично лежить після AES-селектора, а читання дивилось лише в перші 1024 Б
+        # регіону -- на рації з великим блоком повідомлень (SMS) AES-блок міг лежати
+        # ДАЛІ й просто не знаходитись). Локальний import, щоб уникнути кругової
+        # залежності: custom_data.py сам робить "import aes_key_store".
+        import custom_data as cd
+        payload = cd.read_block(ser, TYPE_AES_KEYS, AESK_BLOCK_LEN)
+        print("AES-селектор блок:", ("знайдено, %d Б" % len(payload)) if payload else "відсутній")
 
         if a.show:
             pl = payload if payload else b""
@@ -185,21 +183,18 @@ def main():
             payload[5] = a.txkey & 0xFF
             print("set TX key id = %d" % a.txkey)
 
-        # Build the region image: magic(12) + block header(8) + payload(584)
-        img = bytearray()
-        img += CUSTOM_MAGIC + b"\xFF\xFF\xFF\xFF"
-        img += struct.pack("<ii", TYPE_AES_KEYS, AESK_BLOCK_LEN)
-        img += bytes(payload)
-        flash_write_block(ser, FLASH_BASE, bytes(img))
-        print("wrote %d bytes to flash region @0x%X" % (len(img), FLASH_BASE))
+        ok, msg = cd.write_block(ser, TYPE_AES_KEYS, bytes(payload))
+        if not ok:
+            sys.exit("ЗАПИС НЕ ВДАВСЯ: %s" % msg)
+        print("wrote %d bytes (%s)" % (AESK_BLOCK_LEN, msg))
 
         # verify read-back
-        rb = flash_read(ser, FLASH_BASE, len(img))
-        ok = rb == bytes(img)
-        print("read-back verify:", "OK" if ok else "MISMATCH")
-        if not ok:
-            print("  wrote:", bytes(img)[:24].hex())
-            print("  read :", rb[:24].hex())
+        rb = cd.read_block(ser, TYPE_AES_KEYS, AESK_BLOCK_LEN)
+        ok2 = rb == bytes(payload)
+        print("read-back verify:", "OK" if ok2 else "MISMATCH")
+        if not ok2:
+            print("  wrote:", bytes(payload)[:24].hex())
+            print("  read :", (rb or b"")[:24].hex())
 
 if __name__ == "__main__":
     main()

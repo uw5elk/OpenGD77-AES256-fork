@@ -44,6 +44,9 @@ import dmr_reboot_dfu as reboot
 import aes_key_store            # CPS-протокол (flash_read/flash_write_block/find_port) --
                                  # той самий, перевірений код, що й у CLI-версії
 import stock_key_table as skt   # wrap/unwrap-логіка стокової таблиці ключів (без USB)
+import custom_data as cd        # безпечний read/write custom-data блоків (тема/AES-селектор/
+                                 # RCTL і т.д. в ОДНОМУ регіоні -- див. коментар у custom_data.py)
+import rctl_config as rctl      # формат блоку "RCTL" (allowlist віддаленого керування)
 
 try:
     import serial  # той самий пакет, яким уже користується dmr_reboot_dfu.py
@@ -187,6 +190,10 @@ class FlasherApp(tk.Tk):
         self.aes_button = ttk.Button(action_frame, text="Керування AES-ключами...",
                                      command=self._open_aes_key_manager)
         self.aes_button.pack(side="left", padx=8)
+
+        self.rctl_button = ttk.Button(action_frame, text="Віддалене керування (RCTL)...",
+                                      command=self._open_rctl_config)
+        self.rctl_button.pack(side="left", padx=8)
 
         self.progress = ttk.Progressbar(self, mode="determinate", maximum=100)
         self.progress.pack(fill="x", padx=12, pady=(0, 6))
@@ -416,6 +423,9 @@ class FlasherApp(tk.Tk):
 
     def _open_aes_key_manager(self):
         AesKeyManagerWindow(self)
+
+    def _open_rctl_config(self):
+        RctlConfigWindow(self)
 
     def _on_flash_finished(self, ok, reason):
         self.flashing = False
@@ -651,19 +661,15 @@ class AesKeyManagerWindow(tk.Toplevel):
 
     def _set_tx_key_worker(self, tx_id):
         with self._connect() as ser:
-            region = aes_key_store.flash_read(ser, aes_key_store.FLASH_BASE, 1024)
-            boff, payload = aes_key_store.find_aes_block(region)
+            payload = cd.read_block(ser, aes_key_store.TYPE_AES_KEYS, aes_key_store.AESK_BLOCK_LEN)
             payload = bytearray(payload) if payload else aes_key_store.fresh_payload()
             if payload[:4] != b"AESK":
                 payload = bytearray(aes_key_store.fresh_payload())
             payload[5] = tx_id & 0xFF
 
-            img = bytearray()
-            img += aes_key_store.CUSTOM_MAGIC + b"\xFF\xFF\xFF\xFF"
-            import struct
-            img += struct.pack("<ii", aes_key_store.TYPE_AES_KEYS, aes_key_store.AESK_BLOCK_LEN)
-            img += bytes(payload)
-            aes_key_store.flash_write_block(ser, aes_key_store.FLASH_BASE, bytes(img))
+            ok, msg = cd.write_block(ser, aes_key_store.TYPE_AES_KEYS, bytes(payload))
+            if not ok:
+                raise RuntimeError(msg)
             print("Активний TX-ключ встановлено: {}.".format(tx_id if tx_id else "вимкнено (0)"))
 
     def _refresh_slots_worker(self):
@@ -678,8 +684,7 @@ class AesKeyManagerWindow(tk.Toplevel):
                     if skt.is_key_present(skt.unwrap_key(wrapped)):
                         occupied.append(key_id)
 
-            region = aes_key_store.flash_read(ser, aes_key_store.FLASH_BASE, 1024)
-            _boff, payload = aes_key_store.find_aes_block(region)
+            payload = cd.read_block(ser, aes_key_store.TYPE_AES_KEYS, aes_key_store.AESK_BLOCK_LEN)
             tx_id = payload[5] if payload else 0
 
             empty = [i for i in range(skt.STOCK_KEY_MIN_ID, skt.STOCK_KEY_MAX_ID + 1) if i not in occupied]
@@ -701,6 +706,203 @@ class AesKeyManagerWindow(tk.Toplevel):
                 fn()
                 ok = True
             except Exception as e:  # noqa: BLE001 -- показуємо будь-яку помилку, не ховаємо
+                reason = str(e)
+            finally:
+                sys.stdout = old_stdout
+                self.queue.put(("done", (ok, reason)))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_worker_finished(self, ok, reason):
+        self.busy = False
+        if ok:
+            self.status_label.config(text="Готово.", foreground="#0a6b2a")
+        else:
+            self.status_label.config(text="Помилка.", foreground="#b00000")
+            self._log("!!! Помилка: {}".format(reason))
+            messagebox.showerror("Помилка", "Щось пішло не так: {}".format(reason))
+
+
+class RctlConfigWindow(tk.Toplevel):
+    """Налаштування allowlist "хто може видавати команди віддаленого керування"
+    (RCTL -- functions/dmr_rctl_cfg.c). Пише блок "RCTL" у custom-data (CHIRP-стиль:
+    прошивка лише читає, jamais пише сама).
+
+    ВАЖЛИВО: це вікно НЕ вміє надіслати саму команду Radio Check в ефір -- команда
+    йде рація-рації по DMR, а не через USB/CPS. Тут лише готується "хто кому
+    довіряє" (fail closed: enabled=0 і порожній allowlist за замовчуванням, доки
+    не налаштовано явно). Сам запит з рації -- окремий, ще не написаний пункт меню
+    (PLANS.md §3, "Що й досі відсутнє")."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.title("OpenGD77 -- Віддалене керування (RCTL)")
+        self.geometry("480x480")
+        self.minsize(440, 420)
+
+        self.queue = queue.Queue()
+        self.busy = False
+
+        self._build_ui()
+        self.after(50, self._poll_queue)
+
+    def _build_ui(self):
+        pad = {"padx": 12, "pady": 6}
+
+        note = ttk.Label(
+            self,
+            text=("Тут лише СПИСОК ДОВІРЕНИХ ID (allowlist), не сама команда -- "
+                  "Radio Check шлеться рація-рації по ефіру, не через USB. "
+                  "Рація має бути УВІМКНЕНА У ЗВИЧАЙНОМУ РЕЖИМІ (не в DFU)."),
+            wraplength=440, justify="left", foreground="#8a5300",
+        )
+        note.pack(anchor="w", **pad)
+
+        self.enabled_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(self, text="Приймати команди RCTL на цій рації (enabled)",
+                        variable=self.enabled_var).pack(anchor="w", padx=12)
+
+        ids_frame = ttk.LabelFrame(self, text="Довірені DMR ID (до 8)")
+        ids_frame.pack(fill="both", expand=False, **pad)
+
+        row = ttk.Frame(ids_frame)
+        row.pack(fill="x", padx=8, pady=(6, 2))
+        ttk.Label(row, text="DMR ID:").pack(side="left")
+        self.newid_var = tk.StringVar()
+        ttk.Entry(row, textvariable=self.newid_var, width=12).pack(side="left", padx=6)
+        ttk.Button(row, text="Додати", command=self._on_add_id).pack(side="left")
+        ttk.Button(row, text="Видалити вибраний", command=self._on_remove_id).pack(side="left", padx=6)
+
+        self.ids_listbox = tk.Listbox(ids_frame, height=6)
+        self.ids_listbox.pack(fill="x", padx=8, pady=(2, 8))
+
+        btn_row = ttk.Frame(self)
+        btn_row.pack(fill="x", **pad)
+        ttk.Button(btn_row, text="Прочитати поточний стан", command=self._on_read).pack(side="left")
+        ttk.Button(btn_row, text="Записати на рацію", command=self._on_write).pack(side="left", padx=8)
+
+        self.status_label = ttk.Label(self, text="Натисни «Прочитати поточний стан».", foreground="#14506b")
+        self.status_label.pack(anchor="w", padx=12, pady=(4, 0))
+
+        log_frame = ttk.LabelFrame(self, text="Журнал")
+        log_frame.pack(fill="both", expand=True, **pad)
+        self.log_text = scrolledtext.ScrolledText(log_frame, height=8, state="disabled",
+                                                    font=("Consolas", 9))
+        self.log_text.pack(fill="both", expand=True, padx=6, pady=6)
+
+    # --- лог/прогрес -------------------------------------------------------------
+
+    def _log(self, text):
+        self.log_text.config(state="normal")
+        self.log_text.insert("end", text + "\n")
+        self.log_text.see("end")
+        self.log_text.config(state="disabled")
+
+    def _poll_queue(self):
+        try:
+            while True:
+                kind, payload = self.queue.get_nowait()
+                if kind == "log":
+                    self._log(payload)
+                elif kind == "state":
+                    self._apply_state(payload)
+                elif kind == "done":
+                    self._on_worker_finished(*payload)
+        except queue.Empty:
+            pass
+        self.after(50, self._poll_queue)
+
+    def _apply_state(self, state):
+        self.enabled_var.set(state["enabled"])
+        self.ids_listbox.delete(0, "end")
+        for aid in state["allowedId"]:
+            self.ids_listbox.insert("end", str(aid))
+
+    # --- дії користувача -----------------------------------------------------------
+
+    def _on_add_id(self):
+        text = self.newid_var.get().strip()
+        if not text.isdigit():
+            messagebox.showerror("Невірний ID", "DMR ID -- це число.")
+            return
+        if self.ids_listbox.size() >= rctl.MAX_ALLOWED:
+            messagebox.showerror("Забагато ID", "Максимум {} довірених ID (DMR_RCTL_MAX_ALLOWED).".format(rctl.MAX_ALLOWED))
+            return
+        self.ids_listbox.insert("end", text)
+        self.newid_var.set("")
+
+    def _on_remove_id(self):
+        sel = self.ids_listbox.curselection()
+        if sel:
+            self.ids_listbox.delete(sel[0])
+
+    def _on_read(self):
+        if self.busy:
+            return
+        self._run_worker(self._read_worker, "Читаю поточний стан...")
+
+    def _on_write(self):
+        if self.busy:
+            return
+        try:
+            ids = [int(self.ids_listbox.get(i)) for i in range(self.ids_listbox.size())]
+        except ValueError:
+            messagebox.showerror("Невірний список", "Список ID містить не-число.")
+            return
+        enabled = self.enabled_var.get()
+        if enabled and not ids:
+            if not messagebox.askokcancel(
+                "Порожній allowlist",
+                "enabled=1, але список довірених ID порожній -- рація й далі "
+                "ІГНОРУВАТИМЕ всі команди (fail closed за дизайном). Записати так?",
+            ):
+                return
+        self._run_worker(lambda: self._write_worker(enabled, ids), "Записую...")
+
+    # --- фонові операції -----------------------------------------------------------
+
+    def _connect(self):
+        port = aes_key_store.find_port()
+        if not port:
+            raise RuntimeError(
+                "рацію не знайдено у звичайному режимі (VID:PID 1fc9:0094). "
+                "Переконайся, що вона увімкнена звичайним способом (НЕ в DFU) і кабель підключено."
+            )
+        ser = serial.Serial(port, 115200, timeout=0.6)
+        aes_key_store.show_cps(ser)
+        return ser
+
+    def _read_worker(self):
+        with self._connect() as ser:
+            payload = cd.read_block(ser, rctl.TYPE_RCTL_CONFIG, rctl.PAYLOAD_LEN)
+            state = rctl.parse_payload(payload) if payload else {"version": 1, "enabled": False, "allowedId": []}
+            self.queue.put(("state", state))
+            print("Стан: enabled={}, allowlist={}".format(state["enabled"], state["allowedId"]))
+
+    def _write_worker(self, enabled, ids):
+        with self._connect() as ser:
+            payload = rctl.build_payload(enabled, ids)
+            ok, msg = cd.write_block(ser, rctl.TYPE_RCTL_CONFIG, payload)
+            if not ok:
+                raise RuntimeError(msg)
+            rb = cd.read_block(ser, rctl.TYPE_RCTL_CONFIG, rctl.PAYLOAD_LEN)
+            verify_ok = (rb == payload)
+            print("Записано ({}). Звірка читанням: {}.".format(msg, "OK" if verify_ok else "НЕЗБІГ"))
+
+    def _run_worker(self, fn, status_text):
+        self.busy = True
+        self.status_label.config(text=status_text, foreground="#14506b")
+        self._log("=" * 30)
+        self._log(status_text)
+
+        def worker():
+            old_stdout = sys.stdout
+            sys.stdout = QueueWriter(self.queue)
+            ok, reason = False, None
+            try:
+                fn()
+                ok = True
+            except Exception as e:  # noqa: BLE001
                 reason = str(e)
             finally:
                 sys.stdout = old_stdout
