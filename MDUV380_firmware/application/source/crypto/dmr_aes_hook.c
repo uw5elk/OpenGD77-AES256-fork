@@ -477,6 +477,23 @@ static int rxChannelAllowsAesDetect(void)
     return 1;
 }
 
+/* Слот ключа, ДОЗВОЛЕНИЙ на цьому каналі для прийому.
+ *   1..15 -> лише цей keyId; виклик, зашифрований будь-яким іншим ключем, лишається
+ *            нерозшифрованим, навіть якщо той ключ у нас завантажений;
+ *   0     -> обмеження немає (канал на Inherit): поводимось як раніше -- приймаємо той
+ *            keyId, який називає передавач у заголовку PI, якщо він у нас є.
+ * Канал, позначений Off, сюди не доходить: його відсікає rxChannelAllowsAesDetect(). */
+static uint8_t rxChannelKeyFilter(void)
+{
+    if (currentChannelData != NULL)
+    {
+        uint8_t slot = codeplugChannelGetAesKeySlot(currentChannelData);
+
+        if ((slot >= 1) && (slot < DMR_AES_MAX_KEYS)) { return slot; }
+    }
+    return 0;
+}
+
 /* ---- RX --------------------------------------------------------------------
  * The OFB keystream is applied to the 49 DECODED AMBE voice bits (in codecDecode),
  * not the 27 raw FEC octets — validated against DSD-FME (ground truth) on 690 frames.
@@ -494,6 +511,17 @@ void dmrAesRxPI(const uint8_t *pi, int len)
     if (!s_rxActive && !rxChannelAllowsAesDetect()) { return; }  /* канал позначено Off: тут ніколи не (пере)ініціалізовуємо */
     if (dmr_pi_parse(pi, (size_t)len, &p) && p.valid)
     {
+        /* Канал із явно заданим слотом приймає ТІЛЬКИ свій ключ. Заодно це прибирає цілий
+         * клас хибних спрацювань: пошкоджений LC, що випадково назвав інший наш ключ, більше
+         * не може запустити розшифровку на такому каналі. */
+        uint8_t onlyKeyId = rxChannelKeyFilter();
+
+        if ((onlyKeyId != 0) && (p.key_id != onlyKeyId))
+        {
+            s_rxPendValid = 0;   /* чужий ключ не має лишатись кандидатом на підтвердження */
+            return;
+        }
+
         /* Seed only when NOT already active. The per-superframe MI is now driven by the
          * Late-Entry MI read directly from the AMBE bits (dmrAesRxBurst), which tracks the
          * transmitter and jumps immediately on a new call. We must NOT reseed on a chip-LC
@@ -634,9 +662,14 @@ void dmrAesRxBurst(int seq)
             {
                 dmr_pi_t p;
                 p.alg_id = DMR_ALG_AES256; p.mfid = DMR_MFID_DMRA;
-                p.key_id = s_rxKeyId; p.mi = leMi; p.valid = 1;
+                uint8_t onlyKeyId = rxChannelKeyFilter();
+
+                p.key_id = (onlyKeyId != 0) ? onlyKeyId : s_rxKeyId; p.mi = leMi; p.valid = 1;
                 act = (dmr_aes_rx_init(&s_rx, &p) == 0);   /* sets s_rx.mi = leMi + loads key */
-                if (!act) { int fk = dmr_aes_first_keyid(); if (fk >= 0) { p.key_id = (uint8_t)fk; act = (dmr_aes_rx_init(&s_rx, &p) == 0); } }
+                /* Здогадка "візьмемо перший завантажений ключ" лишається тільки для каналів
+                 * без заданого слота. Там, де слот заданий, вгадувати нічого: або наш ключ,
+                 * або взагалі не розшифровуємо. */
+                if (!act && (onlyKeyId == 0)) { int fk = dmr_aes_first_keyid(); if (fk >= 0) { p.key_id = (uint8_t)fk; act = (dmr_aes_rx_init(&s_rx, &p) == 0); } }
                 if (act) { s_rxActive = 1; s_rxInitMi = leMi; s_rxKeyId = s_rx.key_id; s_rxPiSeeded = 0; }
             }
             if (!act) { s_rx.mi = mi; }   /* rx_init already set s_rx.mi = leMi when act; else keep predicting */
