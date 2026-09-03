@@ -41,6 +41,9 @@ from tkinter import ttk, filedialog, messagebox, scrolledtext
 # --- Перевірені модулі проєкту, що роблять усю фактичну роботу ---------------------
 import opengd77_stm32_firmware_loader as loader
 import dmr_reboot_dfu as reboot
+import aes_key_store            # CPS-протокол (flash_read/flash_write_block/find_port) --
+                                 # той самий, перевірений код, що й у CLI-версії
+import stock_key_table as skt   # wrap/unwrap-логіка стокової таблиці ключів (без USB)
 
 try:
     import serial  # той самий пакет, яким уже користується dmr_reboot_dfu.py
@@ -180,6 +183,10 @@ class FlasherApp(tk.Tk):
         self.zadig_button = ttk.Button(action_frame, text="Драйвер DFU (Zadig)",
                                        command=lambda: webbrowser.open(ZADIG_URL))
         self.zadig_button.pack(side="left", padx=8)
+
+        self.aes_button = ttk.Button(action_frame, text="Керування AES-ключами...",
+                                     command=self._open_aes_key_manager)
+        self.aes_button.pack(side="left", padx=8)
 
         self.progress = ttk.Progressbar(self, mode="determinate", maximum=100)
         self.progress.pack(fill="x", padx=12, pady=(0, 6))
@@ -405,6 +412,11 @@ class FlasherApp(tk.Tk):
             sys.stdout = old_stdout
             self.queue.put(("done", (ok, reason)))
 
+    # --- AES-ключі (окреме вікно -- інший стан USB, рація НЕ в DFU) -----------
+
+    def _open_aes_key_manager(self):
+        AesKeyManagerWindow(self)
+
     def _on_flash_finished(self, ok, reason):
         self.flashing = False
         self.flash_button.config(state="normal")
@@ -438,6 +450,272 @@ class FlasherApp(tk.Tk):
             self._log("!!! Помилка: {}".format(reason))
             messagebox.showerror("Помилка прошивки", "Щось пішло не так: {}\n\n"
                                   "Подробиці -- у журналі внизу вікна.".format(reason))
+
+
+class AesKeyManagerWindow(tk.Toplevel):
+    """Окреме вікно для додавання/видалення AES-256 ключів шифрування голосу.
+
+    ІНША фізична фаза USB, ніж прошивка: рація тут має бути у ЗВИЧАЙНОМУ
+    робочому режимі (VID:PID 1fc9:0094, той самий CPS-протокол, яким
+    користується офіційна CPS-програма) -- НЕ в DFU-завантажувачі. Тому це
+    окреме вікно, а не ще один розділ у вікні прошивки: змішувати два різні
+    очікувані стани рації в одному екрані тільки б плутало користувача.
+
+    Ключі зберігаються у форматі стокової таблиці TYT (не в кастомних даних
+    OpenGD77) -- див. tools/stock_key_table.py й коментар при
+    STOCK_KEY_TABLE_BASE у dmr_aes_hook.c. Сам протокольний код читання/запису
+    флеш (flash_read/flash_write_block/find_port) береться з aes_key_store.py
+    як є -- нічого не дублюється."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.title("OpenGD77 -- AES-ключі шифрування")
+        self.geometry("480x520")
+        self.minsize(440, 460)
+
+        self.queue = queue.Queue()
+        self.busy = False
+
+        self._build_ui()
+        self.after(50, self._poll_queue)
+
+    # --- інтерфейс -------------------------------------------------------------
+
+    def _build_ui(self):
+        pad = {"padx": 12, "pady": 6}
+
+        note = ttk.Label(
+            self,
+            text=("Рація має бути УВІМКНЕНА У ЗВИЧАЙНОМУ РЕЖИМІ (не в DFU!). "
+                  "Матеріал ключа ніде на екрані не показується -- лише факт "
+                  "\"зайнято/порожньо\"."),
+            wraplength=440, justify="left", foreground="#8a5300",
+        )
+        note.pack(anchor="w", **pad)
+
+        key_frame = ttk.LabelFrame(self, text="Слот ключа (1..15)")
+        key_frame.pack(fill="x", **pad)
+
+        row1 = ttk.Frame(key_frame)
+        row1.pack(fill="x", padx=8, pady=(6, 2))
+        ttk.Label(row1, text="ID ключа:").pack(side="left")
+        self.keyid_var = tk.IntVar(value=1)
+        ttk.Spinbox(row1, from_=1, to=15, width=4, textvariable=self.keyid_var).pack(side="left", padx=6)
+
+        row2 = ttk.Frame(key_frame)
+        row2.pack(fill="x", padx=8, pady=2)
+        ttk.Label(row2, text="Ключ (64 hex):").pack(side="left")
+        self.key_var = tk.StringVar()
+        self.key_entry = ttk.Entry(row2, textvariable=self.key_var, width=40, font=("Consolas", 9))
+        self.key_entry.pack(side="left", padx=6, fill="x", expand=True)
+
+        self.show_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(key_frame, text="показувати введений ключ", variable=self.show_var,
+                        command=self._toggle_key_visibility).pack(anchor="w", padx=8)
+
+        row3 = ttk.Frame(key_frame)
+        row3.pack(fill="x", padx=8, pady=(2, 8))
+        ttk.Button(row3, text="Записати ключ", command=self._on_write_key).pack(side="left")
+        ttk.Button(row3, text="Очистити ключ", command=self._on_clear_key).pack(side="left", padx=8)
+
+        tx_frame = ttk.LabelFrame(self, text="Активний ключ для передачі (TX)")
+        tx_frame.pack(fill="x", **pad)
+        row4 = ttk.Frame(tx_frame)
+        row4.pack(fill="x", padx=8, pady=8)
+        ttk.Label(row4, text="TX-ключ (0 = вимк.):").pack(side="left")
+        self.txkey_var = tk.IntVar(value=0)
+        ttk.Spinbox(row4, from_=0, to=15, width=4, textvariable=self.txkey_var).pack(side="left", padx=6)
+        ttk.Button(row4, text="Встановити", command=self._on_set_tx_key).pack(side="left", padx=8)
+
+        ttk.Button(self, text="Оновити список зайнятих слотів",
+                  command=self._on_refresh_slots).pack(anchor="w", padx=12)
+
+        self.status_label = ttk.Label(self, text="Готово.", foreground="#0a6b2a")
+        self.status_label.pack(anchor="w", padx=12, pady=(4, 0))
+
+        log_frame = ttk.LabelFrame(self, text="Журнал")
+        log_frame.pack(fill="both", expand=True, **pad)
+        self.log_text = scrolledtext.ScrolledText(log_frame, height=10, state="disabled",
+                                                    font=("Consolas", 9))
+        self.log_text.pack(fill="both", expand=True, padx=6, pady=6)
+
+    def _toggle_key_visibility(self):
+        self.key_entry.config(show="" if self.show_var.get() else "*")
+
+    # --- лог/прогрес ---------------------------------------------------------
+
+    def _log(self, text):
+        self.log_text.config(state="normal")
+        self.log_text.insert("end", text + "\n")
+        self.log_text.see("end")
+        self.log_text.config(state="disabled")
+
+    def _poll_queue(self):
+        try:
+            while True:
+                kind, payload = self.queue.get_nowait()
+                if kind == "log":
+                    self._log(payload)
+                elif kind == "done":
+                    self._on_worker_finished(*payload)
+        except queue.Empty:
+            pass
+        self.after(50, self._poll_queue)
+
+    # --- валідація вводу -------------------------------------------------------
+
+    def _read_key32(self):
+        text = self.key_var.get().strip().replace(" ", "")
+        try:
+            key = bytes.fromhex(text)
+        except ValueError:
+            messagebox.showerror("Невірний ключ", "Ключ має бути рядком із 64 шістнадцяткових символів (0-9, A-F).")
+            return None
+        if len(key) != 32:
+            messagebox.showerror("Невірний ключ", "Ключ має бути рівно 64 hex-символи (32 байти), зараз {}.".format(len(text)))
+            return None
+        return key
+
+    # --- дії користувача ---------------------------------------------------------
+
+    def _on_write_key(self):
+        if self.busy:
+            return
+        key32 = self._read_key32()
+        if key32 is None:
+            return
+        key_id = self.keyid_var.get()
+        if not messagebox.askokcancel(
+            "Записати ключ?",
+            "Записати ключ у слот {} на рації?\n\n"
+            "Переконайся, що рація увімкнена у ЗВИЧАЙНОМУ режимі (не в DFU).".format(key_id),
+        ):
+            return
+        self._run_worker(lambda: self._write_key_worker(key_id, key32),
+                         "Записую ключ {}...".format(key_id))
+
+    def _on_clear_key(self):
+        if self.busy:
+            return
+        key_id = self.keyid_var.get()
+        if not messagebox.askokcancel(
+            "Очистити ключ?",
+            "Стерти ключ у слоті {} на рації? Цю дію не можна скасувати.".format(key_id),
+        ):
+            return
+        self._run_worker(lambda: self._clear_key_worker(key_id),
+                         "Очищую ключ {}...".format(key_id))
+
+    def _on_set_tx_key(self):
+        if self.busy:
+            return
+        tx_id = self.txkey_var.get()
+        self._run_worker(lambda: self._set_tx_key_worker(tx_id),
+                         "Встановлюю активний TX-ключ = {}...".format(tx_id))
+
+    def _on_refresh_slots(self):
+        if self.busy:
+            return
+        self._run_worker(self._refresh_slots_worker, "Читаю зайняті слоти...")
+
+    # --- фонові операції (у потоці) ------------------------------------------------
+
+    def _connect(self):
+        port = aes_key_store.find_port()
+        if not port:
+            raise RuntimeError(
+                "рацію не знайдено у звичайному режимі (VID:PID 1fc9:0094). "
+                "Переконайся, що вона увімкнена звичайним способом (НЕ в DFU) і кабель підключено."
+            )
+        ser = serial.Serial(port, 115200, timeout=0.6)
+        aes_key_store.show_cps(ser)
+        return ser
+
+    def _write_key_worker(self, key_id, key32):
+        with self._connect() as ser:
+            addr = skt.entry_addr(key_id)
+            existing = aes_key_store.flash_read(ser, addr, skt.STOCK_KEY_ENTRY_LEN)
+            entry = skt.build_entry(key_id, key32, existing_entry100=existing if len(existing) == skt.STOCK_KEY_ENTRY_LEN else None)
+            aes_key_store.flash_write_block(ser, addr, entry)
+            readback = aes_key_store.flash_read(ser, addr, skt.STOCK_KEY_ENTRY_LEN)
+            ok = (readback == entry)
+            print("Ключ {}: записано, звірка {}.".format(key_id, "OK" if ok else "НЕЗБІГ (спробуй ще раз)"))
+
+    def _clear_key_worker(self, key_id):
+        with self._connect() as ser:
+            addr = skt.entry_addr(key_id)
+            existing = aes_key_store.flash_read(ser, addr, skt.STOCK_KEY_ENTRY_LEN)
+            entry = skt.build_entry(key_id, skt.BLANK_KEY, existing_entry100=existing if len(existing) == skt.STOCK_KEY_ENTRY_LEN else None)
+            aes_key_store.flash_write_block(ser, addr, entry)
+            print("Ключ {}: очищено (позначено як порожній слот).".format(key_id))
+
+    def _set_tx_key_worker(self, tx_id):
+        with self._connect() as ser:
+            region = aes_key_store.flash_read(ser, aes_key_store.FLASH_BASE, 1024)
+            boff, payload = aes_key_store.find_aes_block(region)
+            payload = bytearray(payload) if payload else aes_key_store.fresh_payload()
+            if payload[:4] != b"AESK":
+                payload = bytearray(aes_key_store.fresh_payload())
+            payload[5] = tx_id & 0xFF
+
+            img = bytearray()
+            img += aes_key_store.CUSTOM_MAGIC + b"\xFF\xFF\xFF\xFF"
+            import struct
+            img += struct.pack("<ii", aes_key_store.TYPE_AES_KEYS, aes_key_store.AESK_BLOCK_LEN)
+            img += bytes(payload)
+            aes_key_store.flash_write_block(ser, aes_key_store.FLASH_BASE, bytes(img))
+            print("Активний TX-ключ встановлено: {}.".format(tx_id if tx_id else "вимкнено (0)"))
+
+    def _refresh_slots_worker(self):
+        with self._connect() as ser:
+            occupied = []
+            for key_id in range(skt.STOCK_KEY_MIN_ID, skt.STOCK_KEY_MAX_ID + 1):
+                entry = aes_key_store.flash_read(ser, skt.entry_addr(key_id), skt.STOCK_KEY_ENTRY_LEN)
+                if len(entry) != skt.STOCK_KEY_ENTRY_LEN:
+                    continue
+                entry_type, _name, wrapped = skt.parse_entry(entry)
+                if entry_type in (skt.STOCK_KEY_TYPE_AES256, skt.STOCK_KEY_TYPE_AES256B):
+                    if skt.is_key_present(skt.unwrap_key(wrapped)):
+                        occupied.append(key_id)
+
+            region = aes_key_store.flash_read(ser, aes_key_store.FLASH_BASE, 1024)
+            _boff, payload = aes_key_store.find_aes_block(region)
+            tx_id = payload[5] if payload else 0
+
+            empty = [i for i in range(skt.STOCK_KEY_MIN_ID, skt.STOCK_KEY_MAX_ID + 1) if i not in occupied]
+            print("Зайняті слоти: {}".format(", ".join(map(str, occupied)) if occupied else "немає"))
+            print("Порожні слоти: {}".format(", ".join(map(str, empty)) if empty else "немає"))
+            print("Активний TX-ключ: {}".format(tx_id if tx_id else "вимкнено (0)"))
+
+    def _run_worker(self, fn, status_text):
+        self.busy = True
+        self.status_label.config(text=status_text, foreground="#14506b")
+        self._log("=" * 30)
+        self._log(status_text)
+
+        def worker():
+            old_stdout = sys.stdout
+            sys.stdout = QueueWriter(self.queue)
+            ok, reason = False, None
+            try:
+                fn()
+                ok = True
+            except Exception as e:  # noqa: BLE001 -- показуємо будь-яку помилку, не ховаємо
+                reason = str(e)
+            finally:
+                sys.stdout = old_stdout
+                self.queue.put(("done", (ok, reason)))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_worker_finished(self, ok, reason):
+        self.busy = False
+        if ok:
+            self.status_label.config(text="Готово.", foreground="#0a6b2a")
+        else:
+            self.status_label.config(text="Помилка.", foreground="#b00000")
+            self._log("!!! Помилка: {}".format(reason))
+            messagebox.showerror("Помилка", "Щось пішло не так: {}".format(reason))
 
 
 def main():

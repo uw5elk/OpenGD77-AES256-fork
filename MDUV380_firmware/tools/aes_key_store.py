@@ -2,15 +2,31 @@
 """Persistently store DMRA AES-256 keys on an OpenGD77-AES radio using the SAME
 flash mechanism the OpenGD77 CPS uses (CPS_ACCESS_FLASH 'X' write commands).
 
+*** УВАГА (2026-09-03): --key/--keyid ТУТ БІЛЬШЕ НЕ ПРАЦЮЮТЬ. ***
+Пізніший коміт прошивки (5028cc3, "AES keys: read and write the stock TYT key
+table") переніс МАТЕРІАЛ ключа з блоку нижче в стокову таблицю ключів TYT
+MD-UV390 (SPI-флеш 0xD9F9C+0x64*keyId, реверс-інжинірингом, для сумісності з
+CHIRP і зі стоковою прошивкою) — dmrAesLoadKeys() більше НЕ читає ключ звідси.
+Цей скрипт і далі мовчки "успішно" записує --key в блок AESK нижче, але
+прошивка ці байти вже ігнорує — реального ефекту на голосове шифрування це
+НЕ має. --tx-key і далі працює як задокументовано (селектор активного
+TX-ключа лишився саме тут, у заголовку AESK).
+Робочі способи додати/видалити сам ключ сьогодні:
+  - прямо з рації: меню "AES-ключі" (menuAESKeys.c) — без ПК;
+  - CHIRP Read/Write кодплагу (формат ключів ідентичний стоковому);
+  - tools/gui_flasher.py, кнопка "Керування AES-ключами..." (те саме, у GUI;
+    коректна реалізація — tools/stock_key_table.py).
+Дивись PLANS.md, розділ 15.
+
 The keys live in a standard OpenGD77 custom-data block (CODEPLUG_CUSTOM_DATA_TYPE_AES_KEYS
 = 6) in the SPI-flash custom-data region (FLASH_ADDRESS_OFFSET = 0x20000 on MDUV380).
-This is the same region/format the CPS manages themes, boot screens, DMR-ID data, etc.,
-so a future CPS GUI can read/write keys the same way. The firmware reads this block at
-boot via codeplugGetOpenGD77CustomData() + dmrAesLoadKeys() — no custom firmware store.
+This is the same region/format the CPS manages themes, boot screens, DMR-ID data, etc.
+The firmware still reads BYTE 5 of this block (the TX-key selector) via
+codeplugGetOpenGD77CustomData() + dmrAesLoadKeys() — but no longer the key material.
 
 Usage:
-  python3 aes_key_store.py --key <64hex> [--keyid 1] [--tx-key N] [--port COM4]
-  python3 aes_key_store.py --tx-key N            # set active TX key only
+  python3 aes_key_store.py --key <64hex> [--keyid 1] [--tx-key N] [--port COM4]  # --key: NO-OP, see above
+  python3 aes_key_store.py --tx-key N            # set active TX key only (still works)
   python3 aes_key_store.py --show                # dump the stored block
 
 The block survives reboots (it's in flash). The radio enumerates as USB CDC 1fc9:0094.
@@ -132,6 +148,9 @@ def main():
         key = bytes.fromhex(a.key.strip())
         if len(key) != 32: sys.exit("key must be 64 hex chars")
         if not (0 <= a.keyid <= 15): sys.exit("keyid 0..15")
+        print("УВАГА: --key тут з 2026-09-03 НІЧОГО не робить для реального шифрування -- "
+              "прошивка більше не читає ключ із цього блоку (див. коментар на початку файлу). "
+              "Використай меню \"AES-ключі\" на рації, CHIRP, або gui_flasher.py.")
 
     with serial.Serial(port, 115200, timeout=0.6) as ser:
         show_cps(ser)

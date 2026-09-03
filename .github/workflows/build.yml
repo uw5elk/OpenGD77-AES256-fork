@@ -107,7 +107,7 @@ jobs:
           python-version: "3.12"
       - name: Install Python-залежності
         shell: bash
-        run: pip install pyinstaller pyusb pyserial libusb
+        run: pip install pyinstaller pyusb pyserial libusb cryptography
       - name: Підготувати файли для вбудовування (прошивка, libusb dll, підпис збірки)
         shell: bash
         working-directory: MDUV380_firmware/tools
@@ -135,6 +135,7 @@ jobs:
         run: |
           pyinstaller --onefile --windowed --name OpenGD77-Flasher \
             --hidden-import usb.backend.libusb1 \
+            --hidden-import cryptography.hazmat.bindings._rust \
             --add-data "openuv380-10w.bin;." \
             --add-data "libusb-1.0.dll;." \
             --add-data "build_info.txt;." \
