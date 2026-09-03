@@ -1163,15 +1163,25 @@ static bool displayGPSData(bool isFirstRun, bool forceRedraw)
 			}
 			else
 			{
+#if defined(LANGUAGE_BUILD_UKRAINIAN)
+				// Окремий рядок замість склейки .no + .gps -- див. коментар біля gps_absent
+				// у stringsTable_t: дослівне "Ні GPS" українською не читається.
+				snprintf(buffer, SCREEN_LINE_BUFFER_SIZE, "%s", currentLanguage->gps_absent);
+#else
 				snprintf(buffer, SCREEN_LINE_BUFFER_SIZE, "%s %s", currentLanguage->no, currentLanguage->gps);
+#endif
 				displayThemeApply(THEME_ITEM_FG_ERROR_NOTIFICATION, THEME_ITEM_BG);
 				displayPrintCentered(((DISPLAY_SIZE_Y - FONT_SIZE_3_HEIGHT) >> 1) + (FONT_SIZE_3_HEIGHT >> 1), buffer, FONT_SIZE_3);
 				displayThemeResetToDefault();
 
 				if (forceRedraw == false)
 				{
+#if defined(LANGUAGE_BUILD_UKRAINIAN)
+					voicePromptsAppendLanguageString(currentLanguage->gps_absent);
+#else
 					voicePromptsAppendLanguageString(currentLanguage->no);
 					voicePromptsAppendLanguageString(currentLanguage->gps);
+#endif
 				}
 			}
 

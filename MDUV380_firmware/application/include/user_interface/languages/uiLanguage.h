@@ -344,6 +344,13 @@ typedef struct
    const char messages[LANGUAGE_TEXTS_LENGTH];// encrypted-SMS menu (appended last under the combined guard)
 #endif
 #endif
+#if defined(LANGUAGE_BUILD_UKRAINIAN)
+   // Українською "Ні GPS" (склейка .no + .gps) звучить безглуздо: .no -- це відповідь
+   // "ні" з пари Так/Ні, а тут потрібна констатація відсутності модуля. Поле додано
+   // ОСТАННІМ і лише під українським прапорцем, щоб розкладка stringsTable_t для решти
+   // збірок лишилась байт-в-байт тією ж -- її читає ще й мовний файл, що пише CPS.
+   const char gps_absent[LANGUAGE_TEXTS_LENGTH];
+#endif
 } stringsTable_t;
 
 #endif // _OPENGD77_UILANGUAGE_H_

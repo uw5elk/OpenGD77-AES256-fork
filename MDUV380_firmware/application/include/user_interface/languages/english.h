@@ -334,6 +334,9 @@ const stringsTable_t englishLanguage =
 .messages				= "Messages", // MaxLen: 16
 #endif
 #endif
+#if defined(LANGUAGE_BUILD_UKRAINIAN)
+.gps_absent                              = "No GPS", // MaxLen: 16
+#endif
 };
 /********************************************************************
  *

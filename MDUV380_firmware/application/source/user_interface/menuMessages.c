@@ -34,6 +34,55 @@
 #include "functions/codeplug.h"   /* Contact List browsing for the recipient picker */
 #include "crypto/dmr_aes.h"
 #include "io/keyboard.h"
+
+/*
+ * Рядки цього екрана перемикаються на етапі компіляції, а не через stringsTable_t:
+ * SMS -- функція саме цього форку, а таблицю рядків читає ще й мовний файл від CPS,
+ * тож три десятки нових полів зламали б ту сумісність і з'їли б ~1 КБ флеша в кожній
+ * збірці. Українські значення лежать у languages/messages_ua.h (кодування cp1251).
+ */
+#if defined(LANGUAGE_BUILD_UKRAINIAN)
+#include "user_interface/languages/messages_ua.h"
+#else
+#define MSGS_TITLE               "Messages"
+#define MSGS_INBOX_FMT           "Inbox (%d)"
+#define MSGS_SENT_FMT            "Sent (%d)"
+#define MSGS_NEW                 "New Message"
+#define MSGS_TITLE_SENT          "Sent"
+#define MSGS_TITLE_INBOX         "Inbox"
+#define MSGS_EMPTY               "(empty)"
+#define MSGS_HINT_BACK           "RED:back"
+#define MSGS_DELETE_ALL          "[Delete all]"
+#define MSGS_TO                  "To"
+#define MSGS_FROM                "From"
+#define MSGS_HINT_SENT_ITEM      "SK2+GRN:del GRN:resend"
+#define MSGS_HINT_INBOX_ITEM     "SK2+GRN:del GRN:reply"
+#define MSGS_TITLE_NEW           "New Message"
+#define MSGS_CHARS_FMT           "%d/%d chars"
+#define MSGS_HINT_PRESET         "U:preset  L:del"
+#define MSGS_HINT_TO_CANCEL      "GRN:to  RED:cancel"
+#define MSGS_TITLE_RCPT          "Recipient"
+#define MSGS_TO_FMT              "To: %s"
+#define MSGS_TYPE_FMT            "Type: %s"
+#define MSGS_GROUP               "Group"
+#define MSGS_PRIVATE             "Private"
+#define MSGS_HINT_ID             "0-9:id  L:del"
+#define MSGS_HINT_GRP_PRIV       "U/D:Group/Private"
+#define MSGS_HINT_CONTACTS       "SK1:contacts"
+#define MSGS_HINT_SEND_BACK      "GRN:send  RED:back"
+#define MSGS_TITLE_PICK_TG       "Pick TG contact"
+#define MSGS_TITLE_PICK_PC       "Pick PC contact"
+#define MSGS_NO_CONTACTS         "(no contacts)"
+#define MSGS_SENT_OK             "Message sent"
+#define MSGS_KEYED_TX            "(keyed TX)"
+#define MSGS_SEND_FAILED         "Send failed"
+#define MSGS_ERR_GENERIC         "error"
+#define MSGS_ERR_TX_BUSY         "TX busy"
+#define MSGS_ERR_BAD_TEXT        "bad text"
+#define MSGS_ERR_TOO_LONG        "too long"
+#define MSGS_FAIL_FMT            "%s (ret %d)"
+#define MSGS_HINT_ANY_KEY        "any key: back"
+#endif
 #include <string.h>
 #include <stdlib.h>
 
@@ -124,7 +173,7 @@ static void homeUpdate(void)
 {
 	char buf[24];
 	displayClearBuf();
-	menuDisplayTitle("Messages");
+	menuDisplayTitle(MSGS_TITLE);
 
 	for (int i = MENU_START_ITERATION_VALUE; i <= MENU_END_ITERATION_VALUE; i++)
 	{
@@ -134,25 +183,11 @@ static void homeUpdate(void)
 
 		switch (mNum)
 		{
-			case 0:  snprintf(buf, sizeof buf, "Inbox (%d)", dmrSmsCount(0)); break;
-			case 1:  snprintf(buf, sizeof buf, "Sent (%d)",  dmrSmsCount(1)); break;
-			default: snprintf(buf, sizeof buf, "New Message");                break;
+			case 0:  snprintf(buf, sizeof buf, MSGS_INBOX_FMT, dmrSmsCount(0)); break;
+			case 1:  snprintf(buf, sizeof buf, MSGS_SENT_FMT,  dmrSmsCount(1)); break;
+			default: snprintf(buf, sizeof buf, MSGS_NEW);                break;
 		}
 		menuDisplayEntry(i, mNum, buf, 0, THEME_ITEM_FG_MENU_ITEM, THEME_ITEM_FG_OPTIONS_VALUE, THEME_ITEM_BG);
-	}
-
-	// RX diagnostic (bench bring-up). d=all data-sync bursts the chip delivered;
-	// h/b = data-header / rate-1/2 with CRC ok!bad; p=PDUs; m=decoded messages.
-	{
-		uint32_t d[7];
-		char l1[26], l2[26];
-		dmrSmsRxDiag(d);
-		snprintf(l1, sizeof l1, "d%lu h%lu!%lu b%lu!%lu",
-				(unsigned long)d[0], (unsigned long)d[1], (unsigned long)d[2],
-				(unsigned long)d[3], (unsigned long)d[4]);
-		snprintf(l2, sizeof l2, "p%lu m%lu", (unsigned long)d[5], (unsigned long)d[6]);
-		displayPrintCentered(108, l1, FONT_SIZE_1);
-		displayPrintCentered(118, l2, FONT_SIZE_1);
 	}
 
 	displayRender();
@@ -239,12 +274,12 @@ static void listUpdate(void)
 	char buf[DMR_SMS_TEXT_MAX + 24];
 	int count = dmrSmsCount(s_msg.folder);
 	displayClearBuf();
-	menuDisplayTitle(s_msg.folder ? "Sent" : "Inbox");
+	menuDisplayTitle(s_msg.folder ? MSGS_TITLE_SENT : MSGS_TITLE_INBOX);
 
 	if (count == 0)
 	{
-		displayPrintCentered(56, "(empty)", FONT_SIZE_3);
-		displayPrintCentered(112, "RED:back", FONT_SIZE_1);
+		displayPrintCentered(56, MSGS_EMPTY, FONT_SIZE_3);
+		displayPrintCentered(112, MSGS_HINT_BACK, FONT_SIZE_1);
 		displayRender();
 		return;
 	}
@@ -257,7 +292,7 @@ static void listUpdate(void)
 
 		if (mNum == count)
 		{
-			snprintf(buf, sizeof buf, "[Delete all]");
+			snprintf(buf, sizeof buf, MSGS_DELETE_ALL);
 		}
 		else
 		{
@@ -332,12 +367,12 @@ static void readUpdate(void)
 {
 	const dmrSmsMessage_t *m = dmrSmsGet(s_msg.folder, s_msg.readIdx);
 	displayClearBuf();
-	menuDisplayTitle(s_msg.folder ? "Sent" : "Inbox");
+	menuDisplayTitle(s_msg.folder ? MSGS_TITLE_SENT : MSGS_TITLE_INBOX);
 
 	if (m == NULL) { displayRender(); return; }
 
 	char hdr[24];
-	snprintf(hdr, sizeof hdr, "%s %lu", (m->flags & DMR_SMS_FLAG_OUTGOING) ? "To" : "From",
+	snprintf(hdr, sizeof hdr, "%s %lu", (m->flags & DMR_SMS_FLAG_OUTGOING) ? MSGS_TO : MSGS_FROM,
 			(unsigned long)m->peerId);
 	displayPrintAt(2, 16, hdr, FONT_SIZE_1);
 
@@ -356,7 +391,7 @@ static void readUpdate(void)
 		displayPrintAt(2, y, line, FONT_SIZE_2);
 	}
 
-	displayPrintCentered(112, s_msg.folder ? "SK2+GRN:del GRN:resend" : "SK2+GRN:del GRN:reply", FONT_SIZE_1);
+	displayPrintCentered(112, s_msg.folder ? MSGS_HINT_SENT_ITEM : MSGS_HINT_INBOX_ITEM, FONT_SIZE_1);
 	displayRender();
 }
 
@@ -421,7 +456,7 @@ static void readEvent(uiEvent_t *ev)
 static void composeUpdate(void)
 {
 	displayClearBuf();
-	menuDisplayTitle("New Message");
+	menuDisplayTitle(MSGS_TITLE_NEW);
 
 	// show the text wrapped
 	const int perLine = 21;
@@ -440,13 +475,13 @@ static void composeUpdate(void)
 	}
 
 	char cnt[20];
-	snprintf(cnt, sizeof cnt, "%d/%d chars", n, dmrSmsMaxLen());
+	snprintf(cnt, sizeof cnt, MSGS_CHARS_FMT, n, dmrSmsMaxLen());
 	displayPrintCentered(96, cnt, FONT_SIZE_1);
 	if (dmrSmsPresetCount() > 0)
 	{
-		displayPrintCentered(104, "U:preset  L:del", FONT_SIZE_1);
+		displayPrintCentered(104, MSGS_HINT_PRESET, FONT_SIZE_1);
 	}
-	displayPrintCentered(116, "GRN:to  RED:cancel", FONT_SIZE_1);
+	displayPrintCentered(116, MSGS_HINT_TO_CANCEL, FONT_SIZE_1);
 	displayRender();
 }
 
@@ -528,17 +563,17 @@ static void recipientUpdate(void)
 {
 	char buf[24];
 	displayClearBuf();
-	menuDisplayTitle("Recipient");
+	menuDisplayTitle(MSGS_TITLE_RCPT);
 
-	snprintf(buf, sizeof buf, "To: %s", s_msg.rcpt);
+	snprintf(buf, sizeof buf, MSGS_TO_FMT, s_msg.rcpt);
 	displayPrintAt(2, 28, buf, FONT_SIZE_3);
-	snprintf(buf, sizeof buf, "Type: %s", s_msg.rcptGroup ? "Group" : "Private");
+	snprintf(buf, sizeof buf, MSGS_TYPE_FMT, s_msg.rcptGroup ? MSGS_GROUP : MSGS_PRIVATE);
 	displayPrintAt(2, 52, buf, FONT_SIZE_2);
 
-	displayPrintCentered(82,  "0-9:id  L:del", FONT_SIZE_1);
-	displayPrintCentered(92,  "U/D:Group/Private", FONT_SIZE_1);
-	displayPrintCentered(102, "SK1:contacts", FONT_SIZE_1);
-	displayPrintCentered(112, "GRN:send  RED:back", FONT_SIZE_1);
+	displayPrintCentered(82,  MSGS_HINT_ID, FONT_SIZE_1);
+	displayPrintCentered(92,  MSGS_HINT_GRP_PRIV, FONT_SIZE_1);
+	displayPrintCentered(102, MSGS_HINT_CONTACTS, FONT_SIZE_1);
+	displayPrintCentered(112, MSGS_HINT_SEND_BACK, FONT_SIZE_1);
 	displayRender();
 }
 
@@ -618,12 +653,12 @@ static void pickContactUpdate(void)
 	char buf[24];
 
 	displayClearBuf();
-	menuDisplayTitle(s_msg.rcptGroup ? "Pick TG contact" : "Pick PC contact");
+	menuDisplayTitle(s_msg.rcptGroup ? MSGS_TITLE_PICK_TG : MSGS_TITLE_PICK_PC);
 
 	if (count == 0)
 	{
-		displayPrintCentered(56, "(no contacts)", FONT_SIZE_2);
-		displayPrintCentered(112, "RED:back", FONT_SIZE_1);
+		displayPrintCentered(56, MSGS_NO_CONTACTS, FONT_SIZE_2);
+		displayPrintCentered(112, MSGS_HINT_BACK, FONT_SIZE_1);
 		displayRender();
 		return;
 	}
@@ -697,27 +732,27 @@ static void pickContactEvent(uiEvent_t *ev)
 static void resultUpdate(void)
 {
 	displayClearBuf();
-	menuDisplayTitle("Messages");
+	menuDisplayTitle(MSGS_TITLE);
 	if (s_msg.result == 0)
 	{
-		displayPrintCentered(44, "Message sent", FONT_SIZE_3);
-		displayPrintCentered(72, "(keyed TX)", FONT_SIZE_2);
+		displayPrintCentered(44, MSGS_SENT_OK, FONT_SIZE_3);
+		displayPrintCentered(72, MSGS_KEYED_TX, FONT_SIZE_2);
 	}
 	else
 	{
 		char buf[24];
-		const char *why = "error";
+		const char *why = MSGS_ERR_GENERIC;
 		switch (s_msg.result)
 		{
-			case -2: why = "TX busy";   break;
-			case -1: why = "bad text";  break;
-			case -4: case -5: why = "too long"; break;
+			case -2: why = MSGS_ERR_TX_BUSY;   break;
+			case -1: why = MSGS_ERR_BAD_TEXT;  break;
+			case -4: case -5: why = MSGS_ERR_TOO_LONG; break;
 		}
-		displayPrintCentered(44, "Send failed", FONT_SIZE_3);
-		snprintf(buf, sizeof buf, "%s (ret %d)", why, s_msg.result);
+		displayPrintCentered(44, MSGS_SEND_FAILED, FONT_SIZE_3);
+		snprintf(buf, sizeof buf, MSGS_FAIL_FMT, why, s_msg.result);
 		displayPrintCentered(72, buf, FONT_SIZE_2);
 	}
-	displayPrintCentered(112, "any key: back", FONT_SIZE_1);
+	displayPrintCentered(112, MSGS_HINT_ANY_KEY, FONT_SIZE_1);
 	displayRender();
 }
 
