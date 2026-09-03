@@ -153,7 +153,11 @@ typedef enum
 	BIT_VISUAL_VOLUME               = (SETTINGS_BITS_BANK_0 | (1 << 18)),
 #endif
 	BIT_SECONDARY_LANGUAGE          = (SETTINGS_BITS_BANK_0 | (1 << 19)),
-	BIT_UNUSED_3                    = (SETTINGS_BITS_BANK_0 | (1 << 20)),
+	// Був BIT_UNUSED_3 -- перевикористано під новий перемикач "S-метр у шапці" (2026-09-03),
+	// той самий спосіб, яким BIT_DISPLAY_CHANNEL_DISTANCE нижче зайняв bit 21: жодних нових
+	// бітів/банків, лише перейменування невикористаного плейсхолдера. За замовчуванням
+	// вимкнено (0), тож рації без цієї опції в кодплазі поводяться так само, як і завжди.
+	BIT_SHOW_SMETER_IN_HEADER       = (SETTINGS_BITS_BANK_0 | (1 << 20)),
 	BIT_DISPLAY_CHANNEL_DISTANCE    = (SETTINGS_BITS_BANK_0 | (1 << 21)),
 #if defined(PLATFORM_MD2017)
 	BIT_TRACKBALL_ENABLED           = (SETTINGS_BITS_BANK_0 | (1 << 22)),

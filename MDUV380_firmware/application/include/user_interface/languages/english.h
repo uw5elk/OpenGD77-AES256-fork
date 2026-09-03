@@ -336,6 +336,9 @@ const stringsTable_t englishLanguage =
 .rctl_config				= "RCTL access", // MaxLen: 16
 #endif
 #endif
+#if defined(HAS_COLOURS)
+.smeter_header				= "S-meter hdr", // MaxLen: 16 (with ':' + .on or .off)
+#endif
 #if defined(LANGUAGE_BUILD_UKRAINIAN)
 .gps_absent                              = "No GPS", // MaxLen: 16
 #endif

@@ -337,6 +337,9 @@ const stringsTable_t ukrainianLanguage =
 .rctl_config                              = "Доступ RCTL", // MaxLen: 16
 #endif
 #endif
+#if defined(HAS_COLOURS)
+.smeter_header                           = "S-метр шапки", // MaxLen: 16 (with ':' + .on or .off)
+#endif
 #if defined(LANGUAGE_BUILD_UKRAINIAN)
 .gps_absent                              = "GPS відсутній", // MaxLen: 16
 #endif

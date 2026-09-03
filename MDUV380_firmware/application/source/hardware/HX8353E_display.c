@@ -1534,6 +1534,18 @@ void themeInitToDefaultValues(DayTime_t daytime, bool invert)
 	// RGB888_TO_PLATFORM_COLOUR_FORMAT() залежить від displayLCD_Type, відомого лише
 	// під час виконання. Індексовані іменами елементів теми, тож порядок у themeItem_t
 	// можна міняти, не чіпаючи цю таблицю.
+	// Другий прохід яскравості (2026-09-03, PLANS.md): користувач сказав, що ОБИДВІ теми
+	// (денна й нічна) досі виглядають тьмяними навіть після першого проходу вище. Замість
+	// повторного "підняти яскравість до межі контрасту" (це вже пробували і воно НЕ
+	// спрацювало -- дає бляклі, вимиті кольори прямо на межі мінімуму), тут максимізовано
+	// НАСИЧЕНІСТЬ (HLS saturation=1.0) при близькій до вихідної світлості -- тобто кольори
+	// стають насиченішими/яскравішими, а не просто світлішими, і контраст перевірено ще раз
+	// після квантування в RGB565 (скрипт /tmp/theme_contrast2.py, лишився поза репозиторієм).
+	// Нейтральні сірі поля (де R=G=B) свідомо ПРОПУЩЕНІ -- їхній відтінок (hue) невизначений,
+	// і насичення "навмання" перетворює сірий на випадковий колір (виявлено на FG_DECORATION:
+	// 0x303030 ставало червоним 0x630000). Змінено лише кольори з відчутним запасом по
+	// насиченості; ті, що вже й так майже максимально насичені (напр. 0xB00000, 0xFF5555),
+	// лишено як є -- виграш там мізерний.
 	static const uint32_t themeDefaults[NIGHT + 1][THEME_ITEM_MAX] =
 	{
 		[DAY] =
@@ -1542,37 +1554,37 @@ void themeInitToDefaultValues(DayTime_t daytime, bool invert)
 			[THEME_ITEM_BG]                      = 0xFFFFFFU, // тло екрана
 			[THEME_ITEM_FG_DECORATION]           = 0x303030U, // рамки, роздільники
 			[THEME_ITEM_FG_TEXT_INPUT]           = 0x000000U, // введення тексту
-			[THEME_ITEM_FG_SPLASHSCREEN]         = 0x14506BU, // заставка
+			[THEME_ITEM_FG_SPLASHSCREEN]         = 0x006594U, // заставка (яскравіше, контраст 6.38:1)
 			[THEME_ITEM_BG_SPLASHSCREEN]         = 0xFFFFFFU, // тло заставки
-			[THEME_ITEM_FG_NOTIFICATION]         = 0x14506BU, // сповіщення
-			[THEME_ITEM_FG_WARNING_NOTIFICATION] = 0x9A5000U, // попередження
+			[THEME_ITEM_FG_NOTIFICATION]         = 0x006594U, // сповіщення
+			[THEME_ITEM_FG_WARNING_NOTIFICATION] = 0x9C5100U, // попередження (насичено, контраст 5.85:1)
 			[THEME_ITEM_FG_ERROR_NOTIFICATION]   = 0xB00000U, // помилка
 			[THEME_ITEM_BG_NOTIFICATION]         = 0xFFFFFFU, // тло сповіщення
 			[THEME_ITEM_FG_MENU_NAME]            = 0xFFFFFFU, // заголовок меню
-			[THEME_ITEM_BG_MENU_NAME]            = 0x14506BU, // смуга заголовка
+			[THEME_ITEM_BG_MENU_NAME]            = 0x006594U, // смуга заголовка
 			[THEME_ITEM_FG_MENU_ITEM]            = 0x000000U, // пункти меню
 			// Текст виділеного пункту прошивка малює кольором THEME_ITEM_BG (тобто білим),
 			// тому заливка тут МАЄ бути темною -- інакше білий на майже білому не видно.
 			// Був баг: 0xAED8F0 (світло-блакитний) давав контраст лише 1.47:1 замість
 			// потрібних 4.5:1 -- виділений пункт зливався з тлом (2026-09-03).
-			[THEME_ITEM_BG_MENU_ITEM_SELECTED]   = 0x14506BU, // смуга виділення (той самий teal, що й шапка меню; контраст 8.56:1)
-			[THEME_ITEM_FG_OPTIONS_VALUE]        = 0x14506BU, // значення налаштувань
+			[THEME_ITEM_BG_MENU_ITEM_SELECTED]   = 0x006594U, // смуга виділення (той самий колір, що й шапка меню; контраст 6.38:1)
+			[THEME_ITEM_FG_OPTIONS_VALUE]        = 0x006594U, // значення налаштувань
 			[THEME_ITEM_FG_HEADER_TEXT]          = 0x000000U, // текст шапки
 			[THEME_ITEM_BG_HEADER_TEXT]          = 0xD8D8D8U, // тло шапки
-			[THEME_ITEM_FG_RSSI_BAR]             = 0x008000U, // смуга RSSI до S9
+			[THEME_ITEM_FG_RSSI_BAR]             = 0x008A00U, // смуга RSSI до S9 (контраст 3.14:1, тісний запас -- більше насичення без втрати контрасту недоступне)
 			[THEME_ITEM_FG_RSSI_BAR_S9P]         = 0xC00000U, // смуга RSSI понад S9
-			[THEME_ITEM_FG_CHANNEL_NAME]         = 0x14506BU, // назва каналу
-			[THEME_ITEM_FG_CHANNEL_CONTACT]      = 0x8B1A0AU, // контакт (TG/PC)
-			[THEME_ITEM_FG_CHANNEL_CONTACT_INFO] = 0x8B1A0AU, // інфо контакту
-			[THEME_ITEM_FG_ZONE_NAME]            = 0x7A0508U, // назва зони
+			[THEME_ITEM_FG_CHANNEL_NAME]         = 0x006594U, // назва каналу
+			[THEME_ITEM_FG_CHANNEL_CONTACT]      = 0xAD1400U, // контакт (TG/PC), контраст 7.30:1
+			[THEME_ITEM_FG_CHANNEL_CONTACT_INFO] = 0xAD1400U, // інфо контакту
+			[THEME_ITEM_FG_ZONE_NAME]            = 0x940000U, // назва зони, контраст 9.30:1
 			[THEME_ITEM_FG_RX_FREQ]              = 0x000000U, // частота RX
 			[THEME_ITEM_FG_TX_FREQ]              = 0xB00000U, // частота TX
-			[THEME_ITEM_FG_CSS_SQL_VALUES]       = 0x14506BU, // значення CSS/squelch
+			[THEME_ITEM_FG_CSS_SQL_VALUES]       = 0x006594U, // значення CSS/squelch
 			[THEME_ITEM_FG_TX_COUNTER]           = 0xB00000U, // лічильник TX
 			[THEME_ITEM_FG_POLAR_DRAWING]        = 0x505050U, // полярна сітка
-			[THEME_ITEM_FG_SATELLITE_COLOUR]     = 0x007000U, // точки супутників
+			[THEME_ITEM_FG_SATELLITE_COLOUR]     = 0x008A00U, // точки супутників, контраст 4.53:1
 			[THEME_ITEM_FG_GPS_NUMBER]           = 0x000000U, // номери GPS
-			[THEME_ITEM_FG_GPS_COLOUR]           = 0x0000C0U, // смуги/точки GPS
+			[THEME_ITEM_FG_GPS_COLOUR]           = 0x0000E6U, // смуги/точки GPS, контраст 9.80:1
 			[THEME_ITEM_FG_BD_COLOUR]            = 0xC00000U, // смуги/точки BEIDOU
 		},
 		[NIGHT] =
@@ -1581,37 +1593,37 @@ void themeInitToDefaultValues(DayTime_t daytime, bool invert)
 			[THEME_ITEM_BG]                      = 0x1C1C1CU,
 			[THEME_ITEM_FG_DECORATION]           = 0xC0C0C0U,
 			[THEME_ITEM_FG_TEXT_INPUT]           = 0xFFFFFFU,
-			[THEME_ITEM_FG_SPLASHSCREEN]         = 0x7FC4E8U,
+			[THEME_ITEM_FG_SPLASHSCREEN]         = 0x7BD2FFU, // яскравіше, контраст 10.24:1
 			[THEME_ITEM_BG_SPLASHSCREEN]         = 0x000000U,
-			[THEME_ITEM_FG_NOTIFICATION]         = 0x7FC4E8U,
+			[THEME_ITEM_FG_NOTIFICATION]         = 0x7BD2FFU,
 			[THEME_ITEM_FG_WARNING_NOTIFICATION] = 0xFFB040U,
 			[THEME_ITEM_FG_ERROR_NOTIFICATION]   = 0xFF5555U,
 			[THEME_ITEM_BG_NOTIFICATION]         = 0x1C1C1CU,
 			[THEME_ITEM_FG_MENU_NAME]            = 0xFFFFFFU,
 			[THEME_ITEM_BG_MENU_NAME]            = 0x0A3D5CU,
-			[THEME_ITEM_FG_MENU_ITEM]            = 0x7FC4E8U,
+			[THEME_ITEM_FG_MENU_ITEM]            = 0x7BD2FFU,
 			// Той самий баг тут: текст виділеного пункту малюється кольором THEME_ITEM_BG
 			// (тобто майже чорним, 0x1C1C1C), тому заливка має бути світлою, а не темною.
 			// Був 0x0E4A70 (темно-синій) -- контраст 1.78:1. Тепер яскраво-блакитний,
-			// той самий, що й звичайний текст меню -- контраст 8.92:1.
-			[THEME_ITEM_BG_MENU_ITEM_SELECTED]   = 0x7FC4E8U,
-			[THEME_ITEM_FG_OPTIONS_VALUE]        = 0xF0A83CU,
-			[THEME_ITEM_FG_HEADER_TEXT]          = 0x7FC4E8U,
+			// той самий, що й звичайний текст меню -- контраст 10.24:1.
+			[THEME_ITEM_BG_MENU_ITEM_SELECTED]   = 0x7BD2FFU,
+			[THEME_ITEM_FG_OPTIONS_VALUE]        = 0xFFB23AU, // яскравіше, контраст 9.56:1
+			[THEME_ITEM_FG_HEADER_TEXT]          = 0x7BD2FFU,
 			[THEME_ITEM_BG_HEADER_TEXT]          = 0x000000U,
-			[THEME_ITEM_FG_RSSI_BAR]             = 0x00CC00U,
+			[THEME_ITEM_FG_RSSI_BAR]             = 0x00D700U, // яскравіше, контраст 10.72:1
 			[THEME_ITEM_FG_RSSI_BAR_S9P]         = 0xFF5000U,
-			[THEME_ITEM_FG_CHANNEL_NAME]         = 0x22C878U,
-			[THEME_ITEM_FG_CHANNEL_CONTACT]      = 0xF0A83CU,
-			[THEME_ITEM_FG_CHANNEL_CONTACT_INFO] = 0xF0A83CU,
-			[THEME_ITEM_FG_ZONE_NAME]            = 0xB8B8B8U,
+			[THEME_ITEM_FG_CHANNEL_NAME]         = 0x00F77BU, // яскравіше, контраст 11.94:1
+			[THEME_ITEM_FG_CHANNEL_CONTACT]      = 0xFFB23AU,
+			[THEME_ITEM_FG_CHANNEL_CONTACT_INFO] = 0xFFB23AU,
+			[THEME_ITEM_FG_ZONE_NAME]            = 0xCECACEU, // світліше (без зміни відтінку -- нейтральний сірий), контраст 10.61:1
 			[THEME_ITEM_FG_RX_FREQ]              = 0xE8E8E8U,
 			[THEME_ITEM_FG_TX_FREQ]              = 0xFF5555U,
-			[THEME_ITEM_FG_CSS_SQL_VALUES]       = 0x22C878U,
+			[THEME_ITEM_FG_CSS_SQL_VALUES]       = 0x00F77BU,
 			[THEME_ITEM_FG_TX_COUNTER]           = 0xFF5555U,
-			[THEME_ITEM_FG_POLAR_DRAWING]        = 0x7FC4E8U,
-			[THEME_ITEM_FG_SATELLITE_COLOUR]     = 0x22C878U,
+			[THEME_ITEM_FG_POLAR_DRAWING]        = 0x7BD2FFU,
+			[THEME_ITEM_FG_SATELLITE_COLOUR]     = 0x00F77BU,
 			[THEME_ITEM_FG_GPS_NUMBER]           = 0xE8E8E8U,
-			[THEME_ITEM_FG_GPS_COLOUR]           = 0x5080FFU,
+			[THEME_ITEM_FG_GPS_COLOUR]           = 0x638EFFU, // яскравіше, контраст 5.60:1
 			[THEME_ITEM_FG_BD_COLOUR]            = 0xFF5555U,
 		},
 	};

@@ -346,6 +346,15 @@ typedef struct
    const char rctl_config[LANGUAGE_TEXTS_LENGTH];// RCTL: "RCTL access" enable/disable toggle under Options
 #endif
 #endif
+#if defined(HAS_COLOURS)
+   // "S-метр у шапці" (Options>Display): показувати смугу+"S"+дБм у верхньому рядку
+   // VFO/каналу замість статичної тонкої RSSI-смуги. Додано ОСТАННІМ під власним
+   // прапорцем HAS_COLOURS (2026-09-03) -- як і settings.h використовує цей самий
+   // прапорець для бітів, специфічних для кольорових моделей (MDUV380/MD380/
+   // RT84_DM1701/MD2017), щоб розкладка stringsTable_t для монохромних збірок
+   // (напр. MD9600) лишилась байт-в-байт тією ж.
+   const char smeter_header[LANGUAGE_TEXTS_LENGTH];
+#endif
 #if defined(LANGUAGE_BUILD_UKRAINIAN)
    // Українською "Ні GPS" (склейка .no + .gps) звучить безглуздо: .no -- це відповідь
    // "ні" з пари Так/Ні, а тут потрібна констатація відсутності модуля. Поле додано

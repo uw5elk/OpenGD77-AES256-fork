@@ -103,6 +103,9 @@ enum
 	DISPLAY_TIME_UTC_OR_LOCAL,
 	DISPLAY_SHOW_DISTANCE,
 	DISPLAY_DMR_LAST_TALKER_ON_SCREEN,
+#if defined(HAS_COLOURS)
+	DISPLAY_SMETER_HEADER, // "S-метр у шапці" -- лише кольорові моделі (2026-09-03, PLANS.md)
+#endif
 	NUM_DISPLAY_MENU_ITEMS
 };
 
@@ -337,6 +340,13 @@ static void updateScreen(bool isFirstRun)
 						rightSideConst = currentLanguage->off;
 					}
 					break;
+
+#if defined(HAS_COLOURS)
+				case DISPLAY_SMETER_HEADER:
+					leftSide = currentLanguage->smeter_header;
+					rightSideConst = settingsIsOptionBitSet(BIT_SHOW_SMETER_IN_HEADER) ? currentLanguage->on : currentLanguage->off;
+					break;
+#endif
 			}
 
 			// workaround for non standard format of line for colour display
@@ -716,6 +726,15 @@ static void handleEvent(uiEvent_t *ev)
 						settingsIncrement(nonVolatileSettings.lastTalkerOnScreenTimer, 1U);
 					}
 					break;
+
+#if defined(HAS_COLOURS)
+				case DISPLAY_SMETER_HEADER:
+					if (settingsIsOptionBitSet(BIT_SHOW_SMETER_IN_HEADER) == false)
+					{
+						settingsSetOptionBit(BIT_SHOW_SMETER_IN_HEADER, true);
+					}
+					break;
+#endif
 			}
 		}
 		else if (KEYCHECK_PRESS(ev->keys, KEY_LEFT)
@@ -918,6 +937,15 @@ static void handleEvent(uiEvent_t *ev)
 						settingsDecrement(nonVolatileSettings.lastTalkerOnScreenTimer, 1U);
 					}
 					break;
+
+#if defined(HAS_COLOURS)
+				case DISPLAY_SMETER_HEADER:
+					if (settingsIsOptionBitSet(BIT_SHOW_SMETER_IN_HEADER))
+					{
+						settingsSetOptionBit(BIT_SHOW_SMETER_IN_HEADER, false);
+					}
+					break;
+#endif
 			}
 		}
 		else if ((ev->keys.event & KEY_MOD_PRESS) && (menuDataGlobal.menuOptionsTimeout > 0))
@@ -1113,6 +1141,9 @@ static void exitCallback(void *data)
 #endif
 				BIT_AUTO_NIGHT,
 				BIT_DISPLAY_CHANNEL_DISTANCE,
+#if defined(HAS_COLOURS)
+				BIT_SHOW_SMETER_IN_HEADER,
+#endif
 		};
 
 		for (size_t i = 0U; i < ARRAY_SIZE(settingsBits); i++)
