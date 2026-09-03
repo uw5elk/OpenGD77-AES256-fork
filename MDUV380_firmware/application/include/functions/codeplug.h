@@ -397,6 +397,64 @@ uint32_t codeplugChannelGetOptionalDMRID(CodeplugChannel_t *channelBuf);
 void codeplugChannelSetOptionalDMRID(CodeplugChannel_t *channelBuf, uint32_t dmrID);
 uint8_t codeplugChannelGetFlag(CodeplugChannel_t *channelBuf, ChannelFlag_t flag);
 uint8_t codeplugChannelSetFlag(CodeplugChannel_t *channelBuf, ChannelFlag_t flag, uint8_t value);
+
+// --- Канальний слот AES-ключа -------------------------------------------------------
+// На звичайному каналі слот лежить у байті encrypt:
+//   0          - успадкувати загальний селектор TX-ключа
+//   1..15      - шифрувати цим слотом
+//   0xFF       - примусово відкрито
+// На каналі з ВЛАСНИМ DMR ID байт encrypt зайнятий під той ID (разом із rxSignaling та
+// artsInterval), тож слот зберігається в _UNUSED_2 -- байті, який ця прошивка більше
+// ніде не читає й не пише. Щоб випадкове значення зі стороннього CPS не ввімкнуло
+// шифрування само собою, там зберігається не голий номер, а номер із міткою 0xA0:
+//   0xA0       - примусово відкрито
+//   0xA1..0xAF - ключ 1..15
+//   будь-що інше (0x00, 0xFF тощо) - слот не заданий, успадкувати загальний
+#define CODEPLUG_CHANNEL_AESKEY_TAG_MASK    0xF0
+#define CODEPLUG_CHANNEL_AESKEY_TAG         0xA0
+#define CODEPLUG_CHANNEL_AESKEY_VALUE_MASK  0x0F
+
+// Повертає слот у єдиному вигляді (0 = успадкувати, 1..15 = ключ, 0xFF = відкрито),
+// незалежно від того, у якому байті він фізично лежить.
+static inline uint8_t codeplugChannelGetAesKeySlot(CodeplugChannel_t *channelBuf)
+{
+	if (codeplugChannelGetFlag(channelBuf, CHANNEL_FLAG_OPTIONAL_DMRID) != 0)
+	{
+		uint8_t tagged = channelBuf->_UNUSED_2;
+
+		if ((tagged & CODEPLUG_CHANNEL_AESKEY_TAG_MASK) != CODEPLUG_CHANNEL_AESKEY_TAG)
+		{
+			return 0;  // мітки немає -> слот не заданий
+		}
+
+		uint8_t slot = (tagged & CODEPLUG_CHANNEL_AESKEY_VALUE_MASK);
+
+		return (slot == 0) ? 0xFF : slot;  // 0xA0 означає "відкрито"
+	}
+
+	return channelBuf->encrypt;
+}
+
+// slot: 0 = успадкувати, 1..15 = ключ, 0xFF = відкрито.
+static inline void codeplugChannelSetAesKeySlot(CodeplugChannel_t *channelBuf, uint8_t slot)
+{
+	if (codeplugChannelGetFlag(channelBuf, CHANNEL_FLAG_OPTIONAL_DMRID) != 0)
+	{
+		if (slot == 0)
+		{
+			channelBuf->_UNUSED_2 = 0;  // прибрати мітку -> знову "не задано"
+		}
+		else
+		{
+			channelBuf->_UNUSED_2 = (uint8_t)(CODEPLUG_CHANNEL_AESKEY_TAG |
+					((slot == 0xFF) ? 0 : (slot & CODEPLUG_CHANNEL_AESKEY_VALUE_MASK)));
+		}
+	}
+	else
+	{
+		channelBuf->encrypt = slot;
+	}
+}
 void codeplugChannelGetDataWithOffsetAndLengthForIndex(int index, CodeplugChannel_t *channelBuf, uint8_t offset, int length);
 void codeplugChannelGetDataForIndex(int index, CodeplugChannel_t *channelBuf);
 void codeplugUtilConvertBufToString(char *codeplugBuf, char *outBuf, int len);

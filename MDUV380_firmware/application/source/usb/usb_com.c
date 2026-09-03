@@ -1708,7 +1708,9 @@ static void cpsHandleCommand(void)
 					// channels 1..8 because EEPROM_Write ran with interrupts disabled).
 					TASK_UNLOCK_WRITE();
 					codeplugChannelGetDataForIndex(chIdx, &ch);
-					ch.encrypt = com_requestbuffer[4];
+					// Через хелпер, а не напряму в encrypt: на каналі з власним DMR ID
+					// запис у той байт зіпсував би сам ID (див. codeplug.h).
+					codeplugChannelSetAesKeySlot(&ch, com_requestbuffer[4]);
 					codeplugChannelSaveDataForIndex(chIdx, &ch);
 					TASK_LOCK_WRITE();
 				}
@@ -1727,7 +1729,9 @@ static void cpsHandleCommand(void)
 					TASK_UNLOCK_WRITE();   // codeplug read needs interrupts ON (see 0x82)
 					codeplugChannelGetDataForIndex(chIdx, &ch);
 					TASK_LOCK_WRITE();
-					enc = ch.encrypt;
+					// Ефективний слот ключа, а не голий байт encrypt: на каналі з власним
+					// DMR ID він лежить в іншому місці (див. codeplug.h).
+					enc = codeplugChannelGetAesKeySlot(&ch);
 					fl = (codeplugChannelGetFlag(&ch, CHANNEL_FLAG_OPTIONAL_DMRID) != 0) ? 0x01 : 0x00;
 				}
 				usbComSendBuf[0] = com_requestbuffer[0];

@@ -464,14 +464,13 @@ uint16_t dmrAesGetKeyMask(void)
  * Компроміс: справді зашифрований трафік, почутий на каналі з позначкою Off, більше не
  * розшифровуватиметься автоматично - якщо на каналі законно можуть з'являтись
  * зашифровані виклики, лишай там Inherit або конкретний ключ, а не Off.
- * Та сама перевірка CHANNEL_FLAG_OPTIONAL_DMRID, що й у TX-резолвері: на такому каналі
- * байт encrypt переозначений під канальний DMR ID, тому 0xFF там - це байт DMR ID,
- * а не "Off". */
+ * Слот читаємо через codeplugChannelGetAesKeySlot(), а не з байта encrypt напряму: на
+ * каналі з власним DMR ID той байт зайнятий під ID, і 0xFF там означав би байт ID, а не
+ * "Off". Хелпер бере значення з _UNUSED_2 з міткою 0xA0 (див. codeplug.h). */
 static int rxChannelAllowsAesDetect(void)
 {
     if ((currentChannelData != NULL) &&
-        (codeplugChannelGetFlag(currentChannelData, CHANNEL_FLAG_OPTIONAL_DMRID) == 0) &&
-        (currentChannelData->encrypt == 0xFF))
+        (codeplugChannelGetAesKeySlot(currentChannelData) == 0xFF))
     {
         return 0;
     }

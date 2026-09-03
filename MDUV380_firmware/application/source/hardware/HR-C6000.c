@@ -2408,18 +2408,18 @@ static void hrc6000DataTxStartBurst(void)
 //   0      = inherit the global TX key selector (dmrAesTxKeyId(), the AESK block default)
 //   1..15  = encrypt TX on this channel with that AES key slot
 //   0xFF   = force CLEAR (unencrypted) TX on this channel, overriding the global selector
-// Honoured only when the channel is NOT using the optional-DMRID feature, which repurposes
-// the encrypt byte (+ rxSignaling/artsInterval) to hold the per-channel DMR ID. If the
-// selected key slot has no key loaded, dmrAesTxStart() falls back to clear TX (no garble).
-// Backward compatible: a channel with encrypt == 0 behaves exactly as the global selector.
+// Читаємо не сам байт encrypt, а codeplugChannelGetAesKeySlot(): на каналі з власним
+// DMR ID той байт зайнятий під ID, і слот ключа тоді лежить у _UNUSED_2 з міткою 0xA0
+// (див. коментар біля хелпера в codeplug.h). Так шифрування доступне й на таких каналах.
+// If the selected key slot has no key loaded, dmrAesTxStart() falls back to clear TX (no garble).
+// Backward compatible: a channel with slot == 0 behaves exactly as the global selector.
 static uint8_t hrc6000ResolveAesTxKeyId(void)
 {
 	uint8_t keyId = dmrAesTxKeyId(); // global default
 
-	if ((currentChannelData != NULL) &&
-		(codeplugChannelGetFlag(currentChannelData, CHANNEL_FLAG_OPTIONAL_DMRID) == 0))
+	if (currentChannelData != NULL)
 	{
-		uint8_t chEnc = currentChannelData->encrypt;
+		uint8_t chEnc = codeplugChannelGetAesKeySlot(currentChannelData);
 
 		if (chEnc == 0xFF)
 		{

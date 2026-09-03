@@ -386,14 +386,14 @@ int dmrSmsEncryptEnabled(void)
 /* AES TX key for the current channel — a mirror of hrc6000ResolveAesTxKeyId (HR-C6000.c) so
  * SMS encryption follows the exact same per-channel logic as voice: the global TX selector,
  * overridden by the channel encrypt byte (0xFF -> clear, 1..15 -> key slot, 0 -> inherit).
- * Byte 41 is shared with optional-DMR-ID, which wins (then the channel isn't an encrypt slot). */
+ * Byte 41 is shared with optional-DMR-ID; на такому каналі слот лежить у _UNUSED_2 з міткою,
+ * тож читаємо через codeplugChannelGetAesKeySlot(), щоб SMS шифрувались і там теж. */
 static uint8_t smsResolveTxKeyId(void)
 {
 	uint8_t keyId = dmrAesTxKeyId();
-	if ((currentChannelData != NULL) &&
-			(codeplugChannelGetFlag(currentChannelData, CHANNEL_FLAG_OPTIONAL_DMRID) == 0))
+	if (currentChannelData != NULL)
 	{
-		uint8_t chEnc = currentChannelData->encrypt;
+		uint8_t chEnc = codeplugChannelGetAesKeySlot(currentChannelData);
 		if (chEnc == 0xFF) { keyId = 0; }
 		else if ((chEnc >= 1) && (chEnc < DMR_AES_MAX_KEYS)) { keyId = chEnc; }
 	}

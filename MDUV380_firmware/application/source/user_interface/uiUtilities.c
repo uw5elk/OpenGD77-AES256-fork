@@ -47,15 +47,15 @@
 //   байт encrypt каналу 0xFF        -> примусово чисто, іконки нема
 //   байт encrypt каналу 1..15       -> конкретний ключ, іконка показується
 //   байт encrypt каналу 0 (Inherit) -> іконка показується, лише якщо встановлено глобальний TX-ключ
-// Не враховується на каналі з CHANNEL_FLAG_OPTIONAL_DMRID (байт encrypt переозначений під DMR ID).
+// На каналі з власним DMR ID слот лежить не в encrypt, а в _UNUSED_2 з міткою -- саме тому
+// читаємо через codeplugChannelGetAesKeySlot(), інакше іконка там ніколи б не з'явилась.
 int uiChannelHasAesEnabled(void)
 {
 	uint8_t keyId = dmrAesTxKeyId();
 
-	if ((currentChannelData != NULL) &&
-		(codeplugChannelGetFlag(currentChannelData, CHANNEL_FLAG_OPTIONAL_DMRID) == 0))
+	if (currentChannelData != NULL)
 	{
-		uint8_t chEnc = currentChannelData->encrypt;
+		uint8_t chEnc = codeplugChannelGetAesKeySlot(currentChannelData);
 
 		if (chEnc == 0xFF)
 		{

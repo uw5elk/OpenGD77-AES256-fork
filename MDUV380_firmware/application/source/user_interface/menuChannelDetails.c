@@ -683,21 +683,23 @@ static void updateScreen(bool isFirstRun, bool allowedToSpeakUpdate)
 #if defined(ENABLE_AES)
 					case CH_DETAILS_ENCRYPT:
 						leftSide = currentLanguage->encrypt_tx;
-						if (rootMenuIsVFO || (tmpChannel.chMode == RADIO_MODE_ANALOG) || (codeplugChannelGetFlag(&tmpChannel, CHANNEL_FLAG_OPTIONAL_DMRID) != 0))
+						// Канал із власним DMR ID більше не виняток: слот ключа там лежить
+						// в іншому байті, див. codeplugChannelGetAesKeySlot() у codeplug.h.
+						if (rootMenuIsVFO || (tmpChannel.chMode == RADIO_MODE_ANALOG))
 						{
 							rightSideConst = currentLanguage->n_a;
 						}
-						else if (tmpChannel.encrypt == 0)
+						else if (codeplugChannelGetAesKeySlot(&tmpChannel) == 0)
 						{
 							strcpy(rightSideVar, "Inherit");
 						}
-						else if (tmpChannel.encrypt == 0xFF)
+						else if (codeplugChannelGetAesKeySlot(&tmpChannel) == 0xFF)
 						{
 							strcpy(rightSideVar, "Off");
 						}
 						else
 						{
-							snprintf(rightSideVar, SCREEN_LINE_BUFFER_SIZE, "Key %u", tmpChannel.encrypt);
+							snprintf(rightSideVar, SCREEN_LINE_BUFFER_SIZE, "Key %u", codeplugChannelGetAesKeySlot(&tmpChannel));
 						}
 						break;
 #endif
@@ -1384,11 +1386,12 @@ static void handleEvent(uiEvent_t *ev)
 					break;
 #if defined(ENABLE_AES)
 				case CH_DETAILS_ENCRYPT:
-					if ((rootMenuIsVFO == false) && (tmpChannel.chMode == RADIO_MODE_DIGITAL) && (codeplugChannelGetFlag(&tmpChannel, CHANNEL_FLAG_OPTIONAL_DMRID) == 0))
+					if ((rootMenuIsVFO == false) && (tmpChannel.chMode == RADIO_MODE_DIGITAL))
 					{
-						int eidx = (tmpChannel.encrypt == 0) ? 0 : ((tmpChannel.encrypt == 0xFF) ? 16 : tmpChannel.encrypt);
+						uint8_t slot = codeplugChannelGetAesKeySlot(&tmpChannel);
+						int eidx = (slot == 0) ? 0 : ((slot == 0xFF) ? 16 : slot);
 						if (eidx < 16) { eidx++; }
-						tmpChannel.encrypt = (eidx == 0) ? 0 : ((eidx == 16) ? 0xFF : (uint8_t)eidx);
+						codeplugChannelSetAesKeySlot(&tmpChannel, (eidx == 0) ? 0 : ((eidx == 16) ? 0xFF : (uint8_t)eidx));
 					}
 					break;
 #endif
@@ -1647,11 +1650,12 @@ static void handleEvent(uiEvent_t *ev)
 					break;
 #if defined(ENABLE_AES)
 				case CH_DETAILS_ENCRYPT:
-					if ((rootMenuIsVFO == false) && (tmpChannel.chMode == RADIO_MODE_DIGITAL) && (codeplugChannelGetFlag(&tmpChannel, CHANNEL_FLAG_OPTIONAL_DMRID) == 0))
+					if ((rootMenuIsVFO == false) && (tmpChannel.chMode == RADIO_MODE_DIGITAL))
 					{
-						int eidx = (tmpChannel.encrypt == 0) ? 0 : ((tmpChannel.encrypt == 0xFF) ? 16 : tmpChannel.encrypt);
+						uint8_t slot = codeplugChannelGetAesKeySlot(&tmpChannel);
+						int eidx = (slot == 0) ? 0 : ((slot == 0xFF) ? 16 : slot);
 						if (eidx > 0) { eidx--; }
-						tmpChannel.encrypt = (eidx == 0) ? 0 : ((eidx == 16) ? 0xFF : (uint8_t)eidx);
+						codeplugChannelSetAesKeySlot(&tmpChannel, (eidx == 0) ? 0 : ((eidx == 16) ? 0xFF : (uint8_t)eidx));
 					}
 					break;
 #endif
