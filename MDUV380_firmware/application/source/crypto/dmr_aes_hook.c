@@ -78,6 +78,11 @@ static int           s_rxPiSeeded DMR_AES_CCM;   /* 1 = call seeded from the chi
                                                   * (adopt diverging late entries so a wrong bootstrap self-corrects) */
 static uint32_t      s_rxPendMi DMR_AES_CCM;     /* непідтверджений кандидат PI, побачений у режимі очікування (див. dmrAesRxPI) */
 static uint8_t       s_rxPendKeyId DMR_AES_CCM;
+/* Останній зашифрований виклик, який ми НЕ змогли розшифрувати -- щоб інтерфейс міг
+ * пояснити оператору, чому тиша, замість того щоб просто мовчати.
+ * why: 0 = нема чого показувати, 1 = такого ключа в нас немає, 2 = канал вимагає інший ключ. */
+static uint8_t       s_rxDeniedKeyId DMR_AES_CCM;
+static uint8_t       s_rxDeniedWhy   DMR_AES_CCM;
 static uint8_t       s_rxPendValid DMR_AES_CCM;  /* 1 = s_rxPendMi/s_rxPendKeyId містять кандидата, що чекає підтвердження */
 
 /* Shared scratch for the (non-reentrant, foreground-only) key-store helpers. One
@@ -258,6 +263,8 @@ void dmrAesInit(void)
     s_rxPiSeeded = 0;
     s_rxPendMi = 0;
     s_rxPendKeyId = 0;
+    s_rxDeniedKeyId = 0;
+    s_rxDeniedWhy = 0;
     s_rxPendValid = 0;
     s_txPiMi = 0;
     s_txKeyId = 0;
@@ -519,6 +526,7 @@ void dmrAesRxPI(const uint8_t *pi, int len)
         if ((onlyKeyId != 0) && (p.key_id != onlyKeyId))
         {
             s_rxPendValid = 0;   /* чужий ключ не має лишатись кандидатом на підтвердження */
+            if (!s_rxActive) { s_rxDeniedKeyId = p.key_id; s_rxDeniedWhy = 2; }
             return;
         }
 
@@ -558,6 +566,7 @@ void dmrAesRxPI(const uint8_t *pi, int len)
             if (s_rxPendValid && s_rxPendKeyId == p.key_id && s_rxPendMi == p.mi)
             {
                 s_rxActive = (dmr_aes_rx_init(&s_rx, &p) == 0);  /* load key for keyId + seed MI */
+                if (!s_rxActive) { s_rxDeniedKeyId = p.key_id; s_rxDeniedWhy = 1; }
                 if (s_rxActive)
                 {
                     s_rxInitMi = p.mi;
@@ -733,6 +742,17 @@ void dmrAesRxEnd(void) { s_rxActive = 0; s_rxBurstEnc = 0; s_rxPendValid = 0; }
 /* 1, поки триває розшифрування поточного виклику (дзеркально до s_txActive/dmrAesTxActive).
  * Лише для UI: menuAESKeys/uiUtilities опитують це, щоб показати живу позначку "виклик зашифровано". */
 int dmrAesRxActive(void) { return s_rxActive; }
+
+/* Одноразове читання: віддає причину невдалої розшифровки й одразу скидає її, щоб той самий
+ * виклик не показувався двічі. Викликається з потоку інтерфейсу, пише лише сюди. */
+int dmrAesRxDenied(uint8_t *keyId, uint8_t *why)
+{
+    if (s_rxDeniedWhy == 0) { return 0; }
+    if (keyId != NULL) { *keyId = s_rxDeniedKeyId; }
+    if (why != NULL)   { *why = s_rxDeniedWhy; }
+    s_rxDeniedWhy = 0;
+    return 1;
+}
 
 /* ---- TX (mirror of RX: encrypt the 49 AMBE params at the codec layer) ---- */
 void dmrAesTxStart(uint8_t keyId, uint32_t miSeed)

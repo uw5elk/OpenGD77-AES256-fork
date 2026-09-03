@@ -53,6 +53,15 @@
 #include "interfaces/adc.h"
 #include "functions/rxPowerSaving.h"
 #include "functions/dmr_sms.h"
+#if defined(ENABLE_AES)
+// dmr_aes_hook.h уже підключено вище; тут лише тексти сповіщення.
+#if defined(LANGUAGE_BUILD_UKRAINIAN)
+#include "user_interface/languages/aes_ua.h"
+#else
+#define AES_STR_NO_KEY      "No key %u"
+#define AES_STR_WRONG_KEY   "Other key: %u"
+#endif
+#endif
 /* Unconditional: the header compiles to nothing without ENABLE_SPECTRUM apart from the
  * no-op SCANPROF_* macros, which the main loop uses whether or not the flag is set. */
 #include "functions/spectrum.h"   /* spectrumTick(), SCANPROF_* profiler macros */
@@ -1469,6 +1478,30 @@ void applicationMainTask(void)
 #endif
 
 			rxPowerSavingTick(&ev, hasSignal);
+
+#if defined(ENABLE_AES)
+			// Пояснюємо оператору тишу: якщо прийшов зашифрований виклик, який ми не можемо
+			// розшифрувати, показуємо чому. Без цього рація просто мовчить, і не зрозуміло,
+			// чи то сигналу немає, чи то ключ не той. Стан ставиться в перериванні, читається
+			// тут (одноразово) -- саме тому лише на головних екранах і без переривання чужих
+			// сповіщень.
+			{
+				uint8_t deniedKeyId, deniedWhy;
+
+				if (dmrAesRxDenied(&deniedKeyId, &deniedWhy))
+				{
+					int curMenu = menuSystemGetCurrentMenuNumber();
+
+					if (((curMenu == UI_CHANNEL_MODE) || (curMenu == UI_VFO_MODE)) && (uiNotificationIsVisible() == false))
+					{
+						char buf[NOTIFICATION_MESSAGE_LEN_MAX];
+
+						snprintf(buf, sizeof(buf), (deniedWhy == 2) ? AES_STR_WRONG_KEY : AES_STR_NO_KEY, deniedKeyId);
+						uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 2000, buf, true);
+					}
+				}
+			}
+#endif
 		}
 
 		int8_t latestVolume = getVolumeControl();

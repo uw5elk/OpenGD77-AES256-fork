@@ -10,6 +10,9 @@ void dmrAesLoadKeys(void);
 int  dmrAesStoreKey(uint8_t keyId, const uint8_t *key32);
 /* TX key selection: 0 = encrypted TX disabled, otherwise the keyId to transmit with. */
 uint8_t dmrAesTxKeyId(void);
+/* Чому останній зашифрований виклик не вдалося розшифрувати (одноразове читання):
+ * 1 = такого ключа немає, 2 = канал налаштований на інший ключ. 0 = нема що показувати. */
+int dmrAesRxDenied(uint8_t *keyId, uint8_t *why);
 int     dmrAesSetTxKeyId(uint8_t keyId);
 /* On-radio key management (UI/main-loop context only — these do SPI-flash writes
  * that use osDelay, so they must NOT run from the CPS critical section). */
@@ -55,6 +58,7 @@ static inline void dmrAesSetKeyRam(uint8_t k, const uint8_t *p){ (void)k; (void)
 static inline void dmrAesLoadKeys(void){ }
 static inline int  dmrAesStoreKey(uint8_t k, const uint8_t *p){ (void)k; (void)p; return 0; }
 static inline uint8_t dmrAesTxKeyId(void){ return 0; }
+static inline int dmrAesRxDenied(uint8_t *keyId, uint8_t *why){ (void)keyId; (void)why; return 0; }
 static inline int  dmrAesSetTxKeyId(uint8_t k){ (void)k; return 0; }
 static inline int  dmrAesEnsureCustomDataRegion(void){ return 0; }
 static inline int  dmrAesClearKey(uint8_t k){ (void)k; return 0; }
