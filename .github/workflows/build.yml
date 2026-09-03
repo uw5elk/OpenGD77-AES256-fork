@@ -86,3 +86,60 @@ jobs:
           assert needle in data, "українських рядків у .bin немає -- LANGUAGE_UKRAINIAN=1 не спрацював"
           print("OK: українські рядки знайдено у прошивці")
           PY
+
+  # GUI-прошивальник для простих користувачів/тестерів: один .exe із двома кнопками
+  # ("Обрати донор" і "ПРОШИТИ"), без ручного pip install/копіювання libusb dll.
+  # Залежить від build-ukrainian -- бере вже готовий .bin і вбудовує його прямо в .exe,
+  # тож тестеру не треба окремо шукати артефакт прошивки. Тулчейн для .exe є тільки на
+  # windows-latest (PyInstaller збирає під ту ОС, на якій запущений).
+  build-gui-flasher:
+    needs: build-ukrainian
+    runs-on: windows-latest
+    name: build (GUI-прошивальник, Windows .exe)
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: openuv380-10w-ukrainian
+          path: firmware
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Python-залежності
+        shell: bash
+        run: pip install pyinstaller pyusb pyserial libusb
+      - name: Підготувати файли для вбудовування (прошивка, libusb dll, підпис збірки)
+        shell: bash
+        working-directory: MDUV380_firmware/tools
+        run: |
+          cp ../../firmware/openuv380-10w.bin .
+
+          # libusb-1.0.dll: той самий трюк, що й при ручній прошивці з Windows (див.
+          # BUILD.md) -- пакет 'libusb' з PyPI не кладе dll в PATH сам, треба знайти
+          # її вручну під потрібну розрядність.
+          python -c "
+          import libusb, os, glob, shutil
+          base = os.path.join(os.path.dirname(libusb.__file__), '_platform')
+          cands = [p for p in glob.glob(os.path.join(base, '**', 'libusb-1.0.dll'), recursive=True)
+                   if os.path.basename(os.path.dirname(p)).lower() in ('x64', 'x86_64', 'amd64')]
+          assert cands, 'libusb-1.0.dll не знайдено в пакеті libusb'
+          shutil.copy(cands[0], 'libusb-1.0.dll')
+          print('libusb-1.0.dll <-', cands[0])
+          "
+
+          echo "OpenGD77-AES256-fork, коміт $(git rev-parse --short HEAD), зібрано $(date -u +%Y-%m-%d)" > build_info.txt
+          cat build_info.txt
+      - name: Зібрати .exe (PyInstaller, onefile)
+        shell: bash
+        working-directory: MDUV380_firmware/tools
+        run: |
+          pyinstaller --onefile --windowed --name OpenGD77-Flasher \
+            --hidden-import usb.backend.libusb1 \
+            --add-data "openuv380-10w.bin;." \
+            --add-data "libusb-1.0.dll;." \
+            --add-data "build_info.txt;." \
+            gui_flasher.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openuv380-flasher-windows
+          path: MDUV380_firmware/tools/dist/OpenGD77-Flasher.exe
