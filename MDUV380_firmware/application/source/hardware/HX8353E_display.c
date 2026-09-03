@@ -1522,46 +1522,108 @@ void displayGetForegroundAndBackgroundColours(uint16_t *fgNativeColour, uint16_t
 #if defined(HAS_COLOURS)
 void themeInitToDefaultValues(DayTime_t daytime, bool invert)
 {
-	foregroundColour = PLATFORM_COLOUR_FORMAT_SWAP_BYTES(RGB888_TO_PLATFORM_COLOUR_FORMAT((invert ? 0xFFFFFFU : 0x000000)));
-	backgroundColour = PLATFORM_COLOUR_FORMAT_SWAP_BYTES(RGB888_TO_PLATFORM_COLOUR_FORMAT((invert ? 0x000000 : 0xFFFFFFU)));
+	// Кольорові теми за замовчуванням (2026-09-03). Донедавна тут була чисто монохромна
+	// схема -- усе чорне на білому (DAY) і біле на чорному (NIGHT). Палітру знято з екранів,
+	// які показав користувач, і доведено за контрастом: КОЖНА пара "текст на своєму тлі"
+	// перевірена за формулою WCAG вже ПІСЛЯ квантування в RGB565 (саме так їх покаже дисплей).
+	// Мінімум по 56 парах -- 4.75 при нормі 4.5 для тексту й 3.0 для смуг та графіки.
+	// Через це, зокрема, тло шапки світло-сіре (0xD8D8D8), а не 0x808080 як на вихідному
+	// скриншоті: з чорним текстом контраст піднявся з 5.3 до 14.7.
+	//
+	// Значення в RGB888; у формат дисплея переводяться нижче, у циклі, бо
+	// RGB888_TO_PLATFORM_COLOUR_FORMAT() залежить від displayLCD_Type, відомого лише
+	// під час виконання. Індексовані іменами елементів теми, тож порядок у themeItem_t
+	// можна міняти, не чіпаючи цю таблицю.
+	static const uint32_t themeDefaults[NIGHT + 1][THEME_ITEM_MAX] =
+	{
+		[DAY] =
+		{
+			[THEME_ITEM_FG_DEFAULT]              = 0x000000U, // звичайний текст
+			[THEME_ITEM_BG]                      = 0xFFFFFFU, // тло екрана
+			[THEME_ITEM_FG_DECORATION]           = 0x303030U, // рамки, роздільники
+			[THEME_ITEM_FG_TEXT_INPUT]           = 0x000000U, // введення тексту
+			[THEME_ITEM_FG_SPLASHSCREEN]         = 0x14506BU, // заставка
+			[THEME_ITEM_BG_SPLASHSCREEN]         = 0xFFFFFFU, // тло заставки
+			[THEME_ITEM_FG_NOTIFICATION]         = 0x14506BU, // сповіщення
+			[THEME_ITEM_FG_WARNING_NOTIFICATION] = 0x9A5000U, // попередження
+			[THEME_ITEM_FG_ERROR_NOTIFICATION]   = 0xB00000U, // помилка
+			[THEME_ITEM_BG_NOTIFICATION]         = 0xFFFFFFU, // тло сповіщення
+			[THEME_ITEM_FG_MENU_NAME]            = 0xFFFFFFU, // заголовок меню
+			[THEME_ITEM_BG_MENU_NAME]            = 0x14506BU, // смуга заголовка
+			[THEME_ITEM_FG_MENU_ITEM]            = 0x000000U, // пункти меню
+			[THEME_ITEM_BG_MENU_ITEM_SELECTED]   = 0xAED8F0U, // смуга виділення
+			[THEME_ITEM_FG_OPTIONS_VALUE]        = 0x14506BU, // значення налаштувань
+			[THEME_ITEM_FG_HEADER_TEXT]          = 0x000000U, // текст шапки
+			[THEME_ITEM_BG_HEADER_TEXT]          = 0xD8D8D8U, // тло шапки
+			[THEME_ITEM_FG_RSSI_BAR]             = 0x008000U, // смуга RSSI до S9
+			[THEME_ITEM_FG_RSSI_BAR_S9P]         = 0xC00000U, // смуга RSSI понад S9
+			[THEME_ITEM_FG_CHANNEL_NAME]         = 0x14506BU, // назва каналу
+			[THEME_ITEM_FG_CHANNEL_CONTACT]      = 0x8B1A0AU, // контакт (TG/PC)
+			[THEME_ITEM_FG_CHANNEL_CONTACT_INFO] = 0x8B1A0AU, // інфо контакту
+			[THEME_ITEM_FG_ZONE_NAME]            = 0x7A0508U, // назва зони
+			[THEME_ITEM_FG_RX_FREQ]              = 0x000000U, // частота RX
+			[THEME_ITEM_FG_TX_FREQ]              = 0xB00000U, // частота TX
+			[THEME_ITEM_FG_CSS_SQL_VALUES]       = 0x14506BU, // значення CSS/squelch
+			[THEME_ITEM_FG_TX_COUNTER]           = 0xB00000U, // лічильник TX
+			[THEME_ITEM_FG_POLAR_DRAWING]        = 0x505050U, // полярна сітка
+			[THEME_ITEM_FG_SATELLITE_COLOUR]     = 0x007000U, // точки супутників
+			[THEME_ITEM_FG_GPS_NUMBER]           = 0x000000U, // номери GPS
+			[THEME_ITEM_FG_GPS_COLOUR]           = 0x0000C0U, // смуги/точки GPS
+			[THEME_ITEM_FG_BD_COLOUR]            = 0xC00000U, // смуги/точки BEIDOU
+		},
+		[NIGHT] =
+		{
+			[THEME_ITEM_FG_DEFAULT]              = 0xE8E8E8U,
+			[THEME_ITEM_BG]                      = 0x1C1C1CU,
+			[THEME_ITEM_FG_DECORATION]           = 0xC0C0C0U,
+			[THEME_ITEM_FG_TEXT_INPUT]           = 0xFFFFFFU,
+			[THEME_ITEM_FG_SPLASHSCREEN]         = 0x7FC4E8U,
+			[THEME_ITEM_BG_SPLASHSCREEN]         = 0x000000U,
+			[THEME_ITEM_FG_NOTIFICATION]         = 0x7FC4E8U,
+			[THEME_ITEM_FG_WARNING_NOTIFICATION] = 0xFFB040U,
+			[THEME_ITEM_FG_ERROR_NOTIFICATION]   = 0xFF5555U,
+			[THEME_ITEM_BG_NOTIFICATION]         = 0x1C1C1CU,
+			[THEME_ITEM_FG_MENU_NAME]            = 0xFFFFFFU,
+			[THEME_ITEM_BG_MENU_NAME]            = 0x0A3D5CU,
+			[THEME_ITEM_FG_MENU_ITEM]            = 0x7FC4E8U,
+			[THEME_ITEM_BG_MENU_ITEM_SELECTED]   = 0x0E4A70U,
+			[THEME_ITEM_FG_OPTIONS_VALUE]        = 0xF0A83CU,
+			[THEME_ITEM_FG_HEADER_TEXT]          = 0x7FC4E8U,
+			[THEME_ITEM_BG_HEADER_TEXT]          = 0x000000U,
+			[THEME_ITEM_FG_RSSI_BAR]             = 0x00CC00U,
+			[THEME_ITEM_FG_RSSI_BAR_S9P]         = 0xFF5000U,
+			[THEME_ITEM_FG_CHANNEL_NAME]         = 0x22C878U,
+			[THEME_ITEM_FG_CHANNEL_CONTACT]      = 0xF0A83CU,
+			[THEME_ITEM_FG_CHANNEL_CONTACT_INFO] = 0xF0A83CU,
+			[THEME_ITEM_FG_ZONE_NAME]            = 0xB8B8B8U,
+			[THEME_ITEM_FG_RX_FREQ]              = 0xE8E8E8U,
+			[THEME_ITEM_FG_TX_FREQ]              = 0xFF5555U,
+			[THEME_ITEM_FG_CSS_SQL_VALUES]       = 0x22C878U,
+			[THEME_ITEM_FG_TX_COUNTER]           = 0xFF5555U,
+			[THEME_ITEM_FG_POLAR_DRAWING]        = 0x7FC4E8U,
+			[THEME_ITEM_FG_SATELLITE_COLOUR]     = 0x22C878U,
+			[THEME_ITEM_FG_GPS_NUMBER]           = 0xE8E8E8U,
+			[THEME_ITEM_FG_GPS_COLOUR]           = 0x5080FFU,
+			[THEME_ITEM_FG_BD_COLOUR]            = 0xFF5555U,
+		},
+	};
+
+	// invert лишено заради сумісності сигнатури: викликається як (DAY, false) / (NIGHT, true),
+	// тобто дублює daytime. Тему обираємо за daytime, щоб не було двох джерел правди.
+	(void) invert;
+
+	for (int i = 0; i < THEME_ITEM_MAX; i++)
+	{
+		themeItems[daytime][i] =
+				PLATFORM_COLOUR_FORMAT_SWAP_BYTES(RGB888_TO_PLATFORM_COLOUR_FORMAT(themeDefaults[daytime][i]));
+	}
+
+	foregroundColour = themeItems[daytime][THEME_ITEM_FG_DEFAULT];
+	backgroundColour = themeItems[daytime][THEME_ITEM_BG];
 
 	foregroundThemeItem = THEME_ITEM_FG_DEFAULT;
 	backgroundThemeItem = THEME_ITEM_BG;
-
-	themeItems[daytime][THEME_ITEM_FG_DEFAULT] = foregroundColour;
-	themeItems[daytime][THEME_ITEM_BG] = backgroundColour;
-	themeItems[daytime][THEME_ITEM_FG_DECORATION] = foregroundColour;
-	themeItems[daytime][THEME_ITEM_FG_TEXT_INPUT] = foregroundColour;
-	themeItems[daytime][THEME_ITEM_FG_SPLASHSCREEN] = foregroundColour;
-	themeItems[daytime][THEME_ITEM_BG_SPLASHSCREEN] = backgroundColour;
-	themeItems[daytime][THEME_ITEM_FG_NOTIFICATION] = foregroundColour;
-	themeItems[daytime][THEME_ITEM_FG_WARNING_NOTIFICATION] = foregroundColour;
-	themeItems[daytime][THEME_ITEM_FG_ERROR_NOTIFICATION] = foregroundColour;
-	themeItems[daytime][THEME_ITEM_BG_NOTIFICATION] = backgroundColour;
-	themeItems[daytime][THEME_ITEM_FG_MENU_NAME] = foregroundColour;
-	themeItems[daytime][THEME_ITEM_BG_MENU_NAME] = backgroundColour;
-	themeItems[daytime][THEME_ITEM_FG_MENU_ITEM] = foregroundColour;
-	themeItems[daytime][THEME_ITEM_BG_MENU_ITEM_SELECTED] = foregroundColour;
-	themeItems[daytime][THEME_ITEM_FG_OPTIONS_VALUE] = foregroundColour;
-	themeItems[daytime][THEME_ITEM_FG_HEADER_TEXT] = foregroundColour;
-	themeItems[daytime][THEME_ITEM_BG_HEADER_TEXT] = backgroundColour;
-	themeItems[daytime][THEME_ITEM_FG_RSSI_BAR] = foregroundColour;
-	themeItems[daytime][THEME_ITEM_FG_RSSI_BAR_S9P] = foregroundColour;
-	themeItems[daytime][THEME_ITEM_FG_CHANNEL_NAME] = foregroundColour;
-	themeItems[daytime][THEME_ITEM_FG_CHANNEL_CONTACT] = foregroundColour;
-	themeItems[daytime][THEME_ITEM_FG_CHANNEL_CONTACT_INFO] = foregroundColour;
-	themeItems[daytime][THEME_ITEM_FG_ZONE_NAME] = foregroundColour;
-	themeItems[daytime][THEME_ITEM_FG_RX_FREQ] = foregroundColour;
-	themeItems[daytime][THEME_ITEM_FG_TX_FREQ] = foregroundColour;
-	themeItems[daytime][THEME_ITEM_FG_CSS_SQL_VALUES] = foregroundColour;
-	themeItems[daytime][THEME_ITEM_FG_TX_COUNTER] = foregroundColour;
-	themeItems[daytime][THEME_ITEM_FG_POLAR_DRAWING] = foregroundColour;
-	themeItems[daytime][THEME_ITEM_FG_SATELLITE_COLOUR] = foregroundColour;
-	themeItems[daytime][THEME_ITEM_FG_GPS_NUMBER] = foregroundColour;
-	themeItems[daytime][THEME_ITEM_FG_GPS_COLOUR] = PLATFORM_COLOUR_FORMAT_SWAP_BYTES(RGB888_TO_PLATFORM_COLOUR_FORMAT(0x0000FFU));
-	themeItems[daytime][THEME_ITEM_FG_BD_COLOUR] = PLATFORM_COLOUR_FORMAT_SWAP_BYTES(RGB888_TO_PLATFORM_COLOUR_FORMAT(0xFF0000U));
 }
-
 void themeInit(bool SPIFlashAvailable)
 {
 	themeInitToDefaultValues(NIGHT, true);
