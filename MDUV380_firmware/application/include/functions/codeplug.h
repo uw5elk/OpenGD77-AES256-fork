@@ -356,7 +356,9 @@ typedef enum
 	CODEPLUG_CUSTOM_DATA_TYPE_AES_KEYS,
 	CODEPLUG_CUSTOM_DATA_TYPE_MESSAGES,   /* OpenGD77-AES on-radio SMS store (see dmr_sms.c) */
 	CODEPLUG_CUSTOM_DATA_TYPE_MSG_CONFIG, /* SMS config: quick-text presets + default recipient (CHIRP-set) */
-	CODEPLUG_CUSTOM_DATA_TYPE_RCTL_CONFIG, /* Allowlist віддаленого керування (CHIRP-set) - див. dmr_rctl_cfg.c */
+	CODEPLUG_CUSTOM_DATA_TYPE_RCTL_CONFIG, /* Перемикач "приймати команди RCTL" (без allowlist -
+	                                        * ВИПРАВЛЕНО 2026-09-03); пишеться і з ПК (rctl_config.py/
+	                                        * CHIRP), і прямо з рації (menuRCTLConfig.c) - див. dmr_rctl_cfg.c */
 } CodeplugCustomDataType_t;
 
 

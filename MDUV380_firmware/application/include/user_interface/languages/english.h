@@ -332,6 +332,8 @@ const stringsTable_t englishLanguage =
 .encrypt_tx				= "Encrypt TX", // MaxLen: 16
 #if defined(ENABLE_DMR_DATA)
 .messages				= "Messages", // MaxLen: 16
+.remote_control				= "Remote control", // MaxLen: 16
+.rctl_config				= "RCTL access", // MaxLen: 16
 #endif
 #endif
 #if defined(LANGUAGE_BUILD_UKRAINIAN)

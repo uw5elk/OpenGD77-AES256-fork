@@ -13,4 +13,7 @@ void mock_codeplug_set_block(CodeplugCustomDataType_t type, const uint8_t *data,
 /* Симулювати відсутність будь-якого блоку (codeplugGetOpenGD77CustomDataBounded -> false). */
 void mock_codeplug_clear(void);
 
+/* Скільки разів було викликано (реальний або мок-) codeplugSetOpenGD77CustomData(). */
+int mock_codeplug_write_count(void);
+
 #endif /* _MOCK_CODEPLUG_H_ */

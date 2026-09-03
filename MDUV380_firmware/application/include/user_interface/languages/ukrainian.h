@@ -333,6 +333,8 @@ const stringsTable_t ukrainianLanguage =
 .encrypt_tx                              = "Шифр. TX", // MaxLen: 16
 #if defined(ENABLE_DMR_DATA)
 .messages                                = "Повідомлення", // MaxLen: 16
+.remote_control                          = "Від. керування", // MaxLen: 16
+.rctl_config                              = "Доступ RCTL", // MaxLen: 16
 #endif
 #endif
 #if defined(LANGUAGE_BUILD_UKRAINIAN)

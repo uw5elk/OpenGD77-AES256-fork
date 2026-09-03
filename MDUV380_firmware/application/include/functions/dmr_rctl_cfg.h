@@ -34,5 +34,15 @@ void dmrRctlConfigReload(void);
  * 1, якщо блок валідний і enabled=1; інакше 0. */
 int dmrRctlConfigEnabled(void);
 
+/* Записати новий стан "enabled" у блок "RCTL" (2026-09-03: тепер джерело запису не
+ * лише CHIRP/PC-утиліта rctl_config.py, а й сама рація - меню Options>RCTL access,
+ * menuRCTLConfig.c, за зразком того, як menuAESKeys.c пише AES-ключі прямо з рації).
+ * Викликач має заздалегідь один раз викликати dmrAesEnsureCustomDataRegion()
+ * (crypto/dmr_aes_hook.h), якщо custom-data регіон ще не ініціалізовано - та сама,
+ * спільна для всього регіону операція, що й для AES-ключів/тем/повідомлень.
+ * Повертає 1 при успішному записі, 0 при помилці флеш-запису. Ефект - негайний:
+ * функція сама викликає dmrRctlConfigReload(). */
+int dmrRctlConfigSetEnabled(int enabled);
+
 #endif /* ENABLE_DMR_DATA && ENABLE_AES */
 #endif /* _OPENGD77_DMR_RCTL_CFG_H_ */

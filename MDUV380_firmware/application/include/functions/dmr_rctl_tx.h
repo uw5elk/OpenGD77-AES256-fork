@@ -31,9 +31,16 @@ int dmrRctlSendCmd(uint32_t targetId, uint8_t cmd, uint32_t arg);
 int dmrRctlRequestCheck(uint32_t targetId);
 
 /* Останній отриманий CHECK_ACK: 1 якщо був хоч один з моменту завантаження, з ID видавця
- * (тобто радіостанції, що відповіла) та віком відповіді в мс. Для майбутнього пункту меню
- * (ще не підключено -- Фаза 1б). */
+ * (тобто радіостанції, що відповіла) та віком відповіді в мс. Використовується екраном
+ * "Remote control" (menuRCTLRemote.c, Фаза 1б, 2026-09-03). */
 int dmrRctlLastCheckAck(uint32_t *outFromId, uint32_t *outAgeMs);
+
+/* Монотонний лічильник ПРИЙНЯТИХ CHECK_ACK з моменту завантаження (від будь-якого
+ * видавця, зростає на 1 при кожному). Потрібен екрану "Remote control", щоб відрізнити
+ * "прийшла НОВА відповідь після мого запиту" від застарілого стану dmrRctlLastCheckAck()
+ * ще з попереднього, не пов'язаного запиту -- порівнювати значення до/після запиту
+ * через "!=" (лічильник просто зростає, переповнення на практиці не досяжне). */
+uint32_t dmrRctlAckGeneration(void);
 
 /* ---- RX (ISR-контекст HR-C6000) ------------------------------------------ *
  * Викликати для КОЖНОГО CRC-валідного бургста класу data-sync (rxDataType: 6=Data Header,
@@ -54,6 +61,7 @@ void dmrRctlTick(void);
 static inline int  dmrRctlSendCmd(uint32_t targetId, uint8_t cmd, uint32_t arg) { (void)targetId; (void)cmd; (void)arg; return -1; }
 static inline int  dmrRctlRequestCheck(uint32_t targetId) { (void)targetId; return -1; }
 static inline int  dmrRctlLastCheckAck(uint32_t *outFromId, uint32_t *outAgeMs) { (void)outFromId; (void)outAgeMs; return 0; }
+static inline uint32_t dmrRctlAckGeneration(void) { return 0; }
 static inline void dmrRctlRxBurst(int rxDataType, const uint8_t *payload12) { (void)rxDataType; (void)payload12; }
 static inline void dmrRctlRxReset(void) { }
 static inline void dmrRctlTick(void) { }

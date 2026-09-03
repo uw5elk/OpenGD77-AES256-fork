@@ -153,6 +153,8 @@ static menuFunctionData_t menuFunctions[] =
 #endif
 #if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
 		{ menuMessages,             NULL, NULL, 0 },
+		{ menuRCTLRemote,           NULL, NULL, 0 },
+		{ menuRCTLConfig,           NULL, NULL, 0 },
 #endif
 		// *** Add new menus to be accessed using quickkey (ID: 0..31) above this line ***
 		{ uiMessageBox,             NULL, NULL, 0 },
@@ -669,6 +671,9 @@ const menuItemNewData_t mainMenuItems[] =
 	// Раніше лежало в Options - перенесено в головне меню як самостійну функцію, а не
 	// налаштування (2026-08-31). stringOffset обчислюється, як і для aes_keys нижче.
 	{ (int)(offsetof(stringsTable_t, messages) / LANGUAGE_TEXTS_LENGTH), MENU_MESSAGES },
+	// RCTL "Remote control" (2026-09-03) - дія, а не налаштування, тож поруч із Messages
+	// у головному меню; сам перемикач "приймати команди" лишається в Options нижче.
+	{ (int)(offsetof(stringsTable_t, remote_control) / LANGUAGE_TEXTS_LENGTH), MENU_RCTL_REMOTE },
 #endif
 };
 
@@ -711,6 +716,11 @@ static const menuItemNewData_t optionsMenuItems[] =
 #endif
 	// MENU_MESSAGES перенесено в mainMenuItems[] вище (2026-08-31) - Messages тепер у
 	// головному меню, а не в Options.
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+	// RCTL access (2026-09-03) - це саме НАЛАШТУВАННЯ (увімк/вимк приймання команд),
+	// тож лишається тут, в Options, на відміну від самої дії "Remote control" вище.
+	{ (int)(offsetof(stringsTable_t, rctl_config) / LANGUAGE_TEXTS_LENGTH), MENU_RCTL_CONFIG },
+#endif
 };
 
 const menuItemsList_t menuDataOptions =

@@ -341,6 +341,8 @@ enum MENU_SCREENS
 #endif
 #if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
 	MENU_MESSAGES,// encrypted-SMS messaging (index-matched to menuFunctions[])
+	MENU_RCTL_REMOTE,// RCTL: надіслати Radio Check іншій рації (Фаза 1б, PLANS.md §3)
+	MENU_RCTL_CONFIG,// RCTL: локальний перемикач "приймати команди" (Options, без allowlist)
 #endif
 	// *** Add new menus to be accessed using quickkey (ID: 0..31) above this line ***
 	UI_MESSAGE_BOX,
@@ -502,6 +504,8 @@ menuStatus_t menuAESKeys(uiEvent_t *ev, bool isFirstRun);
 #endif
 #if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
 menuStatus_t menuMessages(uiEvent_t *ev, bool isFirstRun);
+menuStatus_t menuRCTLRemote(uiEvent_t *ev, bool isFirstRun);
+menuStatus_t menuRCTLConfig(uiEvent_t *ev, bool isFirstRun);
 #endif
 #if defined(HAS_COLOURS)
 menuStatus_t menuThemeOptions(uiEvent_t *ev, bool isFirstRun);

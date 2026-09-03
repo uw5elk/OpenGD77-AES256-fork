@@ -102,6 +102,26 @@ int main(void)
     CHECK(dmrRctlConfigEnabled() == 0, "after reload: disabled state visible");
     CHECK(dmr_rctl_gate_check(dmrRctlGate(), 0x333333u, 1) == 0, "after reload: previously-tracked issuer now rejected too");
 
+    /* 7) dmrRctlConfigSetEnabled() -- новий шлях запису ПРЯМО З РАЦІЇ (menuRCTLConfig.c),
+     *    а не лише з ПК/CHIRP. Перевіряємо round-trip через справжній мок-флеш (не лише
+     *    повернене значення), і що ефект видно одразу (setter сам викликає reload). */
+    mock_codeplug_clear();
+    CHECK(dmrRctlConfigEnabled() == 0, "T7: до запису -- вимкнено (блоку ще немає)");
+    CHECK(dmrRctlConfigSetEnabled(1) == 1, "T7: запис enabled=1 з \"рації\" вдався");
+    CHECK(dmrRctlConfigEnabled() == 1, "T7: одразу після запису -- увімкнено (без ручного reload)");
+    CHECK(dmr_rctl_gate_check(dmrRctlGate(), 0x444444u, 1) == 1, "T7: після запису -- gate приймає нового видавця");
+    CHECK(mock_codeplug_write_count() == 1, "T7: рівно один фізичний запис у флеш");
+
+    uint8_t rb[8];
+    CHECK(codeplugGetOpenGD77CustomDataBounded(CODEPLUG_CUSTOM_DATA_TYPE_RCTL_CONFIG, rb, (int)sizeof rb), "T7: блок читається назад");
+    CHECK(memcmp(rb, "RCTL", 4) == 0 && rb[4] == 2 && rb[5] == 1 && rb[6] == 0 && rb[7] == 0,
+          "T7: записаний блок побайтово відповідає формату magic+version+enabled+reserved[2]");
+
+    CHECK(dmrRctlConfigSetEnabled(0) == 1, "T7: повторний запис enabled=0 вдався (оновлення того самого блоку)");
+    CHECK(dmrRctlConfigEnabled() == 0, "T7: після другого запису -- знову вимкнено");
+    CHECK(dmr_rctl_gate_check(dmrRctlGate(), 0x444444u, 2) == 0, "T7: вимкнено -- той самий видавець більше не проходить");
+    CHECK(mock_codeplug_write_count() == 2, "T7: другий виклик -- ще один фізичний запис (оновлення блоку, не новий)");
+
     if (fails)
     {
         printf("\n%d FAILURES\n", fails);

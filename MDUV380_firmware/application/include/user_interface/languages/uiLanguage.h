@@ -342,6 +342,8 @@ typedef struct
    const char encrypt_tx[LANGUAGE_TEXTS_LENGTH];
 #if defined(ENABLE_DMR_DATA)
    const char messages[LANGUAGE_TEXTS_LENGTH];// encrypted-SMS menu (appended last under the combined guard)
+   const char remote_control[LANGUAGE_TEXTS_LENGTH];// RCTL: "Remote control" main-menu action (2026-09-03, PLANS.md §3)
+   const char rctl_config[LANGUAGE_TEXTS_LENGTH];// RCTL: "RCTL access" enable/disable toggle under Options
 #endif
 #endif
 #if defined(LANGUAGE_BUILD_UKRAINIAN)

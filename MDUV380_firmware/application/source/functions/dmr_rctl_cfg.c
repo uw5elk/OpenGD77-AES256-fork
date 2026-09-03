@@ -71,4 +71,24 @@ int dmrRctlConfigEnabled(void)
 	return (s_cfg.enabled != 0);
 }
 
+int dmrRctlConfigSetEnabled(int enabled)
+{
+	cfg_ensure();
+
+	/* Якщо блоку ще не було (або він побитий) -- cfg_load() вже обнулив s_cfg,
+	 * тож magic/version підставляємо тут, так само як dmrAesSetTxKeyId() робить
+	 * для блоку "AESK" у crypto/dmr_aes_hook.c. */
+	if (memcmp(s_cfg.magic, "RCTL", 4) != 0)
+	{
+		memset(&s_cfg, 0, sizeof s_cfg);
+		memcpy(s_cfg.magic, "RCTL", 4);
+		s_cfg.version = 2;
+	}
+	s_cfg.enabled = enabled ? 1 : 0;
+
+	int ok = codeplugSetOpenGD77CustomData(CODEPLUG_CUSTOM_DATA_TYPE_RCTL_CONFIG, (uint8_t *)&s_cfg, (int)sizeof s_cfg) ? 1 : 0;
+	dmrRctlConfigReload();   /* негайний ефект: наступний dmrRctlGate()/dmrRctlConfigEnabled() перечитає з флешу */
+	return ok;
+}
+
 #endif /* ENABLE_DMR_DATA && ENABLE_AES */

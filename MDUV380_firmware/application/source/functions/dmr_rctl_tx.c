@@ -81,6 +81,7 @@ int dmrRctlRequestCheck(uint32_t targetId)
 static uint32_t s_lastAckFromId;
 static uint32_t s_lastAckMillis;
 static uint8_t  s_haveAck;
+static uint32_t s_ackGen;   /* зростає на 1 при кожному прийнятому CHECK_ACK (dmrRctlTick()) */
 
 int dmrRctlLastCheckAck(uint32_t *outFromId, uint32_t *outAgeMs)
 {
@@ -88,6 +89,11 @@ int dmrRctlLastCheckAck(uint32_t *outFromId, uint32_t *outAgeMs)
 	if (outFromId) { *outFromId = s_lastAckFromId; }
 	if (outAgeMs)  { *outAgeMs = (uint32_t)(ticksGetMillis() - s_lastAckMillis); }
 	return 1;
+}
+
+uint32_t dmrRctlAckGeneration(void)
+{
+	return s_ackGen;
 }
 
 /* ============================ RX (ISR) ==================================== */
@@ -225,6 +231,7 @@ void dmrRctlTick(void)
 			s_lastAckFromId = msg.issuerId;
 			s_lastAckMillis = ticksGetMillis();
 			s_haveAck = 1;
+			s_ackGen++;
 			char note[40];
 			snprintf(note, sizeof note, "Радіоперевірка: ID %lu на зв'язку", (unsigned long)msg.issuerId);
 			uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 4000, note, true);
