@@ -1551,7 +1551,11 @@ void themeInitToDefaultValues(DayTime_t daytime, bool invert)
 			[THEME_ITEM_FG_MENU_NAME]            = 0xFFFFFFU, // заголовок меню
 			[THEME_ITEM_BG_MENU_NAME]            = 0x14506BU, // смуга заголовка
 			[THEME_ITEM_FG_MENU_ITEM]            = 0x000000U, // пункти меню
-			[THEME_ITEM_BG_MENU_ITEM_SELECTED]   = 0xAED8F0U, // смуга виділення
+			// Текст виділеного пункту прошивка малює кольором THEME_ITEM_BG (тобто білим),
+			// тому заливка тут МАЄ бути темною -- інакше білий на майже білому не видно.
+			// Був баг: 0xAED8F0 (світло-блакитний) давав контраст лише 1.47:1 замість
+			// потрібних 4.5:1 -- виділений пункт зливався з тлом (2026-09-03).
+			[THEME_ITEM_BG_MENU_ITEM_SELECTED]   = 0x14506BU, // смуга виділення (той самий teal, що й шапка меню; контраст 8.56:1)
 			[THEME_ITEM_FG_OPTIONS_VALUE]        = 0x14506BU, // значення налаштувань
 			[THEME_ITEM_FG_HEADER_TEXT]          = 0x000000U, // текст шапки
 			[THEME_ITEM_BG_HEADER_TEXT]          = 0xD8D8D8U, // тло шапки
@@ -1586,7 +1590,11 @@ void themeInitToDefaultValues(DayTime_t daytime, bool invert)
 			[THEME_ITEM_FG_MENU_NAME]            = 0xFFFFFFU,
 			[THEME_ITEM_BG_MENU_NAME]            = 0x0A3D5CU,
 			[THEME_ITEM_FG_MENU_ITEM]            = 0x7FC4E8U,
-			[THEME_ITEM_BG_MENU_ITEM_SELECTED]   = 0x0E4A70U,
+			// Той самий баг тут: текст виділеного пункту малюється кольором THEME_ITEM_BG
+			// (тобто майже чорним, 0x1C1C1C), тому заливка має бути світлою, а не темною.
+			// Був 0x0E4A70 (темно-синій) -- контраст 1.78:1. Тепер яскраво-блакитний,
+			// той самий, що й звичайний текст меню -- контраст 8.92:1.
+			[THEME_ITEM_BG_MENU_ITEM_SELECTED]   = 0x7FC4E8U,
 			[THEME_ITEM_FG_OPTIONS_VALUE]        = 0xF0A83CU,
 			[THEME_ITEM_FG_HEADER_TEXT]          = 0x7FC4E8U,
 			[THEME_ITEM_BG_HEADER_TEXT]          = 0x000000U,
