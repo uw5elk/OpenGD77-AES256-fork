@@ -359,6 +359,10 @@ typedef enum
 	CODEPLUG_CUSTOM_DATA_TYPE_RCTL_CONFIG, /* Перемикач "приймати команди RCTL" (без allowlist -
 	                                        * ВИПРАВЛЕНО 2026-09-03); пишеться і з ПК (rctl_config.py/
 	                                        * CHIRP), і прямо з рації (menuRCTLConfig.c) - див. dmr_rctl_cfg.c */
+	CODEPLUG_CUSTOM_DATA_TYPE_RCTL_STATE,  /* Лічильники anti-replay RCTL (2026-09-04). ОКРЕМИЙ блок,
+	                                        * а не поле в RCTL_CONFIG: конфіг пише CHIRP, а це -- суто
+	                                        * рантайм-стан, який веде сама прошивка. Змішати їх означало б,
+	                                        * що запис із ПК затирає лічильники захисту. Див. dmr_rctl_cfg.c */
 } CodeplugCustomDataType_t;
 
 

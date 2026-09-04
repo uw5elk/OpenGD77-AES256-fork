@@ -24,6 +24,16 @@
 #include <string.h>
 #include <stdio.h>
 
+/* Український текст -- ЛИШЕ через rctl_ua.h (cp1251). Писати кирилицю прямо тут не
+ * можна: файл у UTF-8, а шрифт рації індексується байтом cp1251, тож на екрані вийде
+ * каша. Перевіряється автоматично -- tools/check_string_encoding.py. */
+#if defined(LANGUAGE_BUILD_UKRAINIAN)
+#include "user_interface/languages/rctl_ua.h"
+#else
+#define RCTL_NOTE_ACK_FMT        "Radio check: ID %lu"
+#define RCTL_NOTE_CHECKED_FMT    "Radio check from %lu"
+#endif
+
 #define DT_DATA_HEADER   6
 #define DT_RATE12_DATA   7
 
@@ -45,9 +55,6 @@ static uint8_t rctlResolveTxKeyId(void)
 	return keyId;
 }
 
-static uint32_t     s_txSeq;
-static uint8_t       s_txSeqSeeded;
-
 int dmrRctlSendCmd(uint32_t targetId, uint8_t cmd, uint32_t arg)
 {
 	if (dmrDataTxActive()) { return -2; }
@@ -56,13 +63,18 @@ int dmrRctlSendCmd(uint32_t targetId, uint8_t cmd, uint32_t arg)
 	const uint8_t *key = (keyId != 0) ? dmr_aes_key_ptr(keyId) : NULL;
 	if (key == NULL) { return -3; }
 
-	if (!s_txSeqSeeded) { s_txSeq = (uint32_t)ticksGetMillis() | 1u; s_txSeqSeeded = 1; }
-	s_txSeq++;
+	/* Номер послідовності беремо з ПОСТІЙНОГО лічильника. Раніше він сіявся з
+	 * ticksGetMillis(), тобто від моменту ввімкнення -- після перезавантаження номери
+	 * починались наново, і разом зі збереженням лічильників на цілі це заблокувало б
+	 * зв'язок назавжди. 0 = діапазон зарезервувати не вдалося -> не відправляємо. */
+	uint32_t seq = dmrRctlNextTxSeq();
+
+	if (seq == 0) { return -5; }
 
 	dmr_rctl_msg_t m;
 	m.cmd = cmd;
 	m.issuerId = trxDMRID;
-	m.seq = s_txSeq;
+	m.seq = seq;
 	m.arg = arg;
 
 	uint8_t q[DMR_RCTL_TX_BURST_COUNT * 13];
@@ -218,12 +230,27 @@ void dmrRctlTick(void)
 	 * вимкнено або видавця немає в списку -> команда ІГНОРУЄТЬСЯ. */
 	if (!dmr_rctl_gate_check(dmrRctlGate(), msg.issuerId, msg.seq)) { return; }
 
+	/* Зберігаємо оновлені лічильники ДО того, як виконати команду. Якщо зробити навпаки,
+	 * знеструмлення між дією і записом лишає рівно те вікно, заради якого все й робилось:
+	 * той самий записаний кадр пройшов би вдруге. */
+	dmrRctlGatePersist();
+
 	switch (msg.cmd)
 	{
 		case DMR_RCTL_CMD_CHECK_REQ:
 			/* Авто-відповідь. Best-effort: якщо канал даних саме зайнятий -- відповідь
 			 * пропускається, видавець може повторити запит. */
 			dmrRctlSendCmd(msg.issuerId, DMR_RCTL_CMD_CHECK_ACK, 0);
+			{
+				/* Рація щойно САМА вийшла в ефір. Мовчки цього робити не можна: оператор
+				 * має знати, що його передавач працював і хто це спричинив -- інакше
+				 * примусову передачу (напр. відтвореним кадром) неможливо помітити.
+				 * Банер БЕЗ звуку: звуковий сигнал у полі сам по собі демаскує. */
+				char note[40];
+
+				snprintf(note, sizeof note, RCTL_NOTE_CHECKED_FMT, (unsigned long)msg.issuerId);
+				uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 4000, note, true);
+			}
 			break;
 
 		case DMR_RCTL_CMD_CHECK_ACK:
@@ -233,7 +260,7 @@ void dmrRctlTick(void)
 			s_haveAck = 1;
 			s_ackGen++;
 			char note[40];
-			snprintf(note, sizeof note, "Радіоперевірка: ID %lu на зв'язку", (unsigned long)msg.issuerId);
+			snprintf(note, sizeof note, RCTL_NOTE_ACK_FMT, (unsigned long)msg.issuerId);
 			uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 4000, note, true);
 			break;
 		}

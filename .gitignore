@@ -7,3 +7,4 @@ MDUV380_firmware/tools/smeter_preview*.png
 MDUV380_firmware/tools/smeter_preview.png
 __pycache__/
 *.pyc
+MDUV380_firmware/tests/.build/

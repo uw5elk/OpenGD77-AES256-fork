@@ -17,6 +17,7 @@
 #define _OPENGD77_DMR_RCTL_CFG_H_
 
 #include "crypto/dmr_rctl_pdu.h"
+#include <stdint.h>
 
 #if defined(ENABLE_DMR_DATA) && defined(ENABLE_AES)
 
@@ -43,6 +44,18 @@ int dmrRctlConfigEnabled(void);
  * Повертає 1 при успішному записі, 0 при помилці флеш-запису. Ефект - негайний:
  * функція сама викликає dmrRctlConfigReload(). */
 int dmrRctlConfigSetEnabled(int enabled);
+
+/* Записати поточні лічильники anti-replay у флеш (блок "RCTS", окремий від "RCTL").
+ * Викликати ПІСЛЯ того, як dmr_rctl_gate_check() прийняв команду, і ДО того, як
+ * команду виконано -- інакше знеструмлення між дією і записом лишає вікно на один
+ * повтор. Повертає 1 при успіху. */
+int dmrRctlGatePersist(void);
+
+/* Наступний номер послідовності для ВІДПРАВКИ. Монотонний ЧЕРЕЗ ПЕРЕЗАВАНТАЖЕННЯ:
+ * номери видаються пачками, у флеш пишеться лише верхня межа (див. коментар у
+ * dmr_rctl_cfg.c). Повертає 0, якщо зарезервувати діапазон не вдалося -- тоді
+ * відправку треба скасувати, а не слати команду з непевним номером. */
+uint32_t dmrRctlNextTxSeq(void);
 
 #endif /* ENABLE_DMR_DATA && ENABLE_AES */
 #endif /* _OPENGD77_DMR_RCTL_CFG_H_ */

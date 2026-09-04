@@ -34,6 +34,12 @@
 #define RCTL_HINT_ANY_KEY        "будь-яка клавіша: назад"
 #define RCTL_ERR_GENERIC         "помилка"
 #define RCTL_ERR_TX_BUSY         "канал зайнятий"
+
+/* Спливаючі сповіщення. Раніше цей текст був написаний прямо в dmr_rctl_tx.c у
+ * UTF-8 -- і на екрані виходила каша, бо шрифт рації індексується байтом cp1251.
+ * Місце українського тексту -- тут. */
+#define RCTL_NOTE_ACK_FMT        "Радіоперевірка: ID %lu"
+#define RCTL_NOTE_CHECKED_FMT    "Радіоперевірка від %lu"
 #define RCTL_ERR_NO_KEY          "немає AES-ключа"
 #define RCTL_ERR_FRAME           "збірка кадру не вдалась"
 #define RCTL_SEND_FAILED         "Надсилання не вдалось"

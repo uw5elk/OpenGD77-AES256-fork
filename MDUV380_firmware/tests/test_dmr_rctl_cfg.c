@@ -122,6 +122,71 @@ int main(void)
     CHECK(dmr_rctl_gate_check(dmrRctlGate(), 0x444444u, 2) == 0, "T7: вимкнено -- той самий видавець більше не проходить");
     CHECK(mock_codeplug_write_count() == 2, "T7: другий виклик -- ще один фізичний запис (оновлення блоку, не новий)");
 
+    /* ================= T8: anti-replay ПЕРЕЖИВАЄ ПЕРЕЗАВАНТАЖЕННЯ =================
+     *
+     * Це головна перевірка виправлення 2026-09-04. До нього кеш жив лише в ОЗП, тож
+     * записаний з ефіру кадр проходив повторно щоразу після ввімкнення рації, і рація
+     * АВТОМАТИЧНО виходила в ефір з відповіддю -- готовий пеленг для супротивника.
+     *
+     * "Перезавантаження" тут -- dmrRctlConfigReload(): ОЗП чисте, вміст мок-флешу
+     * лишається. Саме те, що відбувається при ввімкненні живлення. */
+    mock_codeplug_clear();
+    len = pack_block(buf, (int)sizeof buf, 2, 1);
+    mock_codeplug_set_block(CODEPLUG_CUSTOM_DATA_TYPE_RCTL_CONFIG, buf, len);
+    dmrRctlConfigReload();
+
+    CHECK(dmr_rctl_gate_check(dmrRctlGate(), 0x777777u, 100) == 1, "T8: перша команда від видавця приймається");
+    CHECK(dmrRctlGatePersist() == 1, "T8: лічильники записано у флеш");
+
+    dmrRctlConfigReload();   /* <-- ПЕРЕЗАВАНТАЖЕННЯ рації */
+
+    CHECK(dmr_rctl_gate_check(dmrRctlGate(), 0x777777u, 100) == 0,
+          "T8: ТОЙ САМИЙ кадр після перезавантаження ВІДХИЛЕНО (replay закрито)");
+    CHECK(dmr_rctl_gate_check(dmrRctlGate(), 0x777777u, 99) == 0,
+          "T8: старіший кадр після перезавантаження теж відхилено");
+    CHECK(dmr_rctl_gate_check(dmrRctlGate(), 0x777777u, 101) == 1,
+          "T8: НОВІША команда від того самого видавця проходить (зв'язок не зламано)");
+
+    /* ================= T9: номер відправки монотонний через перезавантаження =======
+     *
+     * Без цього збереження лічильників на ЦІЛІ перетворило б дірку в безпеці на повну
+     * відмову зв'язку: запитувач після свого перезавантаження починав би з малого
+     * номера, а ціль пам'ятала б високий -- і відхиляла б його НАЗАВЖДИ. */
+    mock_codeplug_clear();
+    dmrRctlConfigReload();
+
+    uint32_t a = dmrRctlNextTxSeq();
+    uint32_t b = dmrRctlNextTxSeq();
+    CHECK((a != 0) && (b == a + 1), "T9: номери зростають на 1");
+
+    dmrRctlConfigReload();   /* <-- ПЕРЕЗАВАНТАЖЕННЯ запитувача */
+
+    uint32_t c = dmrRctlNextTxSeq();
+    CHECK(c > b, "T9: після перезавантаження номер БІЛЬШИЙ за виданий до нього");
+
+    /* ================= T10: запис у флеш пачками, а не на кожну команду ============ */
+    mock_codeplug_clear();
+    dmrRctlConfigReload();
+    (void)dmrRctlNextTxSeq();                 /* перший виклик резервує діапазон -> 1 запис */
+    int writesAfterFirst = mock_codeplug_write_count();
+    for (int i = 0; i < 30; i++) { (void)dmrRctlNextTxSeq(); }
+    CHECK(writesAfterFirst == 1, "T10: перший номер коштує рівно одного запису у флеш");
+    CHECK(mock_codeplug_write_count() == 1, "T10: наступні 30 номерів не пишуть у флеш узагалі");
+
+    /* ================= T11: побитий блок стану -> порожній кеш, без падіння ======== */
+    mock_codeplug_clear();
+    len = pack_block(buf, (int)sizeof buf, 2, 1);
+    mock_codeplug_set_block(CODEPLUG_CUSTOM_DATA_TYPE_RCTL_CONFIG, buf, len);
+    {
+        uint8_t junk[76];
+        memset(junk, 0xA5, sizeof junk);       /* немає magic "RCTS" */
+        mock_codeplug_set_block(CODEPLUG_CUSTOM_DATA_TYPE_RCTL_STATE, junk, (int)sizeof junk);
+    }
+    dmrRctlConfigReload();
+    CHECK(dmr_rctl_gate_check(dmrRctlGate(), 0x888888u, 7) == 1,
+          "T11: побитий блок стану -> кеш порожній, робота триває");
+    CHECK(dmrRctlNextTxSeq() != 0, "T11: побитий блок стану -> номер відправки все одно видається");
+
     if (fails)
     {
         printf("\n%d FAILURES\n", fails);
