@@ -2565,12 +2565,7 @@ static void drawSMeterBlock(int rssiDbm)
 	}
 	displayThemeResetToDefault();
 
-	// 5) Червона поділка на початку зони понад S9 -- видно межу навіть коли смуга порожня.
-	displayThemeApply(THEME_ITEM_FG_RSSI_BAR_S9P, THEME_ITEM_BG);
-	displayDrawFastVLine((SMETER_BAR_X + SMETER_S9_POS), SMETER_TICK_Y, SMETER_TICK_H_MAJOR, true);
-	displayThemeResetToDefault();
-
-	// 6) Рядок шкали "1 3 5 7 9" (фарба y=57..63) -- ПІД поділками.
+	// 5) Рядок шкали "1 3 5 7 9" (фарба y=57..63) -- ПІД поділками.
 	displayThemeApply(THEME_ITEM_FG_DECORATION, THEME_ITEM_BG);
 	for (int s = 1; s <= 9; s += 2)
 	{

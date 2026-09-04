@@ -129,7 +129,6 @@ def draw_screen(theme, dbm, contact, callinfo, header_l, header_r):
         tx = BAR_X + pixpos(S0 + s_ * 4)
         th = TICK_MAJ if (s_ % 2) else TICK_MIN
         fb.fill(tx, TICK_Y, 1, th, T('THEME_ITEM_FG_DECORATION'))
-    fb.fill(BAR_X + S9_POS, TICK_Y, 1, TICK_MAJ, T('THEME_ITEM_FG_RSSI_BAR_S9P'))
     for s_ in range(1, 10, 2):
         fb.text(BAR_X + pixpos(S0 + s_ * 4) - FONT_W // 2, SCALE_Y, str(s_),
                 T('THEME_ITEM_FG_DECORATION'), F1)
@@ -168,6 +167,6 @@ for idx, (label, theme, dbm) in enumerate(shots):
     out.paste(img, (cx, cy))
     d.rectangle([cx - 1, cy - 1, cx + iw, cy + ih], outline=(90, 90, 95))
 
-path = '/tmp/claude-0/-home-claude/7814cbab-09c5-5734-b4d8-b300fee9c685/scratchpad/smeter_preview6.png'
+path = '/tmp/claude-0/-home-claude/7814cbab-09c5-5734-b4d8-b300fee9c685/scratchpad/smeter_preview7.png'
 out.save(path)
 print('збережено:', path, out.size)
