@@ -149,15 +149,40 @@ DECLARE_SMETER_ARRAY(rssiMeterHeaderBar, DISPLAY_SIZE_X);
 
 #if defined(HAS_COLOURS)
 // "S-метр у шапці" (Options>Display, BIT_SHOW_SMETER_IN_HEADER, 2026-09-03) -- альтернативний
-// вигляд RSSI-смуги в шапці: мітка "S" + вузька смуга + числове значення в дБм, за зразком
-// OpenGD77 RUS. Розкладка по X (0..145) навмисно НЕ чіпає колонку x=147..159, де малюється
-// іконка замка AES (uiDrawAesEnabledIcon, y=14..22, коментар вище в цьому файлі) -- незалежно
-// від того, що новий блок вищий (9px), ніж стандартна 4px-смуга.
-#define SMETER_HEADER_SAFE_WIDTH     146 // DISPLAY_SIZE_X(160) - 14, ліворуч від колонки замка
-#define SMETER_HEADER_BAR_X           10 // праворуч від мітки "S"
-#define SMETER_HEADER_BAR_WIDTH        86
-#define SMETER_HEADER_VALUE_WIDTH      50 // праворуч від смуги, місце під "-114dBm"
-#define SMETER_HEADER_TALL_HEIGHT       9 // до y=DISPLAY_Y_POS_BAR+8=18, на 6px вище DISPLAY_Y_POS_CONTACT(24)
+// вигляд RSSI-смуги в шапці за зразком OpenGD77 RUS: мітка "S" + смуга В РАМЦІ + числове
+// значення в дБм праворуч + окремий рядок шкали "1 3 5 7 9" під смугою.
+//
+// РОЗКЛАДКА ПО X (екран 160px). Кожна ділянка рахована так, щоб НЕ перетнутись із чужими
+// елементами, які вже живуть у цій самій смузі екрана:
+//     0..5    мітка "S"                     (FONT_SIZE_1 = 6x8)
+//     7..86   рамка смуги (80px)            -- заповнення всередині: 8..85 (78px)
+//    88..134  значення в дБм, притиснуте до правого краю своєї ділянки
+//   136..156  ЧУЖЕ, НЕ ЧІПАЄМО:
+//              * конверт непрочитаних AES-SMS -- x=136..156, y=16..24 (uiUtilityRenderHeader);
+//              * іконка замка AES            -- x=147..156, y=14..22 (uiDrawAesEnabledIcon).
+//            Саме тому і смуга, і текст, і захисне очищення обмежені 136-ма пікселями:
+//            попередня версія чистила 0..145 і зрізала б конверту ліві стовпці.
+//
+// РОЗКЛАДКА ПО Y. Увесь бюджет -- 14px між DISPLAY_Y_POS_BAR(10) і DISPLAY_Y_POS_CONTACT(24),
+// тож блок розкладено рівно в нього, без жодного пікселя запасу:
+//    10..15   рамка смуги (6px = 1px рамка + 4px заповнення + 1px рамка)
+//    16..23   рядок шкали "1 3 5 7 9" (FONT_SIZE_1, 8px заввишки)
+// Текст дБм починається з y=10 і, як 8px-шрифт, дістає до y=17 -- тобто на 2px заходить у
+// рядок шкали, але ЛИШЕ на x>=88, де цифр шкали немає (найправіша цифра "9" кінчається на
+// x=68). Тому порядок малювання нижче фіксований: спершу рядок шкали, потім значення дБм.
+#define SMETER_HEADER_SAFE_WIDTH     136 // 0..135 -- ліворуч від конверта SMS і замка AES
+#define SMETER_HEADER_FRAME_X          7
+#define SMETER_HEADER_FRAME_W         80 // = BAR_WIDTH + 2 (рамка ліворуч і праворуч)
+#define SMETER_HEADER_FRAME_H          6 // = 1 + BAR_H(4) + 1
+#define SMETER_HEADER_BAR_X            8 // всередині рамки, праворуч від мітки "S"
+#define SMETER_HEADER_BAR_WIDTH       78
+#define SMETER_HEADER_BAR_H            4 // заповнення всередині рамки
+#define SMETER_HEADER_VALUE_X         88 // ліва межа ділянки значення (далі -- рамка смуги)
+#define SMETER_HEADER_VALUE_RIGHT    135 // ексклюзивно: останній використаний піксель -- 134
+#define SMETER_HEADER_SCALE_Y_OFF      6 // рядок шкали: DISPLAY_Y_POS_BAR + 6 = y=16
+#define SMETER_HEADER_FONT_W           6 // ширина гліфа FONT_SIZE_1 (font_6x8)
+#define SMETER_HEADER_FONT_H           8 // висота гліфа FONT_SIZE_1
+#define SMETER_HEADER_TALL_HEIGHT     14 // уся висота блоку: y=10..23 включно
 DECLARE_SMETER_ARRAY(rssiMeterHeaderBarNarrow, SMETER_HEADER_BAR_WIDTH);
 #endif
 
@@ -2406,11 +2431,12 @@ static void drawHeaderBar(int *barWidth, int16_t barHeight)
 
 #if defined(HAS_COLOURS)
 	// Захисне очищення: коли увімкнено "S-метр у шапці", сам S-метр малює вищий блок
-	// (SMETER_HEADER_TALL_HEIGHT=9px), ніж стандартна 4px-смуга, яку саме зараз малює
-	// ЦЯ функція (напр. під час RX->TX переходу, коли викликається смуга рівня мікрофона).
-	// Без цього залишок нижніх рядків S-метра (сама смуга/цифри) пережив би перехід і
-	// лишився б "прилиплим" під новою тонкою смугою. Очищення обмежене шириною самого
-	// S-метра (0..145), тож колонку іконки замка (x=147..159) воно ніколи не чіпає.
+	// (SMETER_HEADER_TALL_HEIGHT=14px, y=10..23), ніж стандартна 4px-смуга, яку саме зараз
+	// малює ЦЯ функція (напр. під час RX->TX переходу, коли викликається смуга рівня
+	// мікрофона). Без цього нижні рядки S-метра (рамка, шкала "1 3 5 7 9", значення дБм)
+	// пережили б перехід і лишились би "прилиплими" під новою тонкою смугою. Очищення
+	// обмежене шириною самого S-метра (0..135), тож ані конверт непрочитаних SMS
+	// (x=136..156), ані іконку замка AES (x=147..156) воно ніколи не чіпає.
 	if (settingsIsOptionBitSet(BIT_SHOW_SMETER_IN_HEADER) && (barHeight < SMETER_HEADER_TALL_HEIGHT))
 	{
 		displayThemeApply(THEME_ITEM_FG_RSSI_BAR, THEME_ITEM_BG_HEADER_TEXT);
@@ -2423,63 +2449,97 @@ static void drawHeaderBar(int *barWidth, int16_t barHeight)
 }
 
 #if defined(HAS_COLOURS)
-// Малює "повний блок" S-метра в шапці: мітка "S" + вузька смуга + текстове значення в дБм,
-// за зразком OpenGD77 RUS. Викликається ЛИШЕ коли увімкнено BIT_SHOW_SMETER_IN_HEADER
-// (Options>Display>"S-метр у шапці"), інакше uiUtilityDrawRSSIBarGraph нижче працює так
-// само, як і завжди -- тож OFF-шлях лишається байт-в-байт незмінним.
+// Малює "повний блок" S-метра в шапці за зразком OpenGD77 RUS: мітка "S" + смуга в рамці +
+// значення в дБм + рядок шкали "1 3 5 7 9" під смугою. Викликається ЛИШЕ коли увімкнено
+// BIT_SHOW_SMETER_IN_HEADER (Options>Display), інакше uiUtilityDrawRSSIBarGraph нижче працює
+// так само, як і завжди -- тож OFF-шлях лишається байт-в-байт незмінним.
 //
-// Користувач просив саме "повний блок, як на скріні RUS" -- на тому скріні під смугою є
-// ще й окремий рядок зі шкалою "1 3 5 7 9". Тут його свідомо ПРОПУЩЕНО: весь бюджет висоти
-// між тонкою RSSI-смугою (y=10) і рядком співрозмовника/позивного (DISPLAY_Y_POS_CONTACT=24)
-// -- лише 14px, а шкала цифр окремим рядком потребує ще ~7-8px, тобто впритул до або за межі
-// рядка з позивним. Оскільки жоден компілятор в цьому середовищі недоступний для перевірки
-// (лише синтаксичний розбір і ручна звірка з робочим кодом), ризикувати накладенням на
-// сусідній рядок на живій рації визнано невиправданим -- тому зроблено безпечнішу версію:
-// один рядок "S [смуга] -114dBm" висотою SMETER_HEADER_TALL_HEIGHT(9)px, що лишає 6px запасу
-// до DISPLAY_Y_POS_CONTACT. Детальна дБм-шкала лишається на окремому екрані RSSI
-// (menuRSSIScreen.c), як і раніше.
+// ЧОМУ ЗНАЧЕННЯ дБм РАНІШЕ ПОКАЗУВАЛОСЬ ЯК "-6" (виправлено 2026-09-04, знайдено на живій
+// рації): попередня версія друкувала текст через displayPrintCore(..., TEXT_ALIGN_RIGHT).
+// У цього API семантика x НЕ така, як здається: обрізання рядка рахується ДО вирівнювання і
+// саме за переданим x (HX8353E_display.c, рядки 243-246):
+//        if ((charWidth * sLen) + xPos > DISPLAY_SIZE_X) { sLen = (DISPLAY_SIZE_X - xPos) / charWidth; }
+// а вже потім TEXT_ALIGN_RIGHT ПЕРЕЗАПИСУЄ x на (DISPLAY_SIZE_X - charWidth * sLen), тобто
+// притискає текст до краю ЕКРАНА, а не до переданої координати. З x=146 обрізання давало
+// sLen = (160-146)/6 = 2 символи, і від "-60dBm" лишалось рівно "-6" -- у колонці замка.
+// Тому тут текст вирівнюється вручну (обчислюємо x самі) і друкується displayPrintAt, де
+// x -- це справжня ліва координата, а умова обрізання не спрацьовує за побудовою.
 static void drawHeaderSMeterWithValue(int rssiScaled, int rssiDbmRaw)
 {
 	char buf[16];
 	int barWidth = ((rssiScaled * rssiMeterHeaderBarNarrowNumUnits) / rssiMeterHeaderBarNarrowDivider);
+	const int16_t barY = (DISPLAY_Y_POS_BAR + 1);                             // 11 -- всередині рамки
+	const int16_t scaleY = (DISPLAY_Y_POS_BAR + SMETER_HEADER_SCALE_Y_OFF);   // 16 -- рядок шкали
 
 	barWidth = CLAMP(barWidth, 0, SMETER_HEADER_BAR_WIDTH);
 
-	// Мітка "S" зліва від смуги
+	// 1) Мітка "S" ліворуч від смуги (x=0..5). Ніколи не змінюється, тож без очищення.
 	displayThemeApply(THEME_ITEM_FG_HEADER_TEXT, THEME_ITEM_BG_HEADER_TEXT);
 	displayPrintAt(0, DISPLAY_Y_POS_BAR, "S", FONT_SIZE_1);
 	displayThemeResetToDefault();
 
-	// Вузька смуга -- той самий колір і S9+ логіка, що й стандартна RSSI-смуга нижче
+	// 2) Заповнення смуги ВСЕРЕДИНІ рамки (x=8..85, y=11..14). Спершу гасимо "хвіст"
+	//    попереднього, сильнішого сигналу, потім малюємо поточний рівень.
 	displayThemeApply(THEME_ITEM_FG_RSSI_BAR, THEME_ITEM_BG_HEADER_TEXT);
-	if (barWidth)
-	{
-		displayFillRect(SMETER_HEADER_BAR_X, DISPLAY_Y_POS_BAR, barWidth, SMETER_HEADER_TALL_HEIGHT, false);
-	}
 	if (barWidth < SMETER_HEADER_BAR_WIDTH)
 	{
-		displayFillRect((SMETER_HEADER_BAR_X + barWidth), DISPLAY_Y_POS_BAR,
-				(SMETER_HEADER_BAR_WIDTH - barWidth), SMETER_HEADER_TALL_HEIGHT, true);
+		displayFillRect((SMETER_HEADER_BAR_X + barWidth), barY,
+				(SMETER_HEADER_BAR_WIDTH - barWidth), SMETER_HEADER_BAR_H, true);
+	}
+	if (barWidth)
+	{
+		displayFillRect(SMETER_HEADER_BAR_X, barY, barWidth, SMETER_HEADER_BAR_H, false);
 	}
 
+	// Частина понад S9 -- окремим кольором, та сама логіка, що й у стандартній смузі нижче.
 	int xPos = (rssiMeterHeaderBarNarrow[9] * 2);
 	if (barWidth > xPos)
 	{
 		displayThemeApply(THEME_ITEM_FG_RSSI_BAR_S9P, THEME_ITEM_BG_HEADER_TEXT);
-		displayFillRect((SMETER_HEADER_BAR_X + xPos), DISPLAY_Y_POS_BAR, (barWidth - xPos), SMETER_HEADER_TALL_HEIGHT, false);
+		displayFillRect((SMETER_HEADER_BAR_X + xPos), barY, (barWidth - xPos), SMETER_HEADER_BAR_H, false);
 	}
 	displayThemeResetToDefault();
 
-	// Числове значення в дБм, притиснуте до правого краю безпечної зони (не заходить
-	// у колонку іконки замка). Ділянку спершу очищаємо самостійно -- displayPrintCore
-	// малює лише гліфи символів, тож коротший текст (напр. "-93dBm" після "-114dBm")
-	// не стер би "зайві" пікселі попереднього довшого напису сам по собі.
+	// 3) Рамка навколо смуги (x=7..86, y=10..15) -- саме її бракувало, щоб було видно
+	//    ПОВНУ шкалу, а не лише зафарбовану частину, як на зразку RUS.
+	displayThemeApply(THEME_ITEM_FG_DECORATION, THEME_ITEM_BG_HEADER_TEXT);
+	displayDrawRect(SMETER_HEADER_FRAME_X, DISPLAY_Y_POS_BAR, SMETER_HEADER_FRAME_W, SMETER_HEADER_FRAME_H, false);
+	displayThemeResetToDefault();
+
+	// 4) Рядок шкали "1 3 5 7 9" (y=16..23). Цифри стоять під своїми S-точками: індекс у
+	//    rssiMeterHeaderBarNarrow[] -- це номер S-одиниці, значення -- зміщення в пікселях
+	//    (те саме *2-масштабування, що й у смуги), мінус пів гліфа для центрування.
+	//    Очищення рядка починається з x=SMETER_HEADER_FRAME_X, щоб не зрізати нижні 2px
+	//    мітки "S" (вона 8px заввишки і теж дістає до y=17).
 	displayThemeApply(THEME_ITEM_FG_HEADER_TEXT, THEME_ITEM_BG_HEADER_TEXT);
-	displayFillRect((SMETER_HEADER_BAR_X + SMETER_HEADER_BAR_WIDTH), DISPLAY_Y_POS_BAR,
-			SMETER_HEADER_VALUE_WIDTH, SMETER_HEADER_TALL_HEIGHT, true);
+	displayFillRect(SMETER_HEADER_FRAME_X, scaleY, (SMETER_HEADER_SAFE_WIDTH - SMETER_HEADER_FRAME_X),
+			SMETER_HEADER_FONT_H, true);
+	for (int s = 1; s <= 9; s += 2)
+	{
+		char digit[2];
+
+		snprintf(digit, sizeof digit, "%d", s);
+		displayPrintAt(((SMETER_HEADER_BAR_X + (rssiMeterHeaderBarNarrow[s] * 2)) - (SMETER_HEADER_FONT_W / 2)),
+				scaleY, digit, FONT_SIZE_1);
+	}
+	displayThemeResetToDefault();
+
+	// 5) Числове значення в дБм, вирівняне праворуч у своїй ділянці (x=88..134). Ділянку
+	//    очищаємо самі: displayPrintAt малює лише гліфи, тож коротший текст ("-93dBm" після
+	//    "-114dBm") не стер би зайві пікселі попереднього напису. Йде ПІСЛЯ рядка шкали --
+	//    бо текст 8px заввишки дістає до y=17, тобто на 2px у рядок шкали (див. коментар
+	//    при константах вище).
 	snprintf(buf, sizeof buf, "%ddBm", rssiDbmRaw);
-	displayPrintCore((SMETER_HEADER_BAR_X + SMETER_HEADER_BAR_WIDTH + SMETER_HEADER_VALUE_WIDTH), DISPLAY_Y_POS_BAR,
-			buf, FONT_SIZE_1, TEXT_ALIGN_RIGHT, false);
+	int16_t textX = (SMETER_HEADER_VALUE_RIGHT - ((int16_t)strlen(buf) * SMETER_HEADER_FONT_W));
+	if (textX < SMETER_HEADER_VALUE_X)
+	{
+		textX = SMETER_HEADER_VALUE_X; // страховка на випадок неочікувано довгого значення
+	}
+
+	displayThemeApply(THEME_ITEM_FG_HEADER_TEXT, THEME_ITEM_BG_HEADER_TEXT);
+	displayFillRect(SMETER_HEADER_VALUE_X, DISPLAY_Y_POS_BAR,
+			(SMETER_HEADER_VALUE_RIGHT - SMETER_HEADER_VALUE_X), SMETER_HEADER_FONT_H, true);
+	displayPrintAt(textX, DISPLAY_Y_POS_BAR, buf, FONT_SIZE_1);
 	displayThemeResetToDefault();
 }
 #endif // HAS_COLOURS
