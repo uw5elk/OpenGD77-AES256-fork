@@ -158,16 +158,21 @@ static void updateScreen(bool isFirstRun)
 	{
 		displayClearBuf();
 
+#if defined(LANGUAGE_BUILD_UKRAINIAN)
+		// В українській збірці екран вітання -- ЛИШЕ гасло, по центру екрана.
+		// Назву прошивки ("OpenGD77") і два рядки з кодплуга (line1/line2) тут
+		// свідомо не малюємо -- за прямим проханням користувача.
+		//
+		// ВАЖЛИВО: самі line1/line2 нижче все одно потрібні -- з них складається
+		// Talker Alias (HRC6000SetTalkerAlias), який передається в ефір. Тому
+		// codeplugGetBootScreenData() вище лишається на місці, ми лише не виводимо
+		// ці рядки на екран.
+		displayPrintCentered(((DISPLAY_SIZE_Y - FONT_SIZE_3_HEIGHT) / 2), SLOGAN_POWER_ON, FONT_SIZE_3);
+#else
 		displayPrintCentered(8, "OpenGD77", FONT_SIZE_3);
-#if defined(LANGUAGE_BUILD_UKRAINIAN) && (DISPLAY_SIZE_Y >= 128)
-		// Гасло вмикання -- у вільній смузі між назвою прошивки (y=8..23) і першим
-		// рядком з кодплуга (y=64..79), тобто рівно посередині проміжку 24..63.
-		// Умова на висоту екрана потрібна, бо той самий файл збирається і для
-		// монохромних моделей із дисплеєм 64px, де цієї смуги просто немає.
-		displayPrintCentered(36, SLOGAN_POWER_ON, FONT_SIZE_3);
-#endif
 		displayPrintCentered((DISPLAY_SIZE_Y / 4) * 2, line1, FONT_SIZE_3);
 		displayPrintCentered((DISPLAY_SIZE_Y / 4) * 3, line2, FONT_SIZE_3);
+#endif
 	}
 
 	displayThemeResetToDefault();
