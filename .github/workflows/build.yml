@@ -134,6 +134,7 @@ jobs:
         working-directory: MDUV380_firmware/tools
         run: |
           pyinstaller --onefile --windowed --name "TYT MD-UV390UKR" \
+            --icon app_icon.ico \
             --version-file version_info.txt \
             --hidden-import usb.backend.libusb1 \
             --hidden-import cryptography.hazmat.bindings._rust \
