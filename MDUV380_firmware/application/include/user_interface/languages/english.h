@@ -337,7 +337,7 @@ const stringsTable_t englishLanguage =
 #endif
 #endif
 #if defined(HAS_COLOURS)
-.smeter_header				= "S-meter hdr", // MaxLen: 16 (with ':' + .on or .off)
+.smeter_header				= "S-meter", // MaxLen: 16 (with ':' + .on or .off)
 #endif
 #if defined(LANGUAGE_BUILD_UKRAINIAN)
 .gps_absent                              = "No GPS", // MaxLen: 16

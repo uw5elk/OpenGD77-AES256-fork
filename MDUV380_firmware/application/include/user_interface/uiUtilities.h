@@ -214,6 +214,10 @@ void lastHeardClearWorkingTAData(void);
 bool lastHeardListUpdate(uint8_t *dmrDataBuffer, bool forceOnHotspot);
 void lastHeardClearLastID(void);
 void uiUtilityDrawRSSIBarGraph(void);
+// Останній рядок (по 8px) для displayRenderRows() після оновлення RSSI: при
+// увімкненому S-метрі його блок лежить нижче шапки, тож треба виштовхнути більше
+// рядків. Вимкнено -- повертає передане значення без змін.
+int16_t uiUtilityRSSIRenderEndRow(int16_t defaultEndRow);
 void uiUtilityDrawFMMicLevelBarGraph(void);
 void uiUtilityDrawDMRMicLevelBarGraph(void);
 void setOverrideTGorPC(uint32_t tgOrPc, bool privateCall);

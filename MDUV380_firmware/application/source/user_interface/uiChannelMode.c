@@ -342,7 +342,7 @@ menuStatus_t uiChannelMode(uiEvent_t *ev, bool isFirstRun)
 						{
 							// Only render the second row which contains the bar graph, if we're not scanning,
 							// as there is no need to redraw the rest of the screen
-							displayRenderRows(((uiDataGlobal.Scan.active && (uiDataGlobal.Scan.state == SCAN_STATE_PAUSED)) ? 0 : 1), 2);
+							displayRenderRows(((uiDataGlobal.Scan.active && (uiDataGlobal.Scan.state == SCAN_STATE_PAUSED)) ? 0 : 1), uiUtilityRSSIRenderEndRow(2));
 						}
 					}
 					m = ev->time;

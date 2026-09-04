@@ -338,7 +338,7 @@ const stringsTable_t ukrainianLanguage =
 #endif
 #endif
 #if defined(HAS_COLOURS)
-.smeter_header                           = "S-метр шапки", // MaxLen: 16 (with ':' + .on or .off)
+.smeter_header                           = "S-метр", // MaxLen: 16 (with ':' + .on or .off)
 #endif
 #if defined(LANGUAGE_BUILD_UKRAINIAN)
 .gps_absent                              = "GPS відсутній", // MaxLen: 16

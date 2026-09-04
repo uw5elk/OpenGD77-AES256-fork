@@ -685,7 +685,7 @@ menuStatus_t uiVFOMode(uiEvent_t *ev, bool isFirstRun)
 							}
 							else
 							{
-								displayRenderRows(((uiDataGlobal.Scan.active && (uiDataGlobal.Scan.state == SCAN_STATE_PAUSED)) ? 0 : 1), 2);
+								displayRenderRows(((uiDataGlobal.Scan.active && (uiDataGlobal.Scan.state == SCAN_STATE_PAUSED)) ? 0 : 1), uiUtilityRSSIRenderEndRow(2));
 							}
 						}
 					}
