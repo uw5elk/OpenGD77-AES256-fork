@@ -7,7 +7,7 @@
 збірку), координати -- з констант SMETER_* у uiUtilities.c, а кольори проганяються
 через те саме квантування RGB565, що й на живому дисплеї.
 """
-import re, sys
+import os, re, sys
 from PIL import Image, ImageDraw, ImageFont
 
 FW = '/root/work/repo/MDUV380_firmware'
@@ -167,6 +167,8 @@ for idx, (label, theme, dbm) in enumerate(shots):
     out.paste(img, (cx, cy))
     d.rectangle([cx - 1, cy - 1, cx + iw, cy + ih], outline=(90, 90, 95))
 
-path = '/tmp/claude-0/-home-claude/7814cbab-09c5-5734-b4d8-b300fee9c685/scratchpad/smeter_preview9.png'
+# Поруч зі скриптом, а не за абсолютним шляхом: цей файл імпортує ще й
+# check_smeter_align.py, зокрема в CI, де жодної сторонньої теки немає.
+path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'smeter_preview.png')
 out.save(path)
 print('збережено:', path, out.size)

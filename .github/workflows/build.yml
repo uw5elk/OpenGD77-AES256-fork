@@ -6,6 +6,37 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Статичні перевірки. ОКРЕМА робота, а не крок усередині збірки, з двох причин:
+  # вона не потребує ARM-тулчейну (тобто дає відповідь за секунди, поки збірки ще йдуть),
+  # і її падіння не заважає роботам нижче вивантажити готовий .bin.
+  #
+  # Кожна з трьох перевірок з'явилась після реального дефекту, а не "про всяк випадок":
+  #   * syntax_check.sh      -- двічі валив CI коментар "RCFG_*/RCTL_*" у rctl_ua.h
+  #                             ("*/" закривало блочний коментар); плюс -Werror на неявні
+  #                             виклики, щоб прибрана небезпечна функція не повернулась тихо;
+  #   * check_menu_widths.py -- підпис "Рівень потуж.":250 не влазив у 16 символів, і
+  #                             екран калібрування показував 25 замість 250;
+  #   * check_smeter_align.py -- цифри шкали S-метра стояли на піксель лівіше за поділки.
+  checks:
+    runs-on: ubuntu-latest
+    name: перевірки (синтаксис, ширина меню, вирівнювання S-метра)
+    steps:
+      - uses: actions/checkout@v4
+      # Через setup-python, а не системний pip: на свіжих ubuntu-образах системний
+      # Python "externally managed", і pip install без --break-system-packages там падає,
+      # а сам той прапорець є не в кожній версії pip. Власне середовище надійніше.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Встановити Pillow (потрібен рендереру екрана)
+        run: pip install pillow
+      - name: Синтаксична перевірка хостовим gcc
+        run: ./MDUV380_firmware/tools/syntax_check.sh
+      - name: Ширина підписів меню
+        run: python3 MDUV380_firmware/tools/check_menu_widths.py
+      - name: Вирівнювання шкали S-метра
+        run: python3 MDUV380_firmware/tools/check_smeter_align.py
+
   build:
     runs-on: ubuntu-latest
     strategy:
