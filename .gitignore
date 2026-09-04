@@ -2,3 +2,5 @@ MDUV380_firmware/build/
 MDUV380_firmware/.flashed.elf
 MDUV380_firmware/application/source/linkerdata/codec_bin_section_1.bin
 MDUV380_firmware/tools/app_icon_preview.png
+MDUV380_firmware/tools/align_zoom.png
+MDUV380_firmware/tools/smeter_preview*.png

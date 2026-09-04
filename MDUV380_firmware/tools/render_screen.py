@@ -86,7 +86,7 @@ FRAME_X = const('SMETER_FRAME_X');  FRAME_W = const('SMETER_FRAME_W')
 FRAME_H = const('SMETER_FRAME_H');  BAR_X   = const('SMETER_BAR_X')
 BAR_W   = const('SMETER_BAR_WIDTH'); BAR_H  = const('SMETER_BAR_H')
 VAL_R   = const('SMETER_VALUE_RIGHT'); FONT_W = const('SMETER_FONT_W')
-VAL_MIN = const('SMETER_VALUE_MIN_X')
+VAL_MIN = const('SMETER_VALUE_MIN_X'); INK_CX = const('SMETER_GLYPH_INK_CX')
 S9_POS  = const('SMETER_S9_POS');   ABOVE   = const('SMETER_ABOVE_S9_DB')
 S0, S9DB = -129, -93
 def const_expr(name):
@@ -130,7 +130,7 @@ def draw_screen(theme, dbm, contact, callinfo, header_l, header_r):
         th = TICK_MAJ if (s_ % 2) else TICK_MIN
         fb.fill(tx, TICK_Y, 1, th, T('THEME_ITEM_FG_DECORATION'))
     for s_ in range(1, 10, 2):
-        fb.text(BAR_X + pixpos(S0 + s_ * 4) - FONT_W // 2, SCALE_Y, str(s_),
+        fb.text(BAR_X + pixpos(S0 + s_ * 4) - INK_CX, SCALE_Y, str(s_),
                 T('THEME_ITEM_FG_DECORATION'), F1)
     buf = f'{dbm}'
     tx = max(VAL_MIN, VAL_R - len(buf) * FONT_W)
@@ -167,6 +167,6 @@ for idx, (label, theme, dbm) in enumerate(shots):
     out.paste(img, (cx, cy))
     d.rectangle([cx - 1, cy - 1, cx + iw, cy + ih], outline=(90, 90, 95))
 
-path = '/tmp/claude-0/-home-claude/7814cbab-09c5-5734-b4d8-b300fee9c685/scratchpad/smeter_preview8.png'
+path = '/tmp/claude-0/-home-claude/7814cbab-09c5-5734-b4d8-b300fee9c685/scratchpad/smeter_preview9.png'
 out.save(path)
 print('збережено:', path, out.size)

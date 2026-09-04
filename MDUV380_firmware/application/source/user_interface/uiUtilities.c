@@ -207,8 +207,13 @@ DECLARE_SMETER_ARRAY(rssiMeterHeaderBar, DISPLAY_SIZE_X);
 #define SMETER_TICK_H_MINOR            2 // під парними S (2,4,6,8): y=53..54
 #define SMETER_SCALE_Y               (SMETER_BLOCK_Y + 16) // 57 -- фарба цифр 57..63, проміжок на 56
 #define SMETER_VALUE_RIGHT           159 // ексклюзивно: значення кінчається на x=158
-#define SMETER_VALUE_MIN_X           132 // не ближче за 3px до цифри "9" (її комірка кінчається на 128)
+#define SMETER_VALUE_MIN_X           132 // фарба "9" кінчається на x=128, тож лишається 3px проміжку
 #define SMETER_FONT_W                  6 // ширина гліфа FONT_SIZE_1 (font_6x8)
+// Центр ФАРБИ цифри всередині 6-піксельної комірки. Не 3 (тобто не SMETER_FONT_W/2):
+// у font_6x8 цифри займають стовпці 0..4, а шостий -- міжсимвольний проміжок; "1" займає
+// 1..3. Проміряно по HX8353E_charset_UA.h: у ВСІХ цифр 0..9 і в мінуса центр фарби --
+// стовпець 2. З відніманням 3 цифра ставала на піксель лівіше за свою поділку.
+#define SMETER_GLYPH_INK_CX            2
 #define SMETER_FONT_H                  8 // висота комірки (фарба -- 7px, рядки 0..6)
 // Останній рядок (по 8px), який треба виштовхнути на LCD, щоб блок оновлювався: y=63 -> 8.
 #define SMETER_RENDER_END_ROW        (((SMETER_BLOCK_Y + SMETER_BLOCK_H) + 7) / 8)
@@ -2571,14 +2576,16 @@ static void drawSMeterBlock(int rssiDbm)
 	}
 	displayThemeResetToDefault();
 
-	// 5) Рядок шкали "1 3 5 7 9" (фарба y=57..63) -- ПІД поділками.
+	// 5) Рядок шкали "1 3 5 7 9" (фарба y=57..63) -- СТРОГО під своїми поділками.
+	//    Комірку зсуваємо на SMETER_GLYPH_INK_CX, а не на півширини комірки: інакше цифра
+	//    стоїть на піксель лівіше за поділку (див. коментар при константі).
 	displayThemeApply(THEME_ITEM_FG_DECORATION, THEME_ITEM_BG);
 	for (int s = 1; s <= 9; s += 2)
 	{
 		char digit[2];
 
 		snprintf(digit, sizeof digit, "%d", s);
-		displayPrintAt(((SMETER_BAR_X + smeterPixelPos(SMETER_S0 + (s * 4))) - (SMETER_FONT_W / 2)),
+		displayPrintAt(((SMETER_BAR_X + smeterPixelPos(SMETER_S0 + (s * 4))) - SMETER_GLYPH_INK_CX),
 				SMETER_SCALE_Y, digit, FONT_SIZE_1);
 	}
 	displayThemeResetToDefault();
