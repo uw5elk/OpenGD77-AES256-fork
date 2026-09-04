@@ -169,12 +169,21 @@ DECLARE_SMETER_ARRAY(rssiMeterHeaderBar, DISPLAY_SIZE_X);
 // замка AES x=147..156 y=14..22 і конверт непрочитаних SMS x=136..156 y=16..24 -- обидва
 // вище за y=41, тож блоку більше не заважають):
 //     0..5      мітка "S"                    (FONT_SIZE_1 = 6x8)
-//     7..112    рамка смуги (106px)          -- заповнення всередині: 8..111 (104px)
-//   114..157    значення в дБм, притиснуте праворуч
+//     7..156    рамка смуги (150px) -- ОДНА рамка на все, всередині неї:
+//                  8..109   заповнення смуги (102px)
+//                111..153   значення в дБм, притиснуте праворуч ВСЕРЕДИНІ рамки
+// Значення саме всередині рамки -- так само, як на зразку RUS (2026-09-04: користувач
+// звернув увагу, що "в них значення RSSI прямо в S-метр вписано"; до цього рамка
+// закінчувалась на x=112, а число стояло окремо праворуч від неї). Ширина заповнення
+// (102px) навмисно менша за внутрішню ширину рамки: праворуч завжди лишається місце під
+// найдовше значення ("-129dBm" = 7 гліфів * 6px = 42px) плюс 2px проміжку, тож смуга
+// НІКОЛИ не заповзає під текст, навіть на максимальному сигналі.
 // РОЗКЛАДКА ПО Y:
-//    44..51     рамка смуги (8px = 1px рамка + 6px заповнення + 1px рамка); мітка "S" і
-//               значення в дБм ідуть тим самим рядком, теж 44..51
-//    52..59     рядок шкали "1 3 5 7 9" (FONT_SIZE_1, 8px)
+//    44..53     рамка смуги (10px = 1px рамка + 8px заповнення + 1px рамка)
+//    45..51     мітка "S" і значення в дБм -- фарба гліфа FONT_SIZE_1 має рівно 7px
+//               (рядки 0..6 комірки), тож у 8px-нутрі рамки (45..52) вона вміщається
+//               повністю, не торкаючись ані верхньої (44), ані нижньої (53) лінії
+//    54..61     рядок шкали "1 3 5 7 9" (FONT_SIZE_1) -- ПІД рамкою, як і на зразку
 //
 // ВАЖЛИВО ПРО ОНОВЛЕННЯ ЕКРАНА: періодичне оновлення RSSI виштовхує на LCD лише рядки,
 // вказані у displayRenderRows() на місці виклику, а це було rows 1..2 (тобто y=8..15) --
@@ -183,15 +192,16 @@ DECLARE_SMETER_ARRAY(rssiMeterHeaderBar, DISPLAY_SIZE_X);
 // файлі), яка при увімкненому S-метрі повертає рядок, що покриває весь блок.
 #define SMETER_BLOCK_Y                44 // верх рамки смуги
 #define SMETER_FRAME_X                 7
-#define SMETER_FRAME_W               106 // = BAR_WIDTH + 2 (рамка ліворуч і праворуч)
-#define SMETER_FRAME_H                 8 // = 1 + BAR_H(6) + 1
+#define SMETER_FRAME_W               150 // рамка охоплює і смугу, і значення: x=7..156
+#define SMETER_FRAME_H                10 // = 1 + BAR_H(8) + 1
 #define SMETER_BAR_X                   8 // заповнення всередині рамки
-#define SMETER_BAR_WIDTH             104
-#define SMETER_BAR_H                   6
-#define SMETER_VALUE_X               114 // ліва межа ділянки значення (лівіше -- рамка смуги)
-#define SMETER_VALUE_RIGHT           158 // ексклюзивно: останній використаний піксель -- 157
+#define SMETER_BAR_WIDTH             102 // менше за внутрішню ширину -- див. коментар вище
+#define SMETER_BAR_H                   8 // рівно внутрішня висота рамки (y=45..52)
+#define SMETER_VALUE_X               111 // ліва межа значення (лівіше -- кінець заповнення)
+#define SMETER_VALUE_RIGHT           154 // ексклюзивно: останній використаний піксель -- 153
 #define SMETER_FONT_W                  6 // ширина гліфа FONT_SIZE_1 (font_6x8)
-#define SMETER_FONT_H                  8 // висота гліфа FONT_SIZE_1
+#define SMETER_FONT_H                  8 // висота комірки гліфа FONT_SIZE_1 (фарба -- 7px, рядки 0..6)
+#define SMETER_TEXT_Y                (SMETER_BLOCK_Y + 1) // 45 -- текст усередині рамки
 #define SMETER_SCALE_Y               (SMETER_BLOCK_Y + SMETER_FRAME_H)   // 52
 #define SMETER_BLOCK_H               (SMETER_FRAME_H + SMETER_FONT_H)    // 16 -> y=44..59
 // Останній рядок (по 8px), який треба виштовхнути на LCD, щоб блок оновлювався: y=59 -> 8.
@@ -2493,10 +2503,10 @@ static void drawSMeterBlock(int rssiScaled, int rssiDbmRaw)
 
 	// 2) Мітка "S" ліворуч від смуги (x=0..5), тим самим рядком, що й рамка.
 	displayThemeApply(THEME_ITEM_FG_DEFAULT, THEME_ITEM_BG);
-	displayPrintAt(0, SMETER_BLOCK_Y, "S", FONT_SIZE_1);
+	displayPrintAt(0, SMETER_TEXT_Y, "S", FONT_SIZE_1);
 	displayThemeResetToDefault();
 
-	// 3) Заповнення смуги ВСЕРЕДИНІ рамки (x=8..111, y=45..50).
+	// 3) Заповнення смуги ВСЕРЕДИНІ рамки (x=8..109, y=45..52).
 	if (barWidth)
 	{
 		displayThemeApply(THEME_ITEM_FG_RSSI_BAR, THEME_ITEM_BG);
@@ -2513,13 +2523,13 @@ static void drawSMeterBlock(int rssiScaled, int rssiDbmRaw)
 		displayThemeResetToDefault();
 	}
 
-	// 4) Рамка навколо смуги (x=7..112, y=44..51) -- завдяки їй видно ПОВНУ шкалу, а не
-	//    лише зафарбовану частину, як на зразку RUS.
+	// 4) Рамка (x=7..156, y=44..53) -- охоплює і смугу, і значення в дБм, як на зразку RUS.
+	//    Завдяки їй видно ПОВНУ шкалу, а не лише зафарбовану частину.
 	displayThemeApply(THEME_ITEM_FG_DECORATION, THEME_ITEM_BG);
 	displayDrawRect(SMETER_FRAME_X, SMETER_BLOCK_Y, SMETER_FRAME_W, SMETER_FRAME_H, false);
 	displayThemeResetToDefault();
 
-	// 5) Рядок шкали "1 3 5 7 9" (y=52..59). Цифри стоять під своїми S-точками: індекс у
+	// 5) Рядок шкали "1 3 5 7 9" (y=54..61). Цифри стоять під своїми S-точками: індекс у
 	//    rssiMeterSBlockBar[] -- це номер S-одиниці, значення -- зміщення в пікселях (те
 	//    саме *2-масштабування, що й у смуги), мінус пів гліфа для центрування.
 	displayThemeApply(THEME_ITEM_FG_DECORATION, THEME_ITEM_BG);
@@ -2533,7 +2543,7 @@ static void drawSMeterBlock(int rssiScaled, int rssiDbmRaw)
 	}
 	displayThemeResetToDefault();
 
-	// 6) Числове значення в дБм, вирівняне праворуч у своїй ділянці (x=114..157). Рахуємо
+	// 6) Числове значення в дБм, вирівняне праворуч ВСЕРЕДИНІ рамки (x=111..153). Рахуємо
 	//    координату вручну і друкуємо displayPrintAt: displayPrintCore з TEXT_ALIGN_RIGHT
 	//    тут НЕ підходить -- він обрізає рядок ще до вирівнювання і за переданим x, через
 	//    що в попередній версії від "-60dBm" на екрані лишалось "-6".
@@ -2545,7 +2555,7 @@ static void drawSMeterBlock(int rssiScaled, int rssiDbmRaw)
 	}
 
 	displayThemeApply(THEME_ITEM_FG_DEFAULT, THEME_ITEM_BG);
-	displayPrintAt(textX, SMETER_BLOCK_Y, buf, FONT_SIZE_1);
+	displayPrintAt(textX, SMETER_TEXT_Y, buf, FONT_SIZE_1);
 	displayThemeResetToDefault();
 }
 #endif // HAS_COLOURS
