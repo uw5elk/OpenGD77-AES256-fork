@@ -545,7 +545,7 @@ class AesKeyManagerWindow(tk.Toplevel):
 
     def __init__(self, parent):
         super().__init__(parent)
-        self.title("OpenGD77 -- AES-ключі шифрування")
+        self.title("TYT MD-UV390UKR -- AES-ключі шифрування")
         self.geometry("480x520")
         self.minsize(440, 460)
 
@@ -810,7 +810,7 @@ class RctlConfigWindow(tk.Toplevel):
 
     def __init__(self, parent):
         super().__init__(parent)
-        self.title("OpenGD77 -- Віддалене керування (RCTL)")
+        self.title("TYT MD-UV390UKR -- Віддалене керування (RCTL)")
         self.geometry("480x360")
         self.minsize(440, 320)
 
@@ -972,7 +972,7 @@ def main():
             try:
                 import ctypes
                 ctypes.windll.user32.MessageBoxW(
-                    0, "{}\n\n{}".format(e, detail), "OpenGD77 -- Помилка запуску", 0x10
+                    0, "{}\n\n{}".format(e, detail), "TYT MD-UV390UKR -- Помилка запуску", 0x10
                 )
             except Exception:
                 pass
