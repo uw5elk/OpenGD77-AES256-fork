@@ -2576,6 +2576,49 @@ static void drawSMeterBlock(int rssiDbm)
 }
 #endif // HAS_COLOURS
 
+// Чи можна МАЛЮВАТИ блок S-метра просто зараз?
+//
+// ЗНАЙДЕНО НА ЖИВІЙ РАЦІЇ (2026-09-04, фото екрана супутника): блок ліз поверх чужих
+// екранів. Помилка була в припущенні "смуга y=42..63 вільна". Вона вільна на ГОЛОВНИХ
+// екранах (канал і VFO, разом з показом QSO -- там контакт на y=16, а рядок каналу з y=64),
+// але uiUtilityDrawRSSIBarGraph() викликається з uiUtilityRenderHeader(), а ту кличуть ще
+// й екран супутника (menuSatelliteScreen.c:376 і :1490), Останні почуті
+// (menuLastHeard.c:142) та періодичне оновлення шапки в головному циклі
+// (applicationMain.c:810) -- для БУДЬ-ЯКОГО поточного екрана.
+//
+// На екрані супутника в цій смузі стоять азимут/елевація (y=58) і частоти, тож зелена
+// смуга, цифри шкали "1 3 5 7 9" та значення дБм друкувалися просто поверх них: у рядку
+// "Az:229° El:-69°" з'являлись чужі цифри, а праворуч -- "-114" від S-метра.
+//
+// Тому блок малюється лише там, де ця смуга справді наша. Скрізь інде -- звичайна тонка
+// смуга в шапці, тобто рівно та поведінка, що була до появи опції.
+static bool smeterBlockIsAllowed(void)
+{
+#if defined(HAS_COLOURS)
+	if (settingsIsOptionBitSet(BIT_SHOW_SMETER_IN_HEADER) == false)
+	{
+		return false;
+	}
+
+	int menu = menuSystemGetCurrentMenuNumber();
+	if ((menu != UI_CHANNEL_MODE) && (menu != UI_VFO_MODE))
+	{
+		return false;
+	}
+
+	// Єдиний випадок, коли смуга не вільна й на самому головному екрані: аналоговий режим
+	// з подвійною висотою тексту -- там рядок "SQL:%" зсувається на y=41..56.
+	if ((trxGetMode() == RADIO_MODE_ANALOG) && settingsIsOptionBitSet(BIT_UI_USES_DOUBLE_HEIGHT))
+	{
+		return false;
+	}
+
+	return true;
+#else
+	return false;
+#endif
+}
+
 // Останній рядок (по 8px), який треба виштовхнути на LCD після оновлення RSSI. Місця
 // виклику історично рендерили лише rows 1..2 (y=8..15) -- "там, де смуга". Коли блок
 // S-метра увімкнено, він живе нижче (y=44..59), тож без цього оновлення просто не
@@ -2584,7 +2627,7 @@ static void drawSMeterBlock(int rssiDbm)
 int16_t uiUtilityRSSIRenderEndRow(int16_t defaultEndRow)
 {
 #if defined(HAS_COLOURS)
-	if (settingsIsOptionBitSet(BIT_SHOW_SMETER_IN_HEADER) && (defaultEndRow < SMETER_RENDER_END_ROW))
+	if (smeterBlockIsAllowed() && (defaultEndRow < SMETER_RENDER_END_ROW))
 	{
 		return SMETER_RENDER_END_ROW;
 	}
@@ -2614,12 +2657,10 @@ void uiUtilityDrawRSSIBarGraph(void)
 	rssi = (rssi - SMETER_S0) * 2;
 
 #if defined(HAS_COLOURS)
-	// Блок S-метра стоїть у вільній смузі y=44..59 (див. великий коментар при константах
-	// SMETER_* на початку файлу). Єдиний випадок, коли ця смуга НЕ вільна: аналоговий режим
-	// з увімкненою подвійною висотою тексту -- там рядок "SQL:%" зсувається на y=41..56 і
-	// накрив би блок. У цьому одному разі тихо лишаємо стандартну тонку смугу в шапці.
-	if (settingsIsOptionBitSet(BIT_SHOW_SMETER_IN_HEADER) &&
-			((trxGetMode() != RADIO_MODE_ANALOG) || (settingsIsOptionBitSet(BIT_UI_USES_DOUBLE_HEIGHT) == false)))
+	// Блок S-метра стоїть у смузі y=42..63. Умови, за яких вона справді наша, зібрані в
+	// smeterBlockIsAllowed() -- зокрема перевірка поточного екрана: ця функція викликається
+	// з uiUtilityRenderHeader(), а її кличуть і екран супутника, і Останні почуті.
+	if (smeterBlockIsAllowed())
 	{
 		drawSMeterBlock(rssiDbmRaw); // весь перерахунок рівня -- усередині, із сирих дБм
 		return;
