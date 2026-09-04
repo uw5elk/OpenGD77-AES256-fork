@@ -192,7 +192,7 @@ class QueueWriter:
 class FlasherApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("OpenGD77 -- Прошивка (тест)")
+        self.title("TYT MD-UV390UKR")
         self.geometry("560x520")
         self.minsize(520, 460)
 

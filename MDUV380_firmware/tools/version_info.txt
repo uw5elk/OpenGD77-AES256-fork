@@ -1,0 +1,39 @@
+# Ресурс VERSIONINFO для .exe, який збирає PyInstaller (--version-file).
+#
+# Навіщо: без нього Windows показує у Властивостях файлу порожні поля, а назва
+# застосунку видно лише в імені файлу. З цим ресурсом "TYT MD-UV390UKR" видно і в
+# Провіднику (Властивості -> Подробиці), і в диспетчері задач, і в підказці UAC.
+#
+# Формат -- це literal Python, який PyInstaller виконує через eval, тому файл має
+# лишатись синтаксично коректним Python. Мовний блок навмисно англо-американський
+# (040904B0 / 1033), бо він приймається скрізь; самі рядки від цього не залежать.
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers=(1, 0, 0, 0),
+    prodvers=(1, 0, 0, 0),
+    mask=0x3f,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0)
+  ),
+  kids=[
+    StringFileInfo([
+      StringTable(
+        '040904B0',
+        [
+          StringStruct('CompanyName', 'OpenGD77-AES256-fork'),
+          StringStruct('FileDescription', 'TYT MD-UV390UKR'),
+          StringStruct('FileVersion', '1.0.0.0'),
+          StringStruct('InternalName', 'TYT MD-UV390UKR'),
+          StringStruct('LegalCopyright', 'OpenGD77 by Roger Clark VK3KYY and contributors'),
+          StringStruct('OriginalFilename', 'TYT MD-UV390UKR.exe'),
+          StringStruct('ProductName', 'TYT MD-UV390UKR'),
+          StringStruct('ProductVersion', '1.0.0.0')
+        ]
+      )
+    ]),
+    VarFileInfo([VarStruct('Translation', [1033, 1200])])
+  ]
+)

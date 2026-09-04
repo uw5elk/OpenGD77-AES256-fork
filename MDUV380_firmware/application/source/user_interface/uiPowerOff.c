@@ -26,6 +26,9 @@
  *
  */
 #include "user_interface/uiGlobals.h"
+#if defined(LANGUAGE_BUILD_UKRAINIAN)
+#include "user_interface/languages/slogans_ua.h"
+#endif
 #include "user_interface/menuSystem.h"
 #include "user_interface/uiLocalisation.h"
 #if defined(PLATFORM_MD9600) || defined(PLATFORM_MD380) || defined(PLATFORM_MDUV380) || defined(PLATFORM_RT84_DM1701) || defined(PLATFORM_MD2017)
@@ -74,7 +77,17 @@ static void updateScreen(void)
 
 	displayThemeApply(THEME_ITEM_FG_WARNING_NOTIFICATION, THEME_ITEM_BG_NOTIFICATION);
 	displayPrintCenteredDoubleHeight(((DISPLAY_SIZE_Y / 3) - (fontHeight / 2)), currentLanguage->power_off, FONT_SIZE_3, dblHeight);
-	displayPrintCenteredDoubleHeight((((DISPLAY_SIZE_Y / 3) * 2) - (fontHeight / 2)), "73", FONT_SIZE_3, dblHeight);
+	// Другий рядок екрана вимкнення. В українській збірці замість традиційного "73"
+	// показуємо гасло; ширина 13 символів * 8px = 104px, тож у рамку (x=4..156) воно
+	// вміщається із запасом. Подвійна висота множить лише висоту гліфа, не ширину,
+	// тому напис не вилазить і з увімкненим BIT_UI_USES_DOUBLE_HEIGHT.
+	displayPrintCenteredDoubleHeight((((DISPLAY_SIZE_Y / 3) * 2) - (fontHeight / 2)),
+#if defined(LANGUAGE_BUILD_UKRAINIAN)
+			SLOGAN_POWER_OFF,
+#else
+			"73",
+#endif
+			FONT_SIZE_3, dblHeight);
 	displayThemeResetToDefault();
 	displayRender();
 }

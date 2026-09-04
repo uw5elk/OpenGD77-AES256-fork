@@ -11,11 +11,11 @@
 ## Найпростіший спосіб для тестерів (Windows, один .exe)
 
 Не хочеш ставити Python/pip/libusb вручну? На GitHub Actions (job `build-gui-flasher`)
-збирається готовий `OpenGD77-Flasher.exe` — вікно з двома кнопками, усе (Python,
+збирається готовий `TYT MD-UV390UKR.exe` — вікно з двома кнопками, усе (Python,
 pyusb, libusb-1.0.dll, поточна українська прошивка) вже вбудовано всередину:
 
 1. `github.com/uw5elk/OpenGD77-AES256-fork/actions` → останній зелений запуск →
-   Artifacts → `openuv380-flasher-windows` → розпакувати `OpenGD77-Flasher.exe`.
+   Artifacts → `openuv380-flasher-windows` → розпакувати `TYT MD-UV390UKR.exe`.
 2. Запустити, натиснути «Обрати файл донора...» (потрібен `MD9600-CSV(2571V5)-V26.45.bin`,
    див. розділ нижче), тоді «ПРОШИТИ».
 

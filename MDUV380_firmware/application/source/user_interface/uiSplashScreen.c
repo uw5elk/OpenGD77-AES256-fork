@@ -26,6 +26,9 @@
  *
  */
 #include "user_interface/uiGlobals.h"
+#if defined(LANGUAGE_BUILD_UKRAINIAN)
+#include "user_interface/languages/slogans_ua.h"
+#endif
 #include "user_interface/menuSystem.h"
 #include "user_interface/uiUtilities.h"
 #include "user_interface/uiLocalisation.h"
@@ -156,6 +159,13 @@ static void updateScreen(bool isFirstRun)
 		displayClearBuf();
 
 		displayPrintCentered(8, "OpenGD77", FONT_SIZE_3);
+#if defined(LANGUAGE_BUILD_UKRAINIAN) && (DISPLAY_SIZE_Y >= 128)
+		// Гасло вмикання -- у вільній смузі між назвою прошивки (y=8..23) і першим
+		// рядком з кодплуга (y=64..79), тобто рівно посередині проміжку 24..63.
+		// Умова на висоту екрана потрібна, бо той самий файл збирається і для
+		// монохромних моделей із дисплеєм 64px, де цієї смуги просто немає.
+		displayPrintCentered(36, SLOGAN_POWER_ON, FONT_SIZE_3);
+#endif
 		displayPrintCentered((DISPLAY_SIZE_Y / 4) * 2, line1, FONT_SIZE_3);
 		displayPrintCentered((DISPLAY_SIZE_Y / 4) * 3, line2, FONT_SIZE_3);
 	}

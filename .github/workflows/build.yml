@@ -133,7 +133,8 @@ jobs:
         shell: bash
         working-directory: MDUV380_firmware/tools
         run: |
-          pyinstaller --onefile --windowed --name OpenGD77-Flasher \
+          pyinstaller --onefile --windowed --name "TYT MD-UV390UKR" \
+            --version-file version_info.txt \
             --hidden-import usb.backend.libusb1 \
             --hidden-import cryptography.hazmat.bindings._rust \
             --add-data "openuv380-10w.bin;." \
@@ -143,4 +144,4 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: openuv380-flasher-windows
-          path: MDUV380_firmware/tools/dist/OpenGD77-Flasher.exe
+          path: MDUV380_firmware/tools/dist/TYT MD-UV390UKR.exe
