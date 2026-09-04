@@ -1373,7 +1373,10 @@ static void loadKeps(void)
 
 	//volatile int s = sizeof(codeplugSatelliteData_t);
 
-	hasSatelliteKeps = codeplugGetOpenGD77CustomData(CODEPLUG_CUSTOM_DATA_TYPE_SATELLITE_TLE, (uint8_t *)&codeplugKepsData.data);
+	// Обмежене читання: codeplugKepsData -- 2520 байт НА СТЕКУ, а довжину диктує заголовок
+	// блока у флеші (codeplug.c:1439). Кодплаг із задовгим блоком TLE трощив би стек.
+	hasSatelliteKeps = codeplugGetOpenGD77CustomDataBounded(CODEPLUG_CUSTOM_DATA_TYPE_SATELLITE_TLE,
+			(uint8_t *)&codeplugKepsData.data, (int)sizeof codeplugKepsData);
 	if (hasSatelliteKeps)
 	{
 		for(numSatellitesLoaded = 0; numSatellitesLoaded < NUM_SATELLITES; numSatellitesLoaded++)

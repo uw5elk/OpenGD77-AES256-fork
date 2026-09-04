@@ -1420,33 +1420,13 @@ static uint32_t codeplugGetOpenGD77CustomDataFirstEmptySlot(int len)
 	return 0;
 }
 
-bool codeplugGetOpenGD77CustomData(CodeplugCustomDataType_t dataType, uint8_t *dataBuf)
-{
-	codeplugCustomDataBlockHeader_t blockHeader;
-	uint32_t dataHeaderAddress;
-
-	if ((dataHeaderAddress = codeplugGetOpenGD77CustomDataStartAddressForType(dataType, &blockHeader)) > 0)
-	{
-#if defined(PLATFORM_RD5R)
-		// On RD5R, the display buffer is smaller than the other platforms
-		if ((dataType == CODEPLUG_CUSTOM_DATA_TYPE_IMAGE) &&
-				(blockHeader.dataLength > ((DISPLAY_SIZE_X * DISPLAY_SIZE_Y) >> 3)))
-		{
-			blockHeader.dataLength = ((DISPLAY_SIZE_X * DISPLAY_SIZE_Y) >> 3);
-		}
-#endif
-
-		SPI_Flash_read(FLASH_ADDRESS_OFFSET + dataHeaderAddress + sizeof(codeplugCustomDataBlockHeader_t), dataBuf, blockHeader.dataLength);
-		return true;
-	}
-
-	return false;
-}
-
-// As codeplugGetOpenGD77CustomData, but never copies more than maxLen bytes into dataBuf.
-// The stored dataLength comes from flash; a corrupt/foreign block claiming a larger length
-// would otherwise overrun the caller's fixed buffer. Callers that know their buffer size
-// (e.g. the AES key store) use this so a bad block can't clobber adjacent memory.
+// ЄДИНИЙ спосіб прочитати кастомний блок кодплага. Необмежений
+// codeplugGetOpenGD77CustomData() прибрано (2026-09-04): він копіював стільки байт, скільки
+// казав заголовок блока у ФЛЕШІ, тож кодплаг із чужим або пошкодженим блоком наказував
+// прочитати більше, ніж вміщає буфер виклику. Найвразливіші були буфери НА СТЕКУ --
+// melodyBuf (512 Б, читається на КОЖНОМУ ввімкненні), themingTmp (64 Б, теж на старті),
+// TLE супутників (2520 Б) -- і сховище повідомлень у секції CCM, поруч з яким лежать
+// AES-ключі. Ніколи не копіює більше за maxLen байт у dataBuf.
 bool codeplugGetOpenGD77CustomDataBounded(CodeplugCustomDataType_t dataType, uint8_t *dataBuf, int maxLen)
 {
 	codeplugCustomDataBlockHeader_t blockHeader;

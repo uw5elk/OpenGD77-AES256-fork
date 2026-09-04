@@ -87,7 +87,10 @@ menuStatus_t uiSplashScreen(uiEvent_t *ev, bool isFirstRun)
 		if (voicePromptsIsPlaying() == false)
 #endif
 		{
-			if (codeplugGetOpenGD77CustomData(CODEPLUG_CUSTOM_DATA_TYPE_BEEP, melodyBuf))
+			// Обмежене читання: melodyBuf -- 512 байт НА СТЕКУ, а довжину диктує заголовок
+			// блока у флеші (codeplug.c:1439). Кодплаг із задовгим блоком BEEP трощив би стек
+			// на кожному ввімкненні рації.
+			if (codeplugGetOpenGD77CustomDataBounded(CODEPLUG_CUSTOM_DATA_TYPE_BEEP, melodyBuf, (int)sizeof melodyBuf))
 			{
 				if ((melodyBuf[0] == 0) && (melodyBuf[1] == 0)) // Zero length boot melody
 				{
@@ -144,13 +147,18 @@ static void updateScreen(bool isFirstRun)
 
 		displayClearBuf();
 
-		customDataHasImage = codeplugGetOpenGD77CustomData(CODEPLUG_CUSTOM_DATA_TYPE_IMAGE, dataBuf);
+		// Обмежене читання розміром самого кадрового буфера. Тут запас великий (40960 байт
+		// проти ~1 КБ картинки), але довжину однаково диктує заголовок блока у флеші, тож
+		// покладатися на "нікому не спаде на думку записати більше" не варто.
+		customDataHasImage = codeplugGetOpenGD77CustomDataBounded(CODEPLUG_CUSTOM_DATA_TYPE_IMAGE, dataBuf,
+				(int)(DISPLAY_SIZE_X * DISPLAY_SIZE_Y * sizeof(uint16_t)));
 		if (customDataHasImage)
 		{
 			displayConvertGD77ImageData(dataBuf);
 		}
 #else
-		customDataHasImage = codeplugGetOpenGD77CustomData(CODEPLUG_CUSTOM_DATA_TYPE_IMAGE, (uint8_t *)displayGetScreenBuffer());
+		customDataHasImage = codeplugGetOpenGD77CustomDataBounded(CODEPLUG_CUSTOM_DATA_TYPE_IMAGE,
+				(uint8_t *)displayGetScreenBuffer(), (int)((DISPLAY_SIZE_X * DISPLAY_SIZE_Y) >> 3));
 #endif
 	}
 

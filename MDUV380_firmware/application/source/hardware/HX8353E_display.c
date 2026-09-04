@@ -1654,7 +1654,10 @@ void themeInit(bool SPIFlashAvailable)
 	{
 		uint16_t themingTmp[THEME_ITEM_MAX];
 
-		if (codeplugGetOpenGD77CustomData(CODEPLUG_CUSTOM_DATA_TYPE_THEME_DAY, (uint8_t *) &themingTmp))
+		// Обмежене читання: themingTmp -- буфер НА СТЕКУ на THEME_ITEM_MAX*2 байт, а довжину
+		// диктує заголовок блока у флеші (codeplug.c:1439). Кодплаг із чужою або пошкодженою
+		// таблицею тем інакше трощив би стек прямо на завантаженні, ще до першого кадру.
+		if (codeplugGetOpenGD77CustomDataBounded(CODEPLUG_CUSTOM_DATA_TYPE_THEME_DAY, (uint8_t *) &themingTmp, (int)sizeof themingTmp))
 		{
 			memcpy(&themeItems[DAY], &themingTmp, sizeof(themingTmp));
 
@@ -1662,7 +1665,7 @@ void themeInit(bool SPIFlashAvailable)
 			backgroundColour = themeItems[DAY][THEME_ITEM_BG];
 		}
 
-		if (codeplugGetOpenGD77CustomData(CODEPLUG_CUSTOM_DATA_TYPE_THEME_NIGHT, (uint8_t *) &themingTmp))
+		if (codeplugGetOpenGD77CustomDataBounded(CODEPLUG_CUSTOM_DATA_TYPE_THEME_NIGHT, (uint8_t *) &themingTmp, (int)sizeof themingTmp))
 		{
 			memcpy(&themeItems[NIGHT], &themingTmp, sizeof(themingTmp));
 		}

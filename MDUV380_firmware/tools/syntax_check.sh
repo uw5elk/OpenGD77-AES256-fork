@@ -47,6 +47,7 @@ fi
 
 INCS=(
 	-Itools/hoststub                 # заглушка <reent.h>, див. коментар у тому файлі
+	-include tools/hoststub/host_compat.h  # прототипи newlib, яких немає в glibc (itoa)
 	-I. -ICore/Inc
 	-IDrivers/CMSIS/Device/ST/STM32F4xx/Include -IDrivers/CMSIS/Include
 	-IDrivers/STM32F4xx_HAL_Driver/Inc -IDrivers/STM32F4xx_HAL_Driver/Inc/Legacy
@@ -65,12 +66,27 @@ DEFS=(
 	-DGITVERSION=syntaxcheck
 )
 
-# -w глушить попередження вендерованих HAL/CMSIS-заголовків (їх тут сотні, і вони не
-# наші). Щоб побачити попередження ВЛАСНОГО коду, запускай: SHOW_WARNINGS=1 ...
-WARN_FLAGS=(-w)
+# Щоб побачити попередження ВЛАСНОГО коду, запускай: SHOW_WARNINGS=1 ...
+# Три класи помилок, які МАЮТЬ валити перевірку.
+#
+# Навіщо: 2026-09-04 ми прибрали небезпечний codeplugGetOpenGD77CustomData() з розрахунку
+# "якщо злиття з upstream поверне виклик, збірка впаде". Негативний тест показав, що НЕ
+# впала б: у C неявний виклик невідомої функції -- лише попередження, а -w його ковтав.
+# Тобто перевірка мовчки пропускала б рівно той клас помилок, заради якого функцію й
+# прибрали.
+#
+# ВАЖЛИВО: -w перебиває -Werror=... НЕЗАЛЕЖНО ВІД ПОРЯДКУ прапорців (перевірено на gcc
+# 13.3: `gcc -w -Werror=implicit-function-declaration` мовчить). Тому в режимі за
+# замовчуванням -w більше не використовується взагалі. Шум вендерованих HAL/CMSIS однаково
+# не видно: цикл нижче друкує вивід лише коли там є 'error:' або коли SHOW_WARNINGS=1.
+#   implicit-function-declaration -- виклик функції, якої компілятор не бачив;
+#   implicit-int                  -- оголошення без типу;
+#   int-conversion                -- мовчазна конверсія вказівник <-> ціле.
+WARN_FLAGS=()
 if [ "${SHOW_WARNINGS:-0}" = "1" ]; then
 	WARN_FLAGS=(-Wall)
 fi
+WARN_FLAGS+=(-Werror=implicit-function-declaration -Werror=implicit-int -Werror=int-conversion)
 
 if [ "$#" -gt 0 ]; then
 	FILES=("$@")

@@ -101,7 +101,12 @@ void dmrSmsInit(void)
 	runtimeReset();     /* clear CCM runtime state (counters, flags) before first use */
 	s_loaded = 1;
 	dmrAesLoadKeys();   /* ensure the key store is populated for RX decrypt */
-	if (codeplugGetOpenGD77CustomData(CODEPLUG_CUSTOM_DATA_TYPE_MESSAGES, blk) &&
+	// Обмежене читання. Довжина блока береться з ЗАГОЛОВКА У ФЛЕШІ (blockHeader.dataLength),
+	// тож кодплаг із чужим або пошкодженим блоком MESSAGES міг наказати прочитати більше за
+	// sizeof s_store і затерти сусідню пам'ять -- а поруч у тій самій секції CCM лежить
+	// сховище AES-ключів. Обмежену версію ми вже мали й застосували до ключів, MSGC і RCTL,
+	// але саме тут -- забули.
+	if (codeplugGetOpenGD77CustomDataBounded(CODEPLUG_CUSTOM_DATA_TYPE_MESSAGES, blk, (int)sizeof s_store) &&
 			(memcmp(s_store.magic, "MSGV", 4) == 0) && (s_store.version == 2) &&
 			(s_store.used <= DMR_SMS_STORE_DATA) && store_chain_valid())
 	{

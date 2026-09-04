@@ -495,7 +495,11 @@ uint32_t codeplugContactGetPackedId(CodeplugContact_t *contact);
 int codeplugContactGetFreeIndex(void);
 bool codeplugContactGetRXGroup(int index);
 void codeplugInitChannelsPerZone(void);
-bool codeplugGetOpenGD77CustomData(CodeplugCustomDataType_t dataType, uint8_t *dataBuf);
+// Необмеженого codeplugGetOpenGD77CustomData() тут БІЛЬШЕ НЕМАЄ (прибрано 2026-09-04).
+// Він писав у буфер стільки байт, скільки казав заголовок блока у ФЛЕШІ, тому кодплаг із
+// чужим чи пошкодженим блоком трощив стек або сусідню пам'ять. Усі виклики переведено на
+// обмежену версію. Якщо злиття з upstream колись поверне виклик старої назви, збірка впаде
+// на невідомій функції -- і це навмисно: краще гучна помилка компіляції, ніж тиха діра.
 bool codeplugGetOpenGD77CustomDataBounded(CodeplugCustomDataType_t dataType, uint8_t *dataBuf, int maxLen);
 bool codeplugSetOpenGD77CustomData(CodeplugCustomDataType_t dataType, uint8_t *dataBuf, int len);
 
