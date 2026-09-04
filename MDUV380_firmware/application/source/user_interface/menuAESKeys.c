@@ -281,9 +281,14 @@ static void editorUpdateScreen(void)
 	}
 
 	// Cursor box around the focused nibble.
+	//
+	// isInverted=true -- це ПЕРЕДНІЙ план: displayDrawRect зводиться до displayDrawFastHLine/
+	// VLine, а ті інвертують прапорець усередині (HX8353E_display.c:430-438). З false рамка
+	// малювалася кольором ТЛА, тобто курсора не було видно взагалі й при ручному введенні
+	// ключа не читалось, який саме напівбайт зараз редагується.
 	int cr = s_aes.editPos / GRID_COLS;
 	int cc = s_aes.editPos % GRID_COLS;
-	displayDrawRect(GRID_X0 + cc * GRID_CHARW - 1, GRID_Y0 + cr * GRID_ROWH - 2, GRID_CHARW + 1, FONT_SIZE_2_HEIGHT + 3, false);
+	displayDrawRect(GRID_X0 + cc * GRID_CHARW - 1, GRID_Y0 + cr * GRID_ROWH - 2, GRID_CHARW + 1, FONT_SIZE_2_HEIGHT + 3, true);
 
 	displayPrintCentered(88, "U/D:0-F  L/R:move", FONT_SIZE_1);
 	displayPrintCentered(100, "0-9 type  GRN:save", FONT_SIZE_1);

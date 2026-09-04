@@ -196,6 +196,9 @@ DECLARE_SMETER_ARRAY(rssiMeterHeaderBar, DISPLAY_SIZE_X);
 #define SMETER_BAR_WIDTH             158
 #define SMETER_BAR_H                   8 // y=44..51: по 1px проміжку від ліній рамки
 #define SMETER_BAR_Y                 (SMETER_BLOCK_Y + 2) // 44
+#define SMETER_TICK_Y                (SMETER_BLOCK_Y + 12) // 54 -- поділки між рамкою і цифрами
+#define SMETER_TICK_H_MAJOR            3 // під підписаними S (1,3,5,7,9): y=54..56
+#define SMETER_TICK_H_MINOR            2 // під парними S (2,4,6,8): y=54..55
 #define SMETER_SCALE_Y               (SMETER_BLOCK_Y + 15) // 57 -- фарба цифр 57..63
 #define SMETER_VALUE_RIGHT           159 // ексклюзивно: значення кінчається на x=158
 #define SMETER_VALUE_MIN_X           132 // не ближче за 3px до цифри "9" (її комірка кінчається на 128)
@@ -2537,14 +2540,37 @@ static void drawSMeterBlock(int rssiDbm)
 		displayThemeResetToDefault();
 	}
 
-	// 3) Рамка (x=7..156, y=42..53) -- охоплює і смугу, і значення, як на зразку RUS.
+	// 3) Рамка (x=0..159, y=42..53) -- охоплює смугу.
+	//
+	// УВАГА, ПАСТКА API (знайдено на живій рації 2026-09-04, фото денної теми): рамки не було
+	// видно ВЗАГАЛІ від першої версії. displayDrawRect() зводиться до displayDrawFastHLine/
+	// VLine, а ті ІНВЕРТУЮТЬ прапорець усередині (HX8353E_display.c:430-438):
+	//        displayFillRect(x, y, w, 1, !isInverted);
+	// Тобто isInverted=false дає ТЛО, а не передній план -- рамка малювалася кольором фону.
+	// Це та сама пастка, що й у displayFillRoundRect. Усі інші видимі рамки в прошивці
+	// передають true (menuRSSIScreen.c:126, uiUtilities.c:1756, uiNotification.c:214 тощо).
 	displayThemeApply(THEME_ITEM_FG_DECORATION, THEME_ITEM_BG);
-	displayDrawRect(SMETER_FRAME_X, SMETER_BLOCK_Y, SMETER_FRAME_W, SMETER_FRAME_H, false);
+	displayDrawRect(SMETER_FRAME_X, SMETER_BLOCK_Y, SMETER_FRAME_W, SMETER_FRAME_H, true);
 	displayThemeResetToDefault();
 
-	// 4) Рядок шкали "1 3 5 7 9" (фарба y=57..63) -- ПІД рамкою, з проміжком 3px.
-	//    Позиції рахує та сама smeterPixelPos(), що й довжину смуги, тож кінчик смуги
-	//    завжди приходить рівно на відповідну цифру.
+	// 4) Поділки між рамкою і цифрами (y=54..55): без них цифри "висіли" окремо від приладу.
+	//    Довгі -- під підписаними S (1,3,5,7,9), короткі -- під парними. Позиції рахує та сама
+	//    smeterPixelPos(), що й довжину смуги, тож поділка, цифра й кінчик смуги збігаються.
+	displayThemeApply(THEME_ITEM_FG_DECORATION, THEME_ITEM_BG);
+	for (int s = 1; s <= 9; s++)
+	{
+		int tx = (SMETER_BAR_X + smeterPixelPos(SMETER_S0 + (s * 4)));
+
+		displayDrawFastVLine(tx, SMETER_TICK_Y, ((s & 1) ? SMETER_TICK_H_MAJOR : SMETER_TICK_H_MINOR), true);
+	}
+	displayThemeResetToDefault();
+
+	// 5) Червона поділка на початку зони понад S9 -- видно межу навіть коли смуга порожня.
+	displayThemeApply(THEME_ITEM_FG_RSSI_BAR_S9P, THEME_ITEM_BG);
+	displayDrawFastVLine((SMETER_BAR_X + SMETER_S9_POS), SMETER_TICK_Y, SMETER_TICK_H_MAJOR, true);
+	displayThemeResetToDefault();
+
+	// 6) Рядок шкали "1 3 5 7 9" (фарба y=57..63) -- ПІД поділками.
 	displayThemeApply(THEME_ITEM_FG_DECORATION, THEME_ITEM_BG);
 	for (int s = 1; s <= 9; s += 2)
 	{
