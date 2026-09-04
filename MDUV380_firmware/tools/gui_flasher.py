@@ -214,7 +214,7 @@ class FlasherApp(tk.Tk):
     def _build_ui(self):
         pad = {"padx": 12, "pady": 6}
 
-        header = ttk.Label(self, text="OpenGD77 -- прошивка MD-UV390",
+        header = ttk.Label(self, text="TYT MD-UV390UKR",
                             font=("Segoe UI", 13, "bold"))
         header.pack(anchor="w", **pad)
 
