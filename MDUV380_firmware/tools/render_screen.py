@@ -89,11 +89,11 @@ VAL_R   = const('SMETER_VALUE_RIGHT'); FONT_W = const('SMETER_FONT_W')
 VAL_MIN = const('SMETER_VALUE_MIN_X')
 S9_POS  = const('SMETER_S9_POS');   ABOVE   = const('SMETER_ABOVE_S9_DB')
 S0, S9DB = -129, -93
-BAR_Y = BLOCK_Y + 2; SCALE_Y = BLOCK_Y + 15
 def const_expr(name):
     """Як const(), але терпить #define у вигляді виразу: (SMETER_BLOCK_Y + 12)."""
     body = re.search(r'#define\s+' + name + r'\s+(.+)', u).group(1).split('//')[0].strip()
     return eval(body, {}, {'SMETER_BLOCK_Y': BLOCK_Y})
+BAR_Y = BLOCK_Y + 2; SCALE_Y = const_expr('SMETER_SCALE_Y')
 TICK_Y = const_expr('SMETER_TICK_Y'); TICK_MAJ = const('SMETER_TICK_H_MAJOR'); TICK_MIN = const('SMETER_TICK_H_MINOR')
 print(f"константи: блок y={BLOCK_Y}..{BLOCK_Y+BLOCK_H-1}, рамка x={FRAME_X}..{FRAME_X+FRAME_W-1} "
       f"y={BLOCK_Y}..{BLOCK_Y+FRAME_H-1}, смуга {BAR_X}..{BAR_X+BAR_W-1}, S9 на {S9_POS} ({S9_POS*100//BAR_W}%)")
@@ -167,6 +167,6 @@ for idx, (label, theme, dbm) in enumerate(shots):
     out.paste(img, (cx, cy))
     d.rectangle([cx - 1, cy - 1, cx + iw, cy + ih], outline=(90, 90, 95))
 
-path = '/tmp/claude-0/-home-claude/7814cbab-09c5-5734-b4d8-b300fee9c685/scratchpad/smeter_preview7.png'
+path = '/tmp/claude-0/-home-claude/7814cbab-09c5-5734-b4d8-b300fee9c685/scratchpad/smeter_preview8.png'
 out.save(path)
 print('збережено:', path, out.size)
