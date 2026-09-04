@@ -50,5 +50,9 @@
 #define MSGS_ERR_TOO_LONG        "задовгий текст"
 #define MSGS_FAIL_FMT            "%s (%d)"
 #define MSGS_HINT_ANY_KEY        "будь-яка клавіша: назад"
+#define MSGS_MONITOR_FMT         "Монітор: %s"
+#define MSGS_MON_ON              "увімк"
+#define MSGS_MON_OFF             "вимк"
+#define MSGS_FOREIGN             " (не вам)"
 
 #endif /* USER_INTERFACE_LANGUAGES_MESSAGES_UA_H_ */

@@ -20,6 +20,8 @@
 #include "crypto/dmr_aes.h"
 #include "crypto/dmr_aes_hook.h"
 #include "user_interface/menuSystem.h"   /* uiNotificationShow + NOTIFICATION_* */
+#include "user_interface/uiGlobals.h"    /* currentRxGroupData + *_ALL_CALL_VALUE: адресний фільтр RX */
+#include "hardware/HR-C6000.h"           /* PC_CALL_FLAG: тип виклику в старшому байті trxTalkGroupOrPcId */
 #include "functions/sound.h"             /* soundSetMelody: audible RX alert */
 #include <string.h>
 
@@ -702,6 +704,7 @@ static volatile uint8_t  s_rxReady DMR_AES_CCM;       /* a complete PDU is waiti
 static uint8_t  s_rxPdu[384] DMR_AES_CCM;
 static volatile uint16_t s_rxPduLen DMR_AES_CCM;
 static volatile uint32_t s_rxPeer DMR_AES_CCM;
+static volatile uint32_t s_rxPeerDst DMR_AES_CCM;   /* адресат із ВІДКРИТОГО заголовка -- для фільтра */
 static volatile uint8_t  s_rxPeerGroup DMR_AES_CCM;
 static volatile uint8_t  s_rxPeerKeyId DMR_AES_CCM;
 static volatile uint8_t  s_rxPeerEnc DMR_AES_CCM;   /* 1 = PDU carried the ENC header (decrypt); 0 = cleartext */
@@ -829,6 +832,7 @@ void dmrSmsRxBurst(int rxDataType, const uint8_t *p)
 			}
 			s_rxPduLen = (uint16_t)total;
 			s_rxPeer = s_rxSrc;
+			s_rxPeerDst = s_rxDst;
 			s_rxPeerGroup = s_rxGroup;
 			s_rxPeerKeyId = s_rxKeyId;
 			s_rxPeerEnc = s_rxHaveEnc;   /* decrypt if the ENC header was seen, else read cleartext */
@@ -846,6 +850,45 @@ void dmrSmsRxBurst(int rxDataType, const uint8_t *p)
 	}
 }
 
+/* Чи адресоване це повідомлення саме НАМ?
+ *
+ *   - приватне (group == 0): адресат має точно збігатися з нашим DMR ID;
+ *   - групове: адресат = TG активного каналу, будь-який TG зі списку RX-груп цього каналу,
+ *     або All Call. Це той самий критерій, за яким пропускається ГОЛОС
+ *     (hrc6000CallAcceptFilter + currentRxGroupData), тож SMS і голос поводяться однаково.
+ *
+ * Адресат лежить у ВІДКРИТОМУ заголовку даних, тому перевірка робиться ДО розшифровки:
+ * на чуже повідомлення не витрачається ані AES, ані блокуючий запис у флеш.
+ *
+ * NOT_IN_CODEPLUG_contactsTG[] уже містить розкриті номери TG (їх заповнює
+ * codeplugRxGroupGetDataForIndex), тож звертань до флеша тут немає взагалі. */
+static int smsIsForUs(uint32_t dst, int group)
+{
+	if (dst == 0) { return 0; }
+
+	if (group == 0)
+	{
+		return (dst == trxDMRID);
+	}
+
+	if ((dst >= MIN_ALL_CALL_VALUE) && (dst <= MAX_ALL_CALL_VALUE)) { return 1; }
+
+	/* trxTalkGroupOrPcId у старшому байті тримає тип виклику: 0x03 = приватний. Порівнювати
+	 * ГРУПОВИЙ адресат з ним можна лише коли там справді TG, інакше рація, налаштована на
+	 * приватний виклик 1234, приймала б групові повідомлення на TG 1234. */
+	if ((((trxTalkGroupOrPcId >> 24) & 0xFF) != PC_CALL_FLAG) &&
+			(dst == (trxTalkGroupOrPcId & 0x00FFFFFF)))
+	{
+		return 1;
+	}
+
+	for (int i = 0; i < currentRxGroupData.NOT_IN_CODEPLUG_numTGsInGroup; i++)
+	{
+		if (currentRxGroupData.NOT_IN_CODEPLUG_contactsTG[i] == dst) { return 1; }
+	}
+	return 0;
+}
+
 void dmrSmsRxTick(void)
 {
 	dmrSmsTxPersistTick();   /* flush any deferred Sent-folder write once the TX has fully un-keyed */
@@ -856,6 +899,7 @@ void dmrSmsRxTick(void)
 	uint8_t pdu[384];
 	int pduLen = s_rxPduLen;
 	uint32_t peer = s_rxPeer;
+	uint32_t dst = s_rxPeerDst;
 	uint8_t  group = s_rxPeerGroup;
 	uint8_t  keyId = s_rxPeerKeyId;
 	uint8_t  enc = s_rxPeerEnc;
@@ -864,6 +908,21 @@ void dmrSmsRxTick(void)
 	s_rxReady = 0;
 
 	if (pduLen < 32) { return; }            /* whole PDU is passed; decrypt derives the enc len */
+
+	/* Адресний фільтр. Раніше його не було зовсім: приймалося ВСЕ, що пролізло крізь
+	 * частоту/таймслот/кольоровий код і відкрилося будь-яким нашим ключем -- зокрема приватні
+	 * повідомлення між іншими рацями. Наслідки були не лише "етичні": чужий трафік витісняв
+	 * власні повідомлення з 1342-байтового сховища, кожне з них тягло блокуючий запис у флеш,
+	 * банер і звук, а на екрані видно лише ВІДПРАВНИКА -- тобто чужий наказ виглядав як свій.
+	 *
+	 * Тепер за замовчуванням приймається лише адресоване нам. Монітор (Повідомлення >
+	 * "Монітор: увімк") лишає стару поведінку для навмисного прослуховування -- але тоді
+	 * чуже позначається DMR_SMS_FLAG_FOREIGN і показується окремо. */
+	int forUs = smsIsForUs(dst, group);
+	if ((forUs == 0) && (settingsIsOptionBitSet(BIT_SMS_MONITOR_ALL) == false))
+	{
+		return;
+	}
 
 	/* Validate the data-PDU CRC32 over [ct+pad] before trusting the bytes. This rejects
 	 * reassemblies that mixed blocks across retransmits (a missed burst/header) — without it
@@ -898,13 +957,16 @@ void dmrSmsRxTick(void)
 	}
 	if (got <= 0) { return; }   /* wrong/no key, not IPv4/UDP, or not an SMS */
 
-	store_add(DMR_SMS_FLAG_UNREAD | (group ? DMR_SMS_FLAG_GROUP : 0), peer, text, got);
+	store_add((uint8_t)(DMR_SMS_FLAG_UNREAD | (group ? DMR_SMS_FLAG_GROUP : 0) |
+			(forUs ? 0 : DMR_SMS_FLAG_FOREIGN)), peer, text, got);
 	s_diagMsg++;
 
 	/* notify the user: visual banner (existing) + audible alert (new — раніше цей шлях був
-	 * німим, і вхідне SMS можна було пропустити, якщо не дивитись на екран саме в цю мить). */
+	 * німим, і вхідне SMS можна було пропустити, якщо не дивитись на екран саме в цю мить).
+	 * Перехоплене в моніторі позначається просто в тексті банера: свій наказ і чужий мають
+	 * різнитися вже в ту секунду, коли банер вискочив, а не лише в списку. */
 	char note[DMR_SMS_TEXT_MAX + 12];
-	snprintf(note, sizeof note, "SMS: %s", text);
+	snprintf(note, sizeof note, forUs ? "SMS: %s" : "SMS>: %s", text);
 	uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 4000, note, true);
 	soundSetMelody(MELODY_SMS_RECEIVED_BEEP);
 }

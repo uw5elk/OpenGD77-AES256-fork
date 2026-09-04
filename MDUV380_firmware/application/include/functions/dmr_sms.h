@@ -31,6 +31,10 @@
 #define DMR_SMS_FLAG_UNREAD    0x02
 #define DMR_SMS_FLAG_OUTGOING  0x04   /* a Sent message (else Inbox)        */
 #define DMR_SMS_FLAG_GROUP     0x08   /* peerId is a talkgroup (else DMR ID) */
+#define DMR_SMS_FLAG_FOREIGN   0x10   /* Вхідні: адресоване НЕ нам -- прийнято тільки тому, що
+                                       * увімкнено монітор (BIT_SMS_MONITOR_ALL). У списку
+                                       * позначається окремо, щоб оператор не сплутав чужий
+                                       * наказ зі своїм. */
 
 typedef struct
 {

@@ -82,6 +82,10 @@
 #define MSGS_ERR_TOO_LONG        "too long"
 #define MSGS_FAIL_FMT            "%s (ret %d)"
 #define MSGS_HINT_ANY_KEY        "any key: back"
+#define MSGS_MONITOR_FMT         "Monitor: %s"
+#define MSGS_MON_ON              "on"
+#define MSGS_MON_OFF             "off"
+#define MSGS_FOREIGN             " (not yours)"
 #endif
 #include <string.h>
 #include <stdlib.h>
@@ -121,12 +125,15 @@ static void composeEvent(uiEvent_t *ev);
 static void recipientEvent(uiEvent_t *ev);
 static void pickContactEvent(uiEvent_t *ev);
 
+/* Вхідні / Надіслані / Нове / Монітор */
+#define MSGS_HOME_ITEMS   4
+
 static void gotoHome(void)
 {
 	keypadAlphaEnable = false;
 	s_msg.view = MSG_HOME;
 	menuDataGlobal.currentItemIndex = 0;
-	menuDataGlobal.numItems = 3;
+	menuDataGlobal.numItems = MSGS_HOME_ITEMS;
 	homeUpdate();
 }
 
@@ -177,7 +184,7 @@ static void homeUpdate(void)
 
 	for (int i = MENU_START_ITERATION_VALUE; i <= MENU_END_ITERATION_VALUE; i++)
 	{
-		int mNum = menuGetMenuOffset(3, i);
+		int mNum = menuGetMenuOffset(MSGS_HOME_ITEMS, i);
 		if (mNum == MENU_OFFSET_BEFORE_FIRST_ENTRY) { continue; }
 		if (mNum == MENU_OFFSET_AFTER_LAST_ENTRY)   { break; }
 
@@ -185,7 +192,11 @@ static void homeUpdate(void)
 		{
 			case 0:  snprintf(buf, sizeof buf, MSGS_INBOX_FMT, dmrSmsCount(0)); break;
 			case 1:  snprintf(buf, sizeof buf, MSGS_SENT_FMT,  dmrSmsCount(1)); break;
-			default: snprintf(buf, sizeof buf, MSGS_NEW);                break;
+			case 2:  snprintf(buf, sizeof buf, MSGS_NEW);                       break;
+			// Монітор: приймати чужі повідомлення (ті, де адресат -- не ми). Вимкнено за
+			// замовчуванням; докладніше -- у smsIsForUs() в dmr_sms.c.
+			default: snprintf(buf, sizeof buf, MSGS_MONITOR_FMT,
+					settingsIsOptionBitSet(BIT_SMS_MONITOR_ALL) ? MSGS_MON_ON : MSGS_MON_OFF); break;
 		}
 		menuDisplayEntry(i, mNum, buf, 0, THEME_ITEM_FG_MENU_ITEM, THEME_ITEM_FG_OPTIONS_VALUE, THEME_ITEM_BG);
 	}
@@ -244,12 +255,12 @@ static void homeEvent(uiEvent_t *ev, menuStatus_t *ec)
 
 	if (KEYCHECK_PRESS(ev->keys, KEY_DOWN))
 	{
-		menuSystemMenuIncrement(&menuDataGlobal.currentItemIndex, 3);
+		menuSystemMenuIncrement(&menuDataGlobal.currentItemIndex, MSGS_HOME_ITEMS);
 		*ec |= MENU_STATUS_LIST_TYPE; homeUpdate(); return;
 	}
 	if (KEYCHECK_PRESS(ev->keys, KEY_UP))
 	{
-		menuSystemMenuDecrement(&menuDataGlobal.currentItemIndex, 3);
+		menuSystemMenuDecrement(&menuDataGlobal.currentItemIndex, MSGS_HOME_ITEMS);
 		*ec |= MENU_STATUS_LIST_TYPE; homeUpdate(); return;
 	}
 	if (KEYCHECK_SHORTUP(ev->keys, KEY_RED))
@@ -263,6 +274,11 @@ static void homeEvent(uiEvent_t *ev, menuStatus_t *ec)
 			case 0: openFolder(0);  break;
 			case 1: openFolder(1);  break;
 			case 2: startCompose(); break;
+			case 3:
+				settingsSetOptionBit(BIT_SMS_MONITOR_ALL,
+						(settingsIsOptionBitSet(BIT_SMS_MONITOR_ALL) == false));
+				homeUpdate();
+				break;
 		}
 		return;
 	}
@@ -302,7 +318,10 @@ static void listUpdate(void)
 			int n = (m->textLen < (int)sizeof txt - 1) ? m->textLen : (int)sizeof txt - 1;
 			memcpy(txt, m->text, n); txt[n] = 0;
 			char mark = (m->flags & DMR_SMS_FLAG_UNREAD) ? '*' : ' ';
-			snprintf(buf, sizeof buf, "%c%lu:%s", mark, (unsigned long)m->peerId, txt);
+			// ">" = перехоплене монітором, адресоване НЕ нам. Позначка стоїть перед номером
+			// відправника, бо саме його оператор бачить першим і може прийняти за адресата.
+			const char *foreign = (m->flags & DMR_SMS_FLAG_FOREIGN) ? ">" : "";
+			snprintf(buf, sizeof buf, "%c%s%lu:%s", mark, foreign, (unsigned long)m->peerId, txt);
 		}
 		menuDisplayEntry(i, mNum, buf, 0, THEME_ITEM_FG_MENU_ITEM, THEME_ITEM_FG_OPTIONS_VALUE, THEME_ITEM_BG);
 	}
@@ -371,9 +390,13 @@ static void readUpdate(void)
 
 	if (m == NULL) { displayRender(); return; }
 
-	char hdr[24];
-	snprintf(hdr, sizeof hdr, "%s %lu", (m->flags & DMR_SMS_FLAG_OUTGOING) ? MSGS_TO : MSGS_FROM,
-			(unsigned long)m->peerId);
+	// Найважливіше саме на цьому екрані: тут оператор ЧИТАЄ наказ і за ним діє. Якщо
+	// повідомлення перехоплене монітором і адресоване не нам -- це має бути написано словами,
+	// а не лише позначкою у списку (FONT_SIZE_1: 26 символів у рядок, найдовший варіант
+	// "From 16777215 (not yours)" = 25).
+	char hdr[40];
+	snprintf(hdr, sizeof hdr, "%s %lu%s", (m->flags & DMR_SMS_FLAG_OUTGOING) ? MSGS_TO : MSGS_FROM,
+			(unsigned long)m->peerId, (m->flags & DMR_SMS_FLAG_FOREIGN) ? MSGS_FOREIGN : "");
 	displayPrintAt(2, 16, hdr, FONT_SIZE_1);
 
 	// word-free char wrap into ~21-char lines

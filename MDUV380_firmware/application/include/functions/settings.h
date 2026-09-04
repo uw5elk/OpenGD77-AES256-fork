@@ -129,7 +129,11 @@ typedef enum
 {
 	BIT_INVERSE_VIDEO               = (SETTINGS_BITS_BANK_0 | (1 << 0)),
 	BIT_PTT_LATCH                   = (SETTINGS_BITS_BANK_0 | (1 << 1)),
-	BIT_UNUSED_2                    = (SETTINGS_BITS_BANK_0 | (1 << 2)),
+	// Був BIT_UNUSED_2 -- перевикористано під "Монітор SMS" (2026-09-04) тим самим способом,
+	// яким BIT_SHOW_SMETER_IN_HEADER зайняв bit 20: жодних нових бітів чи банків, лише
+	// перейменування невживаного плейсхолдера. За замовчуванням 0 = ВИМКНЕНО, тобто рація
+	// приймає лише адресовані їй повідомлення (як стокова прошивка).
+	BIT_SMS_MONITOR_ALL             = (SETTINGS_BITS_BANK_0 | (1 << 2)),
 	BIT_BATTERY_VOLTAGE_IN_HEADER   = (SETTINGS_BITS_BANK_0 | (1 << 3)),
 	BIT_SETTINGS_UPDATED            = (SETTINGS_BITS_BANK_0 | (1 << 4)),
 	BIT_TX_RX_FREQ_LOCK             = (SETTINGS_BITS_BANK_0 | (1 << 5)),
