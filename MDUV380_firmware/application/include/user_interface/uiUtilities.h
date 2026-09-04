@@ -218,6 +218,10 @@ void uiUtilityDrawRSSIBarGraph(void);
 // увімкненому S-метрі його блок лежить нижче шапки, тож треба виштовхнути більше
 // рядків. Вимкнено -- повертає передане значення без змін.
 int16_t uiUtilityRSSIRenderEndRow(int16_t defaultEndRow);
+// Y рядка позивного/назви каналу. При увімкненому S-метрі зсунуто на 8px нижче, щоб
+// текст не стояв упритул до цифр шкали (блок кінчається на y=63, а стандартний
+// DISPLAY_Y_POS_CHANNEL_FIRST_LINE = 64). Вимкнено -- повертає стандартне значення.
+int16_t uiUtilityChannelFirstLineY(void);
 void uiUtilityDrawFMMicLevelBarGraph(void);
 void uiUtilityDrawDMRMicLevelBarGraph(void);
 void setOverrideTGorPC(uint32_t tgOrPc, bool privateCall);

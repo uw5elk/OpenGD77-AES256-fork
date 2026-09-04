@@ -94,6 +94,9 @@ def const_expr(name):
     body = re.search(r'#define\s+' + name + r'\s+(.+)', u).group(1).split('//')[0].strip()
     return eval(body, {}, {'SMETER_BLOCK_Y': BLOCK_Y})
 BAR_Y = BLOCK_Y + 2; SCALE_Y = const_expr('SMETER_SCALE_Y')
+SHIFT = const('SMETER_TEXT_SHIFT')
+FIRST_LINE_Y = 64 + SHIFT   # DISPLAY_Y_POS_CHANNEL_FIRST_LINE (64) + зсув під S-метр
+ZONE_Y = 114                # DISPLAY_Y_POS_ZONE = 50 + DISPLAY_V_EXTRA_PIXELS(64)
 TICK_Y = const_expr('SMETER_TICK_Y'); TICK_MAJ = const('SMETER_TICK_H_MAJOR'); TICK_MIN = const('SMETER_TICK_H_MINOR')
 print(f"константи: блок y={BLOCK_Y}..{BLOCK_Y+BLOCK_H-1}, рамка x={FRAME_X}..{FRAME_X+FRAME_W-1} "
       f"y={BLOCK_Y}..{BLOCK_Y+FRAME_H-1}, смуга {BAR_X}..{BAR_X+BAR_W-1}, S9 на {S9_POS} ({S9_POS*100//BAR_W}%)")
@@ -105,7 +108,7 @@ def pixpos(dbm):
     above = max(0, min(dbm - S9DB, ABOVE))
     return S9_POS + (above * (BAR_W - S9_POS)) // ABOVE
 
-def draw_screen(theme, dbm, contact, callinfo, header_l, header_r):
+def draw_screen(theme, dbm, contact, callinfo, header_l, header_r, zone=None):
     T = lambda k: rgb565(theme[k])
     fb = FB(T('THEME_ITEM_BG'))
     # шапка
@@ -114,7 +117,9 @@ def draw_screen(theme, dbm, contact, callinfo, header_l, header_r):
     fb.text(0, 2, header_r, T('THEME_ITEM_FG_HEADER_TEXT'), F1, 'right')
     # рядок позивного і рядок типу виклику
     fb.text(0, 24, contact,  T('THEME_ITEM_FG_CHANNEL_CONTACT'), F3, 'center')
-    fb.text(0, 64, callinfo, T('THEME_ITEM_FG_CHANNEL_CONTACT_INFO'), F3, 'center')
+    fb.text(0, FIRST_LINE_Y, callinfo, T('THEME_ITEM_FG_CHANNEL_NAME'), F3, 'center')
+    if zone:
+        fb.text(0, ZONE_Y, zone, T('THEME_ITEM_FG_ZONE_NAME'), F1, 'center')
     # ---- блок S-метра, крок у крок як drawSMeterBlock() ----
     bw = max(0, min(pixpos(dbm), BAR_W))
     fb.fill(0, BLOCK_Y, W, BLOCK_H, T('THEME_ITEM_BG'))
@@ -156,8 +161,8 @@ except OSError:
     fnt = ImageFont.load_default()
 
 for idx, (label, theme, dbm) in enumerate(shots):
-    fb = draw_screen(themes[theme], dbm, 'PARROT', 'Приватний виклик',
-                     'DMR TS1 500mW C1', '07:47')
+    fb = draw_screen(themes[theme], dbm, 'PARROT', 'R96',
+                     'DMR TS1 500mW C1', '07:47', zone='Всі канали Ch:7')
     img = Image.new('RGB', (W, H))
     img.putdata([p for row in fb.px for p in row])
     img = img.resize((iw, ih), Image.NEAREST)

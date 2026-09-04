@@ -1775,9 +1775,9 @@ void uiUtilityDisplayInformation(const char *str, displayInformation_t line, int
 			inverted = true;
 			{
 #if defined(PLATFORM_MDUV380) || defined(PLATFORM_MD380) || defined(PLATFORM_RT84_DM1701) || defined(PLATFORM_MD2017)
-				displayFillRect(0, ((yOverride == -1) ? DISPLAY_Y_POS_CHANNEL_FIRST_LINE : yOverride), DISPLAY_SIZE_X, (OVERRIDE_FRAME_HEIGHT * (dblHeight ? 2 : 1)), false);
+				displayFillRect(0, ((yOverride == -1) ? uiUtilityChannelFirstLineY() : yOverride), DISPLAY_SIZE_X, (OVERRIDE_FRAME_HEIGHT * (dblHeight ? 2 : 1)), false);
 #else
-				int row = ((yOverride == -1) ? DISPLAY_Y_POS_CHANNEL_FIRST_LINE : yOverride)/8;
+				int row = ((yOverride == -1) ? uiUtilityChannelFirstLineY() : yOverride)/8;
 				displayClearRows(row, row + 2, true);
 #endif
 			}
@@ -1788,7 +1788,7 @@ void uiUtilityDisplayInformation(const char *str, displayInformation_t line, int
 				displayThemeApply(THEME_ITEM_FG_CHANNEL_NAME, THEME_ITEM_BG);
 			}
 #endif
-			displayPrintCoreDoubleHeight(0, ((yOverride == -1) ? DISPLAY_Y_POS_CHANNEL_FIRST_LINE : yOverride), str, FONT_SIZE_3, TEXT_ALIGN_CENTER, inverted, dblHeight);
+			displayPrintCoreDoubleHeight(0, ((yOverride == -1) ? uiUtilityChannelFirstLineY() : yOverride), str, FONT_SIZE_3, TEXT_ALIGN_CENTER, inverted, dblHeight);
 			break;
 
 		case DISPLAY_INFO_CHANNEL_DETAILS:
@@ -1937,7 +1937,7 @@ void uiUtilityRenderQSOData(void)
 			// Its a Private call
 			displayPrintCentered(16, LinkHead->contact, FONT_SIZE_3);
 
-			displayPrintCentered(DISPLAY_Y_POS_CHANNEL_FIRST_LINE, currentLanguage->private_call, FONT_SIZE_3);
+			displayPrintCentered(uiUtilityChannelFirstLineY(), currentLanguage->private_call, FONT_SIZE_3);
 
 			if (LinkHead->talkGroupOrPcId != (trxDMRID | (PC_CALL_FLAG << 24)))
 			{
@@ -2660,6 +2660,31 @@ static bool smeterBlockIsAllowed(void)
 #else
 	return false;
 #endif
+}
+
+// Зсув рядка позивного/назви каналу вниз, коли блок S-метра на екрані.
+//
+// ЗНАЙДЕНО НА ЖИВІЙ РАЦІЇ (фото користувача): блок кінчається на y=63, а
+// DISPLAY_Y_POS_CHANNEL_FIRST_LINE = 64 -- тобто цифри шкали і рядок позивного стоять
+// упритул, без жодного пікселя між ними. Плюс нижче лишалась велика порожнеча, і екран
+// виглядав нерівномірно.
+//
+// +8 обрано не на око: рядок позивного займає 16px (FONT_SIZE_3), другий рядок стоїть на
+// y=96, зона -- на y=114. Зсув 64 -> 72 дає 72..87, тобто проміжок 8px і від шкали, і до
+// другого рядка. Більший зсув з'їв би цей другий проміжок, менший лишив би екран таким
+// самим тісним зверху.
+#define SMETER_TEXT_SHIFT              8
+
+int16_t uiUtilityChannelFirstLineY(void)
+{
+#if defined(HAS_COLOURS)
+	if (smeterBlockIsAllowed())
+	{
+		return (DISPLAY_Y_POS_CHANNEL_FIRST_LINE + SMETER_TEXT_SHIFT);
+	}
+#endif
+	// S-метр вимкнено -> координата рівно та, що була до появи опції.
+	return DISPLAY_Y_POS_CHANNEL_FIRST_LINE;
 }
 
 // Останній рядок (по 8px), який треба виштовхнути на LCD після оновлення RSSI. Місця
