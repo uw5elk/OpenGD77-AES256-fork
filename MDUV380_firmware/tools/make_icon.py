@@ -28,7 +28,6 @@ BLUE = (0x00, 0x57, 0xB7)
 YELLOW = (0xFF, 0xD7, 0x00)
 BODY = (0x10, 0x18, 0x28)      # темно-синій корпус -- контрастує і з синім, і з жовтим
 SCREEN = (0x7B, 0xD2, 0xFF)    # той самий відтінок, що FG_NOTIFICATION у нічній темі рації
-WAVE = (0xFF, 0xFF, 0xFF)
 
 SS = 8  # передискретизація
 
@@ -56,28 +55,24 @@ def draw_icon(size, detailed=True):
     # Дрібні розміри (<=32px) отримують ОКРЕМУ, крупнішу геометрію: на 16px
     # деталі все одно зникають, тому там важливий лише впізнаваний силует, який
     # має займати якомога більше площі плитки.
+    #
+    # Антена -- строго вертикальна, лівіше центру корпусу (як на більшості носимих
+    # радіостанцій). Малюємо її заокругленим прямокутником, а не лінією: так у неї
+    # рівний закруглений кінчик, і на дрібних розмірах він не "розсипається".
     if detailed:
-        tipx, tipy = 0.335, 0.150
-        waves = (0.115, 0.180, 0.245)
-        wave_w, ant_w = 0.030, 0.048
-        ant = (0.335, 0.175, 0.395, 0.400)
-        body = (0.330, 0.360, 0.670, 0.895)
-        body_r = 0.055
+        ant = (0.355, 0.085, 0.415, 0.360)   # x0, y0, x1, y1
+        ant_r = 0.030
+        body = (0.300, 0.335, 0.700, 0.905)
+        body_r = 0.060
     else:
-        tipx, tipy = 0.300, 0.120
-        waves = (0.140, 0.225)
-        wave_w, ant_w = 0.055, 0.080
-        ant = (0.300, 0.150, 0.370, 0.330)
-        body = (0.240, 0.300, 0.760, 0.925)
-        body_r = 0.075
-
-    # --- радіохвилі від кінчика антени (білі -- добре видно на синьому) ---
-    for r in waves:
-        box = [u(tipx - r), u(tipy - r), u(tipx + r), u(tipy + r)]
-        d.arc(box, start=-72, end=18, fill=WAVE, width=u(wave_w))
+        ant = (0.320, 0.070, 0.430, 0.330)
+        ant_r = 0.055
+        body = (0.230, 0.290, 0.770, 0.930)
+        body_r = 0.080
 
     # --- антена ---
-    d.line([u(ant[0]), u(ant[1]), u(ant[2]), u(ant[3])], fill=BODY, width=u(ant_w))
+    d.rounded_rectangle([u(ant[0]), u(ant[1]), u(ant[2]), u(ant[3])],
+                        radius=u(ant_r), fill=BODY)
 
     # --- корпус ---
     d.rounded_rectangle([u(body[0]), u(body[1]), u(body[2]), u(body[3])],
@@ -85,19 +80,19 @@ def draw_icon(size, detailed=True):
 
     if detailed:
         # екран
-        d.rounded_rectangle([u(0.375), u(0.415), u(0.625), u(0.570)],
-                            radius=u(0.018), fill=SCREEN)
+        d.rounded_rectangle([u(0.350), u(0.395), u(0.650), u(0.560)],
+                            radius=u(0.020), fill=SCREEN)
         # решітка динаміка -- три смужки
         for i in range(3):
-            y = 0.635 + i * 0.070
-            d.rounded_rectangle([u(0.395), u(y), u(0.605), u(y + 0.036)],
-                                radius=u(0.018), fill=YELLOW)
+            y = 0.625 + i * 0.072
+            d.rounded_rectangle([u(0.370), u(y), u(0.630), u(y + 0.038)],
+                                radius=u(0.019), fill=YELLOW)
     else:
         # спрощено: великий екран і одна широка смуга динаміка
-        d.rounded_rectangle([u(0.310), u(0.370), u(0.690), u(0.590)],
-                            radius=u(0.030), fill=SCREEN)
-        d.rounded_rectangle([u(0.330), u(0.670), u(0.670), u(0.760)],
-                            radius=u(0.035), fill=YELLOW)
+        d.rounded_rectangle([u(0.300), u(0.360), u(0.700), u(0.595)],
+                            radius=u(0.032), fill=SCREEN)
+        d.rounded_rectangle([u(0.320), u(0.680), u(0.680), u(0.775)],
+                            radius=u(0.038), fill=YELLOW)
 
     return img.resize((size, size), Image.LANCZOS)
 
