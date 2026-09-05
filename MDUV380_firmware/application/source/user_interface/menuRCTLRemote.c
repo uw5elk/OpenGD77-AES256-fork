@@ -1,20 +1,18 @@
 /*
- * menuRCTLRemote.c — "Від. керування" / "Remote control": надіслати запит Radio Check
- * (DMR_RCTL_CMD_CHECK_REQ) іншій рації й показати, чи відповіла.
+ * menuRCTLRemote.c — "Від. керування" / "Remote control": надіслати команду керування
+ * іншій рації У СТОКОВОМУ ФОРМАТІ TYT (Motorola CSBK), щоб заводська рація нас розуміла.
  *
- * Модельовано на menuMessages.c (RECIPIENT + PICK_CONTACT), спрощено під один-єдиний
- * запит без набору тексту:
- *   ENTRY         : ввести/обрати DMR ID цілі, GRN надсилає запит
+ * Потік (модельовано на menuMessages.c):
+ *   PICK_CMD      : обрати команду (Перевірка / Моніторинг / Ввімкнення / Вимкнення);
+ *                   індекс пункту == dmr_rctl_stock_cmd_t
+ *   ENTRY         : ввести/обрати DMR ID цілі, GRN надсилає обрану команду
  *   PICK_CONTACT  : список приватних контактів кодплагу замість ручного набору ID
- *                   (RCTL — лише індивідуальний виклик, групового режиму немає за
- *                   дизайном, тож тут на відміну від SMS немає перемикача Group/Private)
- *   RESULT        : або одразу помилка надсилання (TX зайнятий/немає ключа/...), або
- *                   "Перевірка..." з очікуванням CHECK_ACK, потім результат (відповіла /
- *                   не відповіла за тайм-аут)
+ *                   (RCTL — лише індивідуальний виклик, групового режиму немає)
+ *   RESULT        : "Надіслано" або помилка надсилання (TX зайнятий / не зібралось)
  *
- * "Нову" відповідь від "застарілої" (що лишилась від попереднього, не пов'язаного
- * запиту) відрізняємо через dmrRctlAckGeneration() — лічильник, що зростає при
- * кожному прийнятому CHECK_ACK (functions/dmr_rctl_tx.c) — а не лише за віком.
+ * ACK від цілі тут поки НЕ очікується: формат стокової ACK-відповіді ще не реалізовано
+ * в RX -- спершу треба захопити його з ефіру (крок 2.5 RCTL_COMPAT.md). Тому екран
+ * показує лише факт надсилання; "рація на зв'язку" повернеться, коли з'явиться парсинг ACK.
  *
  * Компілюється в ніщо без -DENABLE_AES -DENABLE_DMR_DATA (та сама умова, що й
  * functions/dmr_rctl_tx.c/menuMessages.c).
@@ -29,6 +27,7 @@
 #include "user_interface/uiLocalisation.h"
 #include "user_interface/uiUtilities.h"
 #include "functions/dmr_rctl_tx.h"
+#include "crypto/dmr_rctl_stock.h"   // dmr_rctl_stock_cmd_t + кількість команд
 #include "functions/ticks.h"   // ticksTimer_t: реальний час замість лічби тіків
 #include "functions/codeplug.h"
 #include "crypto/dmr_aes.h"
@@ -39,30 +38,31 @@
 #include "user_interface/languages/rctl_ua.h"
 #else
 #define RCTL_TITLE               "Remote control"
+#define RCTL_PICK_CMD_TITLE      "Pick command"
+#define RCTL_HINT_PICK_CMD       "U/D  GRN:next  RED:exit"
 #define RCTL_ID_FMT              "ID: %s"
 #define RCTL_HINT_ID             "0-9:id  L:del"
 #define RCTL_HINT_CONTACTS       "SK1:contacts"
-#define RCTL_HINT_SEND_BACK      "GRN:check  RED:back"
+#define RCTL_HINT_SEND_BACK      "GRN:send  RED:back"
 #define RCTL_TITLE_PICK          "Pick contact"
 #define RCTL_NO_CONTACTS         "(no contacts)"
 #define RCTL_HINT_BACK           "RED:back"
-#define RCTL_WAITING             "Checking..."
-#define RCTL_HINT_CANCEL         "RED:cancel"
-#define RCTL_ACK_OK              "Radio is on air"
-#define RCTL_ACK_AGE_FMT         "ID %lu, %lus ago"
-#define RCTL_TIMEOUT             "No response"
+#define RCTL_SENT                "Sent"
 #define RCTL_HINT_ANY_KEY        "any key: back"
 #define RCTL_ERR_GENERIC         "error"
 #define RCTL_ERR_TX_BUSY         "TX busy"
-#define RCTL_ERR_NO_KEY          "no AES key"
 #define RCTL_ERR_FRAME           "build failed"
 #define RCTL_SEND_FAILED         "Send failed"
 #define RCTL_FAIL_FMT            "%s (ret %d)"
+#define RCFG_ITEM_CHECK          "Radio check"
+#define RCFG_ITEM_MONITOR        "Monitor"
+#define RCFG_ITEM_STUN           "Disable"
+#define RCFG_ITEM_REVIVE         "Enable"
 #endif
 
 #if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
 
-enum { RCTL_ENTRY = 0, RCTL_PICK_CONTACT, RCTL_RESULT };
+enum { RCTL_PICK_CMD = 0, RCTL_ENTRY, RCTL_PICK_CONTACT, RCTL_RESULT };
 
 // ЧАС У МІЛІСЕКУНДАХ, а не в тіках.
 //
@@ -78,29 +78,48 @@ enum { RCTL_ENTRY = 0, RCTL_PICK_CONTACT, RCTL_RESULT };
 //
 // Тепер час рахується ticksTimer_t -- реальними мілісекундами, як у решті прошивки.
 // Такий код не залежить від частоти головного циклу й не зламається, якщо її змінять.
-#define RCTL_WAIT_TIMEOUT_MS     8000U
+// (Очікування ACK тимчасово прибрано: стокову ACK-відповідь ще не парсимо -- крок 2.5.)
 #define RCTL_RESULT_HOLD_MS     20000U
 
 // Персистентно між тіками, в CCM -- той самий idiom, що й menuMessages.c/menuAESKeys.c.
 static struct
 {
 	uint8_t  view;
+	uint8_t  cmd;           // обрана команда: dmr_rctl_stock_cmd_t (Check/Monitor/Enable/Disable)
 	char     rcpt[10];      // ID цілі, що вводиться/обирається
-
-	int8_t   sendResult;    // повернене dmrRctlRequestCheck(): 0 = надіслано, <0 = помилка TX
-	uint8_t  waiting;       // 1 = чекаємо CHECK_ACK від цілі
-	uint8_t  acked;         // 1 = дочекались відповіді саме від цілі
-	uint32_t waitTargetId;
-	uint32_t ackGenAtSend;  // знімок dmrRctlAckGeneration() у момент надсилання
-	uint32_t ackAgeMsShown;
-	ticksTimer_t holdTimer;   // очікування ACK або показ результату -- реальний час, не тіки
+	int8_t   sendResult;    // повернене dmrRctlStockSend(): 0 = надіслано, <0 = помилка TX
+	ticksTimer_t holdTimer; // показ результату -- реальний час, не тіки
 } s_rc DMR_AES_CCM;
 
+// Пункти екрана вибору команди -- у ПОРЯДКУ dmr_rctl_stock_cmd_t (Check,Monitor,Enable,Disable),
+// щоб індекс пункту == коду команди. Мітки спільні з екраном дозволів (rctl_ua.h).
+static const char *cmdName(int i)
+{
+	switch (i)
+	{
+		case DMR_RCTL_STOCK_CHECK:   return RCFG_ITEM_CHECK;    // Перевірка
+		case DMR_RCTL_STOCK_MONITOR: return RCFG_ITEM_MONITOR;  // Моніторинг
+		case DMR_RCTL_STOCK_ENABLE:  return RCFG_ITEM_REVIVE;   // Ввімкнення
+		case DMR_RCTL_STOCK_DISABLE: return RCFG_ITEM_STUN;     // Вимкнення
+		default:                     return "?";
+	}
+}
+
+static void updatePickCmd(void);
 static void updateEntry(void);
 static void updatePickContact(void);
 static void updateResult(void);
+static void pickCmdEvent(uiEvent_t *ev);
 static void entryEvent(uiEvent_t *ev);
 static void pickContactEvent(uiEvent_t *ev);
+
+static void gotoPickCmd(void)
+{
+	s_rc.view = RCTL_PICK_CMD;
+	menuDataGlobal.currentItemIndex = s_rc.cmd;
+	menuDataGlobal.numItems = DMR_RCTL_STOCK_NUM_CMDS;
+	updatePickCmd();
+}
 
 static void gotoEntry(void)
 {
@@ -113,59 +132,25 @@ menuStatus_t menuRCTLRemote(uiEvent_t *ev, bool isFirstRun)
 	if (isFirstRun)
 	{
 		memset(&s_rc, 0, sizeof s_rc);
-		gotoEntry();
-		return MENU_STATUS_SUCCESS;
+		gotoPickCmd();
+		return (MENU_STATUS_LIST_TYPE | MENU_STATUS_SUCCESS);
 	}
 
 	menuStatus_t exitCode = MENU_STATUS_SUCCESS;
 
 	if (s_rc.view == RCTL_RESULT)
 	{
-		// Поки чекаємо -- щотік перевіряємо, чи не прийшла НОВА (за generation) відповідь
-		// саме від цілі, і рахуємо тайм-аут; нічого з цього не залежить від key-подій.
-		if (s_rc.waiting)
-		{
-			uint32_t fromId, ageMs;
-			if ((dmrRctlAckGeneration() != s_rc.ackGenAtSend) &&
-					dmrRctlLastCheckAck(&fromId, &ageMs) && (fromId == s_rc.waitTargetId))
-			{
-				s_rc.acked = 1;
-				s_rc.waiting = 0;
-				s_rc.ackAgeMsShown = ageMs;
-				ticksTimerStart(&s_rc.holdTimer, RCTL_RESULT_HOLD_MS);
-				updateResult();
-			}
-			else if (ticksTimerHasExpired(&s_rc.holdTimer))
-			{
-				// Тайм-аут: відповіді не було. ОДРАЗУ перезапускаємо таймер на показ
-				// результату -- інакше перевірка "автозакриття" нижче в цьому ж виклику
-				// зітре щойно показаний RCTL_TIMEOUT, і його не встигнуть побачити.
-				s_rc.waiting = 0;
-				ticksTimerStart(&s_rc.holdTimer, RCTL_RESULT_HOLD_MS);
-				updateResult();
-			}
-		}
-
+		// Результат надсилання показано; будь-яка клавіша або тайм-аут -> назад до вибору
+		// команди. ACK від цілі тут поки НЕ очікується: формат стокової ACK-відповіді ще
+		// не реалізовано в RX (спершу треба захопити його з ефіру -- крок 2.5 RCTL_COMPAT.md).
 		if (ev->hasEvent && (ev->events & KEY_EVENT))
 		{
-			if (s_rc.waiting)
-			{
-				// Під час очікування діє лише RED (скасувати); решта клавіш ігноруються,
-				// щоб випадковий дотик не "з'їдав" подію GREEN, якою напросився запит.
-				if (KEYCHECK_SHORTUP(ev->keys, KEY_RED)) { gotoEntry(); }
-			}
-			else
-			{
-				// Результат (успіх/помилка/тайм-аут) уже відомий -- будь-яка клавіша
-				// повертає на ввід ID, як MSGS_HINT_ANY_KEY у menuMessages.c.
-				gotoEntry();
-			}
+			gotoPickCmd();
 			return exitCode;
 		}
-
-		if ((!s_rc.waiting) && ticksTimerHasExpired(&s_rc.holdTimer))
+		if (ticksTimerHasExpired(&s_rc.holdTimer))
 		{
-			gotoEntry();
+			gotoPickCmd();
 		}
 		return exitCode;
 	}
@@ -174,11 +159,62 @@ menuStatus_t menuRCTLRemote(uiEvent_t *ev, bool isFirstRun)
 	{
 		switch (s_rc.view)
 		{
+			case RCTL_PICK_CMD:     pickCmdEvent(ev);      break;
 			case RCTL_ENTRY:        entryEvent(ev);        break;
 			case RCTL_PICK_CONTACT: pickContactEvent(ev);  break;
 		}
 	}
 	return exitCode;
+}
+
+/* ============================ PICK COMMAND =============================== */
+static void updatePickCmd(void)
+{
+	char buf[SCREEN_LINE_BUFFER_SIZE];
+
+	displayClearBuf();
+	menuDisplayTitle(RCTL_PICK_CMD_TITLE);
+
+	for (int i = MENU_START_ITERATION_VALUE; i <= MENU_END_ITERATION_VALUE; i++)
+	{
+		int mNum = menuGetMenuOffset(DMR_RCTL_STOCK_NUM_CMDS, i);
+		if (mNum == MENU_OFFSET_BEFORE_FIRST_ENTRY) { continue; }
+		if (mNum == MENU_OFFSET_AFTER_LAST_ENTRY)   { break; }
+
+		snprintf(buf, sizeof buf, "%s", cmdName(mNum));
+		menuDisplayEntry(i, mNum, buf, 0, THEME_ITEM_FG_MENU_ITEM, THEME_ITEM_FG_OPTIONS_VALUE, THEME_ITEM_BG);
+	}
+	displayPrintCentered(112, RCTL_HINT_PICK_CMD, FONT_SIZE_1);
+	displayRender();
+}
+
+static void pickCmdEvent(uiEvent_t *ev)
+{
+	if ((ev->events & KEY_EVENT) == 0) { return; }
+
+	if (KEYCHECK_SHORTUP(ev->keys, KEY_RED))
+	{
+		menuSystemPopPreviousMenu();
+		return;
+	}
+	if (KEYCHECK_PRESS(ev->keys, KEY_DOWN))
+	{
+		menuSystemMenuIncrement(&menuDataGlobal.currentItemIndex, DMR_RCTL_STOCK_NUM_CMDS);
+		updatePickCmd();
+		return;
+	}
+	if (KEYCHECK_PRESS(ev->keys, KEY_UP))
+	{
+		menuSystemMenuDecrement(&menuDataGlobal.currentItemIndex, DMR_RCTL_STOCK_NUM_CMDS);
+		updatePickCmd();
+		return;
+	}
+	if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN))
+	{
+		s_rc.cmd = (uint8_t)menuDataGlobal.currentItemIndex;
+		gotoEntry();
+		return;
+	}
 }
 
 /* ============================ ENTRY ===================================== */
@@ -189,8 +225,11 @@ static void updateEntry(void)
 	displayClearBuf();
 	menuDisplayTitle(RCTL_TITLE);
 
+	// показуємо, яку команду шлемо, щоб ціль не набирали для не тієї дії
+	displayPrintCentered(18, cmdName(s_rc.cmd), FONT_SIZE_1);
+
 	snprintf(buf, sizeof buf, RCTL_ID_FMT, s_rc.rcpt);
-	displayPrintAt(2, 28, buf, FONT_SIZE_3);
+	displayPrintAt(2, 30, buf, FONT_SIZE_3);
 
 	displayPrintCentered(92,  RCTL_HINT_ID, FONT_SIZE_1);
 	displayPrintCentered(102, RCTL_HINT_CONTACTS, FONT_SIZE_1);
@@ -198,17 +237,15 @@ static void updateEntry(void)
 	displayRender();
 }
 
-static void doCheck(void)
+static void doSend(void)
 {
 	uint32_t dst = (uint32_t)strtoul(s_rc.rcpt, NULL, 10);
 	if (dst == 0) { return; }   // порожній/нульовий ID -- нічого не робимо, лишаємось на ENTRY
 
-	s_rc.waitTargetId = dst;
-	s_rc.ackGenAtSend = dmrRctlAckGeneration();
-	s_rc.sendResult = (int8_t)dmrRctlRequestCheck(dst);
-	s_rc.acked = 0;
-	s_rc.waiting = (s_rc.sendResult == 0) ? 1 : 0;
-	ticksTimerStart(&s_rc.holdTimer, (s_rc.waiting ? RCTL_WAIT_TIMEOUT_MS : RCTL_RESULT_HOLD_MS));
+	// Шлемо у СТОКОВОМУ форматі (сумісність із заводською TYT). ACK поки не очікуємо
+	// (формат стокової відповіді ще не в RX) -- показуємо лише факт надсилання.
+	s_rc.sendResult = (int8_t)dmrRctlStockSend((int)s_rc.cmd, dst);
+	ticksTimerStart(&s_rc.holdTimer, RCTL_RESULT_HOLD_MS);
 	s_rc.view = RCTL_RESULT;
 	updateResult();
 }
@@ -233,12 +270,12 @@ static void entryEvent(uiEvent_t *ev)
 
 	if (KEYCHECK_SHORTUP(ev->keys, KEY_RED))
 	{
-		menuSystemPopPreviousMenu();
+		gotoPickCmd();   // назад до вибору команди (а не вихід із меню)
 		return;
 	}
 	if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN))
 	{
-		doCheck();
+		doSend();
 		return;
 	}
 	if (KEYCHECK_SHORTUP(ev->keys, KEY_LEFT))
@@ -354,32 +391,19 @@ static void updateResult(void)
 		switch (s_rc.sendResult)
 		{
 			case -2: why = RCTL_ERR_TX_BUSY; break;
-			case -3: why = RCTL_ERR_NO_KEY;  break;
 			case -4: why = RCTL_ERR_FRAME;   break;
 		}
 		displayPrintCentered(44, RCTL_SEND_FAILED, FONT_SIZE_3);
 		snprintf(buf, sizeof buf, RCTL_FAIL_FMT, why, s_rc.sendResult);
 		displayPrintCentered(72, buf, FONT_SIZE_2);
-		displayPrintCentered(112, RCTL_HINT_ANY_KEY, FONT_SIZE_1);
-	}
-	else if (s_rc.acked)
-	{
-		char buf[24];
-		displayPrintCentered(44, RCTL_ACK_OK, FONT_SIZE_2);
-		snprintf(buf, sizeof buf, RCTL_ACK_AGE_FMT, (unsigned long)s_rc.waitTargetId, (unsigned long)(s_rc.ackAgeMsShown / 1000));
-		displayPrintCentered(72, buf, FONT_SIZE_2);
-		displayPrintCentered(112, RCTL_HINT_ANY_KEY, FONT_SIZE_1);
-	}
-	else if (s_rc.waiting)
-	{
-		displayPrintCentered(56, RCTL_WAITING, FONT_SIZE_3);
-		displayPrintCentered(112, RCTL_HINT_CANCEL, FONT_SIZE_1);
 	}
 	else
 	{
-		displayPrintCentered(44, RCTL_TIMEOUT, FONT_SIZE_3);
-		displayPrintCentered(112, RCTL_HINT_ANY_KEY, FONT_SIZE_1);
+		// показуємо надіслану команду + факт відправки; ACK ще не парсимо (крок 2.5)
+		displayPrintCentered(40, cmdName(s_rc.cmd), FONT_SIZE_2);
+		displayPrintCentered(64, RCTL_SENT, FONT_SIZE_3);
 	}
+	displayPrintCentered(112, RCTL_HINT_ANY_KEY, FONT_SIZE_1);
 
 	displayRender();
 }

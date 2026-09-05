@@ -20,6 +20,7 @@
 #include "crypto/dmr_aes_hook.h"
 #include "crypto/dmr_rctl_pdu.h"
 #include "crypto/dmr_rctl_frame.h"
+#include "crypto/dmr_rctl_stock.h"   // стоковий формат команд (сумісність із заводською TYT)
 #include "user_interface/menuSystem.h"
 #include <string.h>
 #include <stdio.h>
@@ -90,6 +91,27 @@ int dmrRctlSendCmd(uint32_t targetId, uint8_t cmd, uint32_t arg)
 int dmrRctlRequestCheck(uint32_t targetId)
 {
 	return dmrRctlSendCmd(targetId, DMR_RCTL_CMD_CHECK_REQ, 0);
+}
+
+/* Надіслати команду керування У СТОКОВОМУ ФОРМАТІ TYT (Motorola CSBK, відкритим текстом).
+ * Це шлях сумісності: заводська рація розуміє наш кадр напряму (формат реверснуто з ефіру,
+ * див. RCTL_COMPAT.md). На відміну від власного PDU -- без AES і без вибору ключа: команди
+ * керування стокова шле відкрито, а доступ вирішує цільова рація своїми дозволами.
+ *
+ * Повертає 0 = поставлено в чергу TX, -2 = дата-виклик уже активний, -4 = не зібралось.
+ * ACK від цілі тут НЕ очікується: формат стокової ACK-відповіді ще не реалізовано в RX
+ * (спершу треба захопити його з ефіру -- крок 2.5). Тож меню показує лише "надіслано". */
+int dmrRctlStockSend(int cmd, uint32_t targetId)
+{
+	if (dmrDataTxActive()) { return -2; }
+	if ((cmd < 0) || (cmd >= DMR_RCTL_STOCK_NUM_CMDS)) { return -4; }
+
+	uint8_t q[(DMR_RCTL_STOCK_PREAMBLES + 1) * 13];
+	int n = dmr_rctl_stock_build_tx((dmr_rctl_stock_cmd_t)cmd, trxDMRID, targetId, q);
+	if (n <= 0) { return -4; }
+
+	dmrDataTxLoad(q, (uint8_t)n);
+	return 0;
 }
 
 static uint32_t s_lastAckFromId;

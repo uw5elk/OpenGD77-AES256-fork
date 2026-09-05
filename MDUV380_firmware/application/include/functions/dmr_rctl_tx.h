@@ -30,6 +30,11 @@ int dmrRctlSendCmd(uint32_t targetId, uint8_t cmd, uint32_t arg);
 /* Зручна обгортка: запит "чи ти на зв'язку?" (DMR_RCTL_CMD_CHECK_REQ, arg=0). */
 int dmrRctlRequestCheck(uint32_t targetId);
 
+/* Надіслати команду керування у СТОКОВОМУ форматі TYT (сумісність із заводською рацією).
+ * cmd -- dmr_rctl_stock_cmd_t (0=Check,1=Monitor,2=Enable,3=Disable). Без AES/ключа.
+ * 0 = поставлено в чергу, -2 = дата-виклик активний, -4 = не зібралось. */
+int dmrRctlStockSend(int cmd, uint32_t targetId);
+
 /* Останній отриманий CHECK_ACK: 1 якщо був хоч один з моменту завантаження, з ID видавця
  * (тобто радіостанції, що відповіла) та віком відповіді в мс. Використовується екраном
  * "Remote control" (menuRCTLRemote.c, Фаза 1б, 2026-09-03). */
@@ -60,6 +65,7 @@ void dmrRctlTick(void);
 
 static inline int  dmrRctlSendCmd(uint32_t targetId, uint8_t cmd, uint32_t arg) { (void)targetId; (void)cmd; (void)arg; return -1; }
 static inline int  dmrRctlRequestCheck(uint32_t targetId) { (void)targetId; return -1; }
+static inline int  dmrRctlStockSend(int cmd, uint32_t targetId) { (void)cmd; (void)targetId; return -1; }
 static inline int  dmrRctlLastCheckAck(uint32_t *outFromId, uint32_t *outAgeMs) { (void)outFromId; (void)outAgeMs; return 0; }
 static inline uint32_t dmrRctlAckGeneration(void) { return 0; }
 static inline void dmrRctlRxBurst(int rxDataType, const uint8_t *payload12) { (void)rxDataType; (void)payload12; }

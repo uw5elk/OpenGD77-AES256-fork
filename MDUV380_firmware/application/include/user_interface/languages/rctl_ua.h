@@ -32,10 +32,13 @@
 
 /* ---- menuRCTLRemote.c: "Від. керування" (запит Radio Check іншій рації) ---- */
 #define RCTL_TITLE               "Від. керування"
+#define RCTL_PICK_CMD_TITLE      "Оберіть команду"
+#define RCTL_HINT_PICK_CMD       "U/D  GRN:далі  RED:вихід"
+#define RCTL_SENT                "Надіслано"
 #define RCTL_ID_FMT              "ID: %s"
 #define RCTL_HINT_ID             "0-9:id  L:стерти"
 #define RCTL_HINT_CONTACTS       "SK1:контакти"
-#define RCTL_HINT_SEND_BACK      "GRN:перевірити RED:назад"
+#define RCTL_HINT_SEND_BACK      "GRN:надіслати RED:назад"
 #define RCTL_TITLE_PICK          "Обрати контакт"
 #define RCTL_NO_CONTACTS         "(немає контактів)"
 #define RCTL_HINT_BACK           "RED:назад"
