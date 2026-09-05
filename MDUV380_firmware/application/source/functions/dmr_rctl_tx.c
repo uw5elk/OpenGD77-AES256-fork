@@ -58,9 +58,12 @@ int dmrRctlSendCmd(uint32_t targetId, uint8_t cmd, uint32_t arg)
 {
 	if (dmrDataTxActive()) { return -2; }
 
+	/* Ключ НЕ обов'язковий (2026-09-05). На каналі без шифрування команда йде відкритим
+	 * кадром -- як у Motorola/Hytera, де віддалене керування працює й у відкритій мережі,
+	 * а вирішує доступ цільова рація своїми дозволами. Раніше тут стояло `return -3`, тож
+	 * на відкритих каналах віддалене керування не працювало взагалі. */
 	uint8_t keyId = rctlResolveTxKeyId();
 	const uint8_t *key = (keyId != 0) ? dmr_aes_key_ptr(keyId) : NULL;
-	if (key == NULL) { return -3; }
 
 	/* Номер послідовності беремо з ПОСТІЙНОГО лічильника. Раніше він сіявся з
 	 * ticksGetMillis(), тобто від моменту ввімкнення -- після перезавантаження номери
@@ -126,6 +129,7 @@ static volatile uint32_t s_rxPeerSrc;
 static volatile uint32_t s_rxPeerDst;
 static volatile uint8_t  s_rxPeerGroup;
 static volatile uint8_t  s_rxPeerKeyId;
+static volatile uint8_t  s_rxPeerEnc;    /* 1 = був ENC-заголовок (розшифрувати); 0 = відкритий кадр */
 
 void dmrRctlRxReset(void)
 {
@@ -180,6 +184,7 @@ void dmrRctlRxBurst(int rxDataType, const uint8_t *p)
 			s_rxPeerDst = s_rxDst;
 			s_rxPeerGroup = s_rxGroup;
 			s_rxPeerKeyId = s_rxKeyId;
+			s_rxPeerEnc = s_rxHaveEnc;
 			s_rxReady = 1;
 			dmrRctlRxReset();
 		}
@@ -198,6 +203,7 @@ void dmrRctlTick(void)
 	uint32_t dst = s_rxPeerDst;
 	uint8_t  group = s_rxPeerGroup;
 	uint8_t  keyId = s_rxPeerKeyId;
+	uint8_t  enc = s_rxPeerEnc;
 	s_rxReady = 0;
 
 	/* RCTL за дизайном лише індивідуальний виклик (немає групового режиму керування) і
@@ -211,16 +217,26 @@ void dmrRctlTick(void)
 
 	dmr_rctl_msg_t msg;
 	int got = 0;
-	for (int attempt = 0; attempt <= DMR_AES_MAX_KEYS && !got; attempt++)
+
+	if (!enc)
 	{
-		uint8_t k = (attempt == 0) ? keyId : (uint8_t)attempt;
-		if (k == 0 || k >= DMR_AES_MAX_KEYS) { continue; }
-		const uint8_t *key = dmr_aes_key_ptr(k);
-		if (key == NULL) { continue; }
-		uint8_t tmp[16];
-		memcpy(tmp, pdu, 16);
-		aes256_ecb_decrypt(key, tmp);
-		if (dmr_rctl_unpack(tmp, &msg)) { got = 1; }
+		/* Відкритий кадр (ENC-заголовка не було): 16 байт PDU лежать як є. Магія "RC" +
+		 * CRC32 вище відсіюють чужі дата-виклики, тож зайвого сюди не потрапить. */
+		got = dmr_rctl_unpack(pdu, &msg) ? 1 : 0;
+	}
+	else
+	{
+		for (int attempt = 0; attempt <= DMR_AES_MAX_KEYS && !got; attempt++)
+		{
+			uint8_t k = (attempt == 0) ? keyId : (uint8_t)attempt;
+			if (k == 0 || k >= DMR_AES_MAX_KEYS) { continue; }
+			const uint8_t *key = dmr_aes_key_ptr(k);
+			if (key == NULL) { continue; }
+			uint8_t tmp[16];
+			memcpy(tmp, pdu, 16);
+			aes256_ecb_decrypt(key, tmp);
+			if (dmr_rctl_unpack(tmp, &msg)) { got = 1; }
+		}
 	}
 	if (!got) { return; }             /* не наш ключ / не RCTL-кадр -- тихо ігноруємо */
 	if (msg.issuerId != src) { return; }   /* заголовок і зашифрований issuerId мають збігатись */

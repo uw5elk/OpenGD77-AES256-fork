@@ -96,9 +96,38 @@ int main(void)
     int ok2 = dmr_rctl_unpack(ct2, &m3);
     CHECK(!(ok2 == 1 && m3.issuerId == m.issuerId && m3.seq == m.seq), "wrong key does not reproduce the message");
 
-    /* key == NULL is rejected up front */
-    int nNull = dmr_rctl_build_tx_bursts(dst, src, keyId, NULL, &m, q);
-    CHECK(nNull == -1, "NULL key rejected (-1)");
+    /* ===== ВІДКРИТИЙ КАНАЛ: key == NULL більше не помилка (2026-09-05) =====
+     *
+     * Раніше тут перевірялось `nNull == -1`: без ключа кадр не будувався взагалі, тобто на
+     * каналі без шифрування віддалене керування не працювало. Вимога змінилась -- як у
+     * Motorola/Hytera, команди мають ходити і у відкритій мережі, а доступ вирішує цільова
+     * рація своїми дозволами, а не наявність шифру.
+     *
+     * Відкритий кадр НЕ несе ENC-заголовка, тому бургстів на один менше, і саме за цим
+     * приймач розрізняє, розшифровувати кадр чи читати як є. */
+    uint8_t qc[DMR_RCTL_TX_BURST_COUNT * 13];
+    int nClear = dmr_rctl_build_tx_bursts(dst, src, keyId, NULL, &m, qc);
+    CHECK(nClear == (DMR_RCTL_TX_BURST_COUNT - 1), "відкритий кадр: на один бургст менше (без ENC-заголовка)");
+    CHECK(qc[6 * 13 + 0] == 0x60, "відкритий: бургст 6 -- Data Header");
+    CHECK(qc[7 * 13 + 0] == 0x70, "відкритий: бургст 7 -- одразу Rate-1/2, ENC-заголовка немає");
+    CHECK(qc[8 * 13 + 0] == 0x70, "відкритий: бургст 8 -- Rate-1/2");
+
+    uint8_t pduC[24];
+    memcpy(pduC, qc + 7 * 13 + 1, 12);
+    memcpy(pduC + 12, qc + 8 * 13 + 1, 12);
+    uint32_t wantC = ((uint32_t)pduC[20] << 24) | ((uint32_t)pduC[21] << 16) |
+                     ((uint32_t)pduC[22] << 8) | (uint32_t)pduC[23];
+    CHECK(dmr_rctl_crc32(pduC, 24) == wantC, "відкритий: CRC32 зібраного PDU правильний");
+
+    dmr_rctl_msg_t m4;
+    CHECK(dmr_rctl_unpack(pduC, &m4) == 1, "відкритий: PDU читається БЕЗ розшифровки");
+    CHECK(m4.cmd == m.cmd && m4.issuerId == m.issuerId && m4.seq == m.seq && m4.arg == m.arg,
+          "відкритий: поля збігаються з вихідним повідомленням");
+
+    /* І навпаки: шифрований кадр НЕ має читатись як відкритий -- інакше приймач плутав би
+     * режими, а ключ не давав би нічого. */
+    dmr_rctl_msg_t m5;
+    CHECK(dmr_rctl_unpack(pdu, &m5) == 0, "шифрований кадр не читається як відкритий");
 
     printf(fails == 0 ? "\nALL PASS\n" : "\n%d FAILURE(S)\n", fails);
     return fails ? 1 : 0;

@@ -66,13 +66,17 @@ static int append_burst(uint8_t *q, int n, uint8_t typeByte, const uint8_t *p12)
 int dmr_rctl_build_tx_bursts(uint32_t dst, uint32_t src, uint8_t keyId, const uint8_t key[32],
                               const dmr_rctl_msg_t *msg, uint8_t *q)
 {
-	if (key == NULL) { return -1; }
+	/* key == NULL -> ВІДКРИТИЙ канал: кадр іде без шифрування (2026-09-05). Раніше тут був
+	 * жорсткий `return -1`, тобто на каналі без ключа віддалене керування не працювало
+	 * взагалі. Вимога: як у Motorola/Hytera -- команди ходять і на відкритих каналах, а
+	 * доступ вирішує сама цільова рація своїми дозволами, а не наявність шифру. */
+	const int encrypt = (key != NULL);
 
-	/* 1) plaintext(16) -> шифруємо ЦІЛИЙ блок (на відміну від SMS тут нема відкритого
-	 *    хвоста -- команда керування або повністю зашифрована, або не йде в ефір). */
+	/* 1) plaintext(16). Коли шифруємо -- ЦІЛИЙ блок (на відміну від SMS тут нема відкритого
+	 *    хвоста: команда керування або повністю зашифрована, або повністю відкрита). */
 	uint8_t ct[16];
 	dmr_rctl_pack(msg, ct);
-	aes256_ecb_encrypt(key, ct);
+	if (encrypt) { aes256_ecb_encrypt(key, ct); }
 
 	/* 2) pdu = ct(16) + pad(4) + crc32(4) = 24 B = 2 блоки по 12 B (та сама формула
 	 *    заповнення, що й у dmr_sms.c, підставлена під фіксовану довжину). */
@@ -83,13 +87,14 @@ int dmr_rctl_build_tx_bursts(uint32_t dst, uint32_t src, uint8_t keyId, const ui
 	pdu[20] = (uint8_t)(crc >> 24); pdu[21] = (uint8_t)(crc >> 16);
 	pdu[22] = (uint8_t)(crc >> 8);  pdu[23] = (uint8_t)crc;
 	const int nDataBlocks = 2;
-	const int nblocks = 1 /* ENC header */ + nDataBlocks;
+	/* ENC-заголовок існує лише в шифрованому кадрі -- як і в dmr_sms.c для відкритих SMS. */
+	const int nblocks = (encrypt ? 1 : 0) + nDataBlocks;
 
 	/* 3) черга бургстів: CSBK-преамбул (індивідуальний виклик, dst=ціль, src=свій ID) +
 	 *    Unconfirmed Data Header (SAP09, зашифрований) + ENC extended header + 2 rate-1/2. */
 	int n = 0;
 	const int preamble = 6;
-	const int tail = 2 /* Unconfirmed + ENC headers */ + nDataBlocks;
+	const int tail = (encrypt ? 2 : 1) /* Unconfirmed [+ ENC] headers */ + nDataBlocks;
 	for (int i = 0; i < preamble; i++)
 	{
 		uint8_t body[10];
@@ -110,9 +115,11 @@ int dmr_rctl_build_tx_bursts(uint32_t dst, uint32_t src, uint8_t keyId, const ui
 		uint8_t p12[12]; memcpy(p12, h, 10); hdr_crc(h, 10, 0xCCCC, p12 + 10);
 		n = append_burst(q, n, DTB_DATA_HEADER, p12);
 	}
+	if (encrypt)
 	{
 		/* ENC extended header (SAP04 IP, MFID Moto, ALG05 AES256, key id, MI=0) -- та сама
-		 * розкладка, що й dmr_sms.c використовує для шифрованих SMS. */
+		 * розкладка, що й dmr_sms.c використовує для шифрованих SMS. Саме за наявністю цього
+		 * заголовка приймач і розрізняє шифрований кадр від відкритого. */
 		uint8_t e[10] = { 0x4F, 0x10, 0x51, keyId, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
 		uint8_t p12[12]; memcpy(p12, e, 10); hdr_crc(e, 10, 0xCCCC, p12 + 10);
 		n = append_burst(q, n, DTB_DATA_HEADER, p12);
@@ -121,5 +128,5 @@ int dmr_rctl_build_tx_bursts(uint32_t dst, uint32_t src, uint8_t keyId, const ui
 	{
 		n = append_burst(q, n, DTB_RATE12_DATA, pdu + b * 12);
 	}
-	return n;   /* == DMR_RCTL_TX_BURST_COUNT */
+	return n;   /* шифровано: DMR_RCTL_TX_BURST_COUNT; відкрито: на один бургст менше */
 }
