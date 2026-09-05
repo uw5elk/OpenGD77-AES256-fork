@@ -829,9 +829,17 @@ void dmrSmsRxBurst(int rxDataType, const uint8_t *p)
 		/* Не чіпаємо s_rxPdu, поки готовий PDU ще не забрав основний цикл (пишемо тепер
 		 * прямо в s_rxPdu, тож інакше новий burst затер би те, що ще не прочитано). */
 		if (s_rxReady) { return; }
-		int blkLen = (rxDataType == DT_RATE34_DATA) ? 18 : 12;
+
+		/* rate-1/2 (unconfirmed): весь 12-байтний блок -- навантаження.
+		 * rate-3/4 від стокової -- CONFIRMED data: 18-байтний блок = [2 байти DBSN+CRC9] +
+		 * [16 байтів навантаження]. Беремо лише 16 байтів навантаження: перші 2 службові й НЕ
+		 * входять у data-PDU/CRC32. Підтверджено дампом з ефіру (2026-09-05): так блоки
+		 * складаються в чистий IPv4/UDP/TMS і CRC32 усього PDU сходиться (0x43bc6082). */
+		const uint8_t *src = p;
+		int blkLen = 12;
+		if (rxDataType == DT_RATE34_DATA) { src = p + 2; blkLen = 16; }
 		if ((int)s_rxLen + blkLen > (int)sizeof s_rxPdu) { return; }   /* захист від переповнення */
-		memcpy(s_rxPdu + s_rxLen, p, blkLen);
+		memcpy(s_rxPdu + s_rxLen, src, blkLen);
 		s_rxLen = (uint16_t)(s_rxLen + blkLen);
 		s_rxCount++;
 
