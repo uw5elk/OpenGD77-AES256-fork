@@ -1114,7 +1114,9 @@ static inline void hrc6000SysReceivedDataInt(void)
 		// в ISR немає. Сторінку читаємо ОДИН раз на обидві потреби.
 		bool wantBurst  = (crcOk && ((rxDataType == 6) || (rxDataType == 7)));
 		bool wantStock  = (crcOk && (rxDataType == 3));   // стокова команда керування -- CSBK
-		bool wantCap    = (crcOk && dmrRctlCapArmed());
+		// Під час реверсу ловимо ВСЕ, навіть CRC-невалідне: квитанція-відповідь цілі могла
+		// приходити з CRC, який HW відкидає, тож у звичайному (crcOk) захопленні її не видно.
+		bool wantCap    = dmrRctlCapArmed();
 		if (wantBurst || wantStock || wantCap)
 		{
 			uint8_t dataBurst[LC_DATA_LENGTH];
@@ -1131,7 +1133,9 @@ static inline void hrc6000SysReceivedDataInt(void)
 				}
 				if (wantCap)
 				{
-					dmrRctlCapBurst(rxDataType, dataBurst); // сирий дамп для реверсу (крок 2.1)
+					// Старший біт type = статус CRC (0x80 -> CRC невалідний), щоб у дампі
+					// відрізняти «брудні» burst-и (напр. відповідь цілі) від чистих.
+					dmrRctlCapBurst(rxDataType | (crcOk ? 0 : 0x80), dataBurst);
 				}
 			}
 		}

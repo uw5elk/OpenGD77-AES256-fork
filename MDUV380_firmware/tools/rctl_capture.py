@@ -129,11 +129,15 @@ def main():
         seq = body[off]; typ = body[off + 1]
         data = body[off + 2:off + 2 + BURST_LEN]
         off += 2 + BURST_LEN
+        crcbad = (typ & 0x80) != 0          # старший біт type = CRC невалідний
+        typ &= 0x0F
         tname = TYPE_NAMES.get(typ, f"тип{typ}")
         hexb = " ".join(f"{x:02x}" for x in data)
-        print(f"  #{seq:<3} {tname:<9} {hexb}")
+        mark = "  CRC!" if crcbad else ""    # burst із «поганим» CRC (напр. відповідь цілі)
+        print(f"  #{seq:<3} {tname:<9} {hexb}{mark}")
 
-    print("\nСкопіюй увесь цей вивід і надішли — за ним робимо розбір формату.")
+    print("\nПозначка 'CRC!' — burst, який рація прийняла, але з невалідним CRC (нам якраз цікавий).")
+    print("Скопіюй увесь цей вивід і надішли — за ним робимо розбір формату.")
 
 
 if __name__ == "__main__":
