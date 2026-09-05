@@ -843,19 +843,6 @@ void dmrSmsRxBurst(int rxDataType, const uint8_t *p)
 		s_rxLen = (uint16_t)(s_rxLen + blkLen);
 		s_rxCount++;
 
-		/* ДІАГНОСТИКА (тимчасово): знімаємо сирий накопичений буфер на КОЖЕН блок, навіть без
-		 * завершення CRC32 -- щоб через USB 0x95 (--pdu) побачити реальний формат rate-3/4 від
-		 * стокової й зрозуміти, чому PDU не збирається (чисте 18-байтне навантаження чи Confirmed
-		 * із per-block DBSN/CRC, чи чіп дає не 18 байтів). Після вдалого збору перезапишеться. */
-		{
-			int nsnap = (s_rxLen > (int)sizeof s_diagLastPdu) ? (int)sizeof s_diagLastPdu : (int)s_rxLen;
-			for (int i = 0; i < nsnap; i++) { s_diagLastPdu[i] = s_rxPdu[i]; }
-			s_diagLastPduLen = (uint16_t)nsnap;
-			s_diagLastKeyId = s_rxKeyId;
-			s_diagLastExp = s_rxExpBlocks;
-			s_diagLastPeer = s_rxSrc;
-		}
-
 		/* Завершуємо, коли накопичене утворює CRC32-валідний data-PDU. Самотермінувально:
 		 * змішування/обрив блоків просто не дасть валідний CRC32. Мінімум ~2 rate-1/2 блоки
 		 * (24 Б). Гейт на s_rxHaveHeader (не s_rxHaveEnc), щоб і ЧИСТИЙ текст (без ENC-заголовка)
