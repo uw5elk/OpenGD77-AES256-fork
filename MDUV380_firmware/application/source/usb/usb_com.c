@@ -1807,6 +1807,19 @@ static void cpsHandleCommand(void)
 					usbComSendBuf[3 + n++] = (uint8_t)(d[i] >> 24);
 				}
 				usbComSendBuf[3 + n++] = (uint8_t)(dmrDataTxActive() ? 1 : 0);
+				// Гістограма типів (16x uint32 LE) -- дописано в кінець, старі парсери
+				// читають перші 7+1 і не ламаються. Показує, яким типом іде навантаження.
+				{
+					uint32_t t[16];
+					dmrSmsRxDiagTypes(t);
+					for (int i = 0; i < 16; i++)
+					{
+						usbComSendBuf[3 + n++] = (uint8_t)(t[i]);
+						usbComSendBuf[3 + n++] = (uint8_t)(t[i] >> 8);
+						usbComSendBuf[3 + n++] = (uint8_t)(t[i] >> 16);
+						usbComSendBuf[3 + n++] = (uint8_t)(t[i] >> 24);
+					}
+				}
 				usbComSendBuf[0] = com_requestbuffer[0];
 				usbComSendBuf[1] = (uint8_t)((n >> 8) & 0xFF);
 				usbComSendBuf[2] = (uint8_t)(n & 0xFF);

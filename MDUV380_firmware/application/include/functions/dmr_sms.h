@@ -78,6 +78,7 @@ void dmrSmsRxReset(void);
  *   [4]=blk CRC-bad, [5]=PDUs reassembled, [6]=messages decoded. */
 void dmrSmsRxDiagBurst(int rxDataType, int crcOk);
 void dmrSmsRxDiag(uint32_t out[7]);
+void dmrSmsRxDiagTypes(uint32_t out[16]);   /* гістограма rxDataType (0..15) усіх data-sync бурстів */
 void dmrSmsRxDiagReset(void);
 /* Dump the last reassembled (still-encrypted) PDU + metadata for offline analysis:
  * out = [pduLen_hi, pduLen_lo, keyId, expBlocks, peer(4 LE), rawPdu...]. Returns length. */

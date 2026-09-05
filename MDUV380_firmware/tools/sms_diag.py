@@ -28,12 +28,21 @@ def main():
         return
 
     ser.write(bytes([ord("C"), 0x93])); ser.flush(); time.sleep(0.3)
-    r = ser.read(64)
+    r = ser.read(128)
     if len(r) >= 3 + 28 + 1 and r[0] == ord("C"):
         vals = struct.unpack_from("<7I", r, 3)
         tx = r[3 + 28]
         names = ["d", "hOk", "hBad", "bOk", "bBad", "pdu", "msg"]
         print("RX diag: " + "  ".join(f"{k}={v}" for k, v in zip(names, vals)) + f"  txActive={tx}")
+        # Гістограма типів бурстів (16x uint32), дописана в кінець відповіді (нова прошивка).
+        if len(r) >= 3 + 29 + 64:
+            types = struct.unpack_from("<16I", r, 3 + 29)
+            tnames = {0:"PI-hdr",1:"VLC-hdr",2:"TLC",3:"CSBK",4:"MBC-hdr",5:"MBC-cont",
+                      6:"data-hdr",7:"rate-1/2",8:"rate-3/4",9:"reserved9",10:"rate-1",
+                      13:"IdleFill"}
+            shown = [f"{tnames.get(i, f'тип{i}')}={v}" for i, v in enumerate(types) if v]
+            print("Типи бурстів: " + ("  ".join(shown) if shown else "(порожньо)"))
+            print("  -> навантаження SMS іде тим типом, що не data-hdr/CSBK (напр. rate-3/4).")
     else:
         print("unexpected reply (%d B): %s" % (len(r), r.hex()))
 

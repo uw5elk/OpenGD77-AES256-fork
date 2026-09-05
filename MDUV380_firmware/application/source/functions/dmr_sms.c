@@ -721,6 +721,7 @@ static volatile uint32_t s_diagBlkOk  DMR_AES_CCM; /* type-7 rate-1/2,   CRC OK 
 static volatile uint32_t s_diagBlkBad DMR_AES_CCM; /* type-7 rate-1/2,   CRC bad   */
 static volatile uint32_t s_diagPdu    DMR_AES_CCM; /* completed PDUs handed to main loop */
 static volatile uint32_t s_diagMsg    DMR_AES_CCM; /* successfully decrypted + stored    */
+static volatile uint32_t s_diagType[16] DMR_AES_CCM; /* гістограма rxDataType (0..15) усіх data-sync бурстів -- щоб бачити, яким типом стокова шле навантаження */
 /* snapshot of the last reassembled (encrypted) PDU, for offline inspection over USB */
 static uint8_t  s_diagLastPdu[120] DMR_AES_CCM;
 static volatile uint16_t s_diagLastPduLen DMR_AES_CCM;
@@ -753,6 +754,7 @@ int dmrSmsRxLastPdu(uint8_t *out, int maxlen)
 void dmrSmsRxDiagBurst(int rxDataType, int crcOk)
 {
 	s_diagData++;
+	s_diagType[rxDataType & 0x0F]++;   /* гістограма типів -- бачити тип блоків навантаження */
 	if (rxDataType == DT_DATA_HEADER) { if (crcOk) s_diagHdrOk++; else s_diagHdrBad++; }
 	else if (rxDataType == DT_RATE12_DATA) { if (crcOk) s_diagBlkOk++; else s_diagBlkBad++; }
 }
@@ -762,6 +764,13 @@ void dmrSmsRxDiagReset(void)
 	s_diagData = s_diagHdrOk = s_diagHdrBad = s_diagBlkOk = s_diagBlkBad = 0;
 	s_diagPdu = s_diagMsg = 0;
 	s_diagLastPduLen = 0;
+	for (int i = 0; i < 16; i++) { s_diagType[i] = 0; }
+}
+
+/* Гістограма rxDataType (16 значень) усіх прийнятих data-sync бурстів. */
+void dmrSmsRxDiagTypes(uint32_t out[16])
+{
+	for (int i = 0; i < 16; i++) { out[i] = s_diagType[i]; }
 }
 
 void dmrSmsRxDiag(uint32_t out[7])
@@ -982,6 +991,7 @@ static void runtimeReset(void)
 	s_cfgLoaded = 0;                 /* force the MSGC config to (re)load */
 	s_diagData = s_diagHdrOk = s_diagHdrBad = s_diagBlkOk = s_diagBlkBad = 0;
 	s_diagPdu = s_diagMsg = 0;
+	for (int i = 0; i < 16; i++) { s_diagType[i] = 0; }
 	s_rxReady = 0;                   /* don't process stray garbage as a PDU */
 	dmrSmsRxReset();                 /* clear the burst accumulator */
 }
