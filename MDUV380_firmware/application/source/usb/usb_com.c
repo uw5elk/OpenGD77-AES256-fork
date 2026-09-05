@@ -1900,6 +1900,26 @@ static void cpsHandleCommand(void)
 				replyLength = n + 3;
 				return; // bypass the trailing generic '-' reply
 			}
+		case 0x9C: // RCTL config (дозволи) через USB -- відновлення після прошивки без меню.
+			   //  [2]=0x00 -> лише прочитати; [2]=0x01 -> записати ([3]=enabled 0/1, [4]=allow-маска).
+			   //  Вмикання лишається СВІДОМОЮ дією оператора (не авто-замовчування) -- fail-closed
+			   //  збережено. Reply: [cmd, len_hi, len_lo, enabled, allowRaw]
+			{
+				if (com_requestbuffer[2] == 0x01)
+				{
+					dmrAesEnsureCustomDataRegion();   // магія регіону custom-data (як для AES/тем)
+					dmrRctlConfigSetAllow(com_requestbuffer[4]);
+					dmrRctlConfigSetEnabled(com_requestbuffer[3] ? 1 : 0);
+				}
+				usbComSendBuf[0] = com_requestbuffer[0];
+				usbComSendBuf[1] = 0;
+				usbComSendBuf[2] = 2;
+				usbComSendBuf[3] = (uint8_t)(dmrRctlConfigEnabled() ? 1 : 0);
+				usbComSendBuf[4] = (uint8_t)dmrRctlConfigAllowRaw();
+				hasToReply = true;
+				replyLength = 5;
+				return; // bypass the trailing generic '-' reply
+			}
 #endif
 #endif
 		case 0:

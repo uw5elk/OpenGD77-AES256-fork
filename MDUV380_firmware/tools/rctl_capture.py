@@ -99,6 +99,45 @@ def main():
             print("або форк її не приймає (перевір канал/адресу).")
         return
 
+    if "--rctl-status" in sys.argv or "--rctl-on" in sys.argv or "--rctl-off" in sys.argv:
+        # Дозволи RCTL (доступ + маска команд) прямо з ПК -- щоб після кожної прошивки
+        # відновлювати їх однією командою, не лазячи в меню рації.
+        #   --rctl-status          — лише показати поточний стан
+        #   --rctl-on [маска]      — увімкнути доступ; маска (hex/dec) бітів дозволених команд,
+        #                            за замовчуванням усі 4 (0x0F: Check|Monitor|Disable|Enable)
+        #   --rctl-off             — вимкнути доступ (рація перестає приймати команди)
+        write = None
+        if "--rctl-on" in sys.argv:
+            mask = 0x0F
+            i = sys.argv.index("--rctl-on")
+            if i + 1 < len(sys.argv) and not sys.argv[i + 1].startswith("-"):
+                mask = int(sys.argv[i + 1], 0) & 0x0F
+            write = (1, mask)
+        elif "--rctl-off" in sys.argv:
+            write = (0, 0)
+
+        if write is not None:
+            ser.write(bytes([ord("C"), 0x9C, 0x01, write[0], write[1]]))
+        else:
+            ser.write(bytes([ord("C"), 0x9C, 0x00]))
+        ser.flush(); time.sleep(0.3)
+        r = ser.read(16)
+        if len(r) < 5 or r[0] != ord("C"):
+            sys.exit(f"несподівана відповідь: {r.hex()}")
+        n = (r[1] << 8) | r[2]; body = r[3:3 + n]
+        if len(body) < 2:
+            sys.exit(f"замало даних: {body.hex()}")
+        enabled, allow = body[0], body[1]
+        bits = [("Radio Check", 0x01), ("Monitor", 0x02),
+                ("Disable (сон)", 0x04), ("Enable (пробудження)", 0x08)]
+        print(f"Доступ RCTL: {'УВІМКНЕНО' if enabled else 'вимкнено'}")
+        print("Дозволені команди:")
+        for nm, bit in bits:
+            print(f"  {nm}: {'так' if (allow & bit) else 'ні'}")
+        if write is not None:
+            print("\n→ записано у флеш рації (переживе перезавантаження; злітає лише при прошивці).")
+        return
+
     # За замовчуванням — викачати й надрукувати.
     ser.write(bytes([ord("C"), 0x99])); ser.flush(); time.sleep(0.3)
     r = ser.read(4096)
