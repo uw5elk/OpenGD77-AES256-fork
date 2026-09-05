@@ -29,6 +29,7 @@
 #include "user_interface/uiLocalisation.h"
 #include "user_interface/uiUtilities.h"
 #include "functions/dmr_rctl_tx.h"
+#include "functions/ticks.h"   // ticksTimer_t: реальний час замість лічби тіків
 #include "functions/codeplug.h"
 #include "crypto/dmr_aes.h"
 #include <string.h>
@@ -63,10 +64,22 @@
 
 enum { RCTL_ENTRY = 0, RCTL_PICK_CONTACT, RCTL_RESULT };
 
-// ~8 с очікування ACK і ~20 с показу фінального результату, при тій самій оцінці
-// частоти тіків (~20/с), що й MSG_RESULT у menuMessages.c (600 тіків ~= 30 с).
-#define RCTL_WAIT_TIMEOUT_TICKS   160
-#define RCTL_RESULT_HOLD_TICKS    400
+// ЧАС У МІЛІСЕКУНДАХ, а не в тіках.
+//
+// БУЛО (виправлено 2026-09-05): тут рахувались тіки меню з припущенням "~20 тіків/с".
+// Насправді головний цикл крутиться раз на МІЛІСЕКУНДУ (applicationMain.c: "ensure this
+// Task runs at 1ms intervals"), а menuSystemCallCurrentMenuTick() викликається щоразу
+// без жодного гейта. Тобто частота тіків ~1000/с, у 50 разів більша за оцінку:
+//   160 тіків -> 0,16 с замість 8 с очікування ACK;
+//   400 тіків -> 0,4 с замість 20 с показу результату.
+// З таймаутом 160 мс радіоперевірка НЕ МОГЛА працювати в принципі: стільки не встигає
+// пройти навіть один бік дата-виклику DMR, тож відповідь завжди спізнювалась і на екрані
+// був "Немає відповіді". Це, найпевніше, і чекало нас на першій же перевірці на залізі.
+//
+// Тепер час рахується ticksTimer_t -- реальними мілісекундами, як у решті прошивки.
+// Такий код не залежить від частоти головного циклу й не зламається, якщо її змінять.
+#define RCTL_WAIT_TIMEOUT_MS     8000U
+#define RCTL_RESULT_HOLD_MS     20000U
 
 // Персистентно між тіками, в CCM -- той самий idiom, що й menuMessages.c/menuAESKeys.c.
 static struct
@@ -80,7 +93,7 @@ static struct
 	uint32_t waitTargetId;
 	uint32_t ackGenAtSend;  // знімок dmrRctlAckGeneration() у момент надсилання
 	uint32_t ackAgeMsShown;
-	uint16_t ticksLeft;
+	ticksTimer_t holdTimer;   // очікування ACK або показ результату -- реальний час, не тіки
 } s_rc DMR_AES_CCM;
 
 static void updateEntry(void);
@@ -119,26 +132,18 @@ menuStatus_t menuRCTLRemote(uiEvent_t *ev, bool isFirstRun)
 				s_rc.acked = 1;
 				s_rc.waiting = 0;
 				s_rc.ackAgeMsShown = ageMs;
-				s_rc.ticksLeft = RCTL_RESULT_HOLD_TICKS;
+				ticksTimerStart(&s_rc.holdTimer, RCTL_RESULT_HOLD_MS);
 				updateResult();
 			}
-			else if (s_rc.ticksLeft > 0)
+			else if (ticksTimerHasExpired(&s_rc.holdTimer))
 			{
-				s_rc.ticksLeft--;
-				if (s_rc.ticksLeft == 0)
-				{
-					// Тайм-аут: відповіді не було. НЕ лишаємо ticksLeft на 0 тут -- інакше
-					// перевірка "автозакриття" нижче в цьому ж виклику одразу зітре щойно
-					// показаний RCTL_TIMEOUT, і користувач його просто не встигне побачити.
-					s_rc.waiting = 0;
-					s_rc.ticksLeft = RCTL_RESULT_HOLD_TICKS;
-					updateResult();
-				}
+				// Тайм-аут: відповіді не було. ОДРАЗУ перезапускаємо таймер на показ
+				// результату -- інакше перевірка "автозакриття" нижче в цьому ж виклику
+				// зітре щойно показаний RCTL_TIMEOUT, і його не встигнуть побачити.
+				s_rc.waiting = 0;
+				ticksTimerStart(&s_rc.holdTimer, RCTL_RESULT_HOLD_MS);
+				updateResult();
 			}
-		}
-		else if (s_rc.ticksLeft > 0)
-		{
-			s_rc.ticksLeft--;
 		}
 
 		if (ev->hasEvent && (ev->events & KEY_EVENT))
@@ -158,7 +163,7 @@ menuStatus_t menuRCTLRemote(uiEvent_t *ev, bool isFirstRun)
 			return exitCode;
 		}
 
-		if ((!s_rc.waiting) && (s_rc.ticksLeft == 0))
+		if ((!s_rc.waiting) && ticksTimerHasExpired(&s_rc.holdTimer))
 		{
 			gotoEntry();
 		}
@@ -203,7 +208,7 @@ static void doCheck(void)
 	s_rc.sendResult = (int8_t)dmrRctlRequestCheck(dst);
 	s_rc.acked = 0;
 	s_rc.waiting = (s_rc.sendResult == 0) ? 1 : 0;
-	s_rc.ticksLeft = s_rc.waiting ? RCTL_WAIT_TIMEOUT_TICKS : RCTL_RESULT_HOLD_TICKS;
+	ticksTimerStart(&s_rc.holdTimer, (s_rc.waiting ? RCTL_WAIT_TIMEOUT_MS : RCTL_RESULT_HOLD_MS));
 	s_rc.view = RCTL_RESULT;
 	updateResult();
 }

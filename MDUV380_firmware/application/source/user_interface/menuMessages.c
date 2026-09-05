@@ -31,6 +31,7 @@
 #include "user_interface/uiUtilities.h"
 #include "functions/trx.h"
 #include "functions/dmr_sms.h"
+#include "functions/ticks.h"   // ticksTimer_t: реальний час замість лічби тіків
 #include "functions/codeplug.h"   /* Contact List browsing for the recipient picker */
 #include "crypto/dmr_aes.h"
 #include "io/keyboard.h"
@@ -108,7 +109,8 @@ static struct
 	uint8_t  rcptPreset;    // 1 = rcpt/rcptGroup already set by Reply/Resend; composeEvent's
 	                        // GREEN must not clobber it with the usual default-recipient prefill
 	int8_t   result;        // dmrSmsSend() return for the result screen
-	uint16_t resultTicks;
+	ticksTimer_t resultTimer;    // скільки ще показувати результат -- РЕАЛЬНИЙ час
+	ticksTimer_t resultGuard;    // поки не сплив -- клавіші не закривають екран (див. doSend)
 } s_msg DMR_AES_CCM;
 
 static void homeUpdate(void);
@@ -151,8 +153,14 @@ menuStatus_t menuMessages(uiEvent_t *ev, bool isFirstRun)
 
 	if (s_msg.view == MSG_RESULT)
 	{
-		if (s_msg.resultTicks) { s_msg.resultTicks--; }
-		if ((s_msg.resultTicks == 0) || (ev->hasEvent && (ev->events & KEY_EVENT)))
+		// Клавіші ігноруються, поки не сплив короткий "запобіжник": та сама GREEN, якою
+		// надіслали повідомлення, інакше могла б закрити екран результату ще до того, як
+		// його встигнуть прочитати (подія відпускання/довгого натискання приходить уже
+		// після переходу на цей екран).
+		bool keyMayClose = ticksTimerHasExpired(&s_msg.resultGuard);
+
+		if (ticksTimerHasExpired(&s_msg.resultTimer) ||
+				(keyMayClose && ev->hasEvent && (ev->events & KEY_EVENT)))
 		{
 			gotoHome();
 			return (MENU_STATUS_LIST_TYPE | MENU_STATUS_SUCCESS);
@@ -606,7 +614,12 @@ static void doSend(void)
 	if (dst == 0) { return; }
 	s_msg.result = (int8_t)dmrSmsSend(s_msg.compose, dst, s_msg.rcptGroup ? 1 : 0, 0);
 	s_msg.view = MSG_RESULT;
-	s_msg.resultTicks = 600;    // persist (~30 s) so the result/code is readable; any key dismisses
+	// БУЛО: resultTicks = 600 з коментарем "~30 s", бо припускалось ~20 тіків/с. Насправді
+	// головний цикл крутиться раз на МІЛІСЕКУНДУ і кличе тік меню щоразу (applicationMain.c),
+	// тож виходило 600 мс -- звідси й скарга на "дуже короткі спливаючі вікна".
+	// Тепер це реальний час і від частоти циклу не залежить.
+	ticksTimerStart(&s_msg.resultTimer, 30000U);
+	ticksTimerStart(&s_msg.resultGuard, 500U);
 	resultUpdate();
 }
 
