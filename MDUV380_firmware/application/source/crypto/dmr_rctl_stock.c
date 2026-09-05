@@ -1,6 +1,7 @@
 /* dmr_rctl_stock.c — див. dmr_rctl_stock.h. Чиста побудова/розбір стокових CSBK-команд
  * керування TYT. Без STM32-залежностей, тестується на хості. */
 #include "crypto/dmr_rctl_stock.h"
+#include "crypto/dmr_rctl_pdu.h"   /* DMR_RCTL_ALLOW_* біти дозволів */
 #include <string.h>
 
 /* CRC-CCITT "d" (poly 0x1021, init 0, ^0xFFFF) над len байтами -- той самий, що
@@ -94,4 +95,26 @@ int dmr_rctl_stock_parse(const uint8_t in12[12], dmr_rctl_stock_cmd_t *cmd, uint
 		}
 	}
 	return 0;
+}
+
+/* Біт дозволу для кожної команди. Enable=revive, Disable=stun -- мітки наших дозволів
+ * історичні, тож мапимо явно, щоб не сплутати. */
+static uint8_t allowBitFor(dmr_rctl_stock_cmd_t cmd)
+{
+	switch (cmd)
+	{
+		case DMR_RCTL_STOCK_CHECK:   return DMR_RCTL_ALLOW_CHECK;
+		case DMR_RCTL_STOCK_MONITOR: return DMR_RCTL_ALLOW_MONITOR;
+		case DMR_RCTL_STOCK_ENABLE:  return DMR_RCTL_ALLOW_REVIVE;
+		case DMR_RCTL_STOCK_DISABLE: return DMR_RCTL_ALLOW_STUN;
+		default:                     return 0;   /* невідома -> fail-closed */
+	}
+}
+
+int dmr_rctl_stock_should_act(dmr_rctl_stock_cmd_t cmd, uint32_t dst, uint32_t ourId, uint8_t allowMask)
+{
+	if (dst == 0 || dst != ourId) { return 0; }   /* не нам (індивідуальний виклик, без All-Call) */
+	uint8_t bit = allowBitFor(cmd);
+	if (bit == 0) { return 0; }                    /* невідома команда -> заборонено */
+	return ((allowMask & bit) != 0) ? 1 : 0;
 }

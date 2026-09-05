@@ -7,6 +7,7 @@
  *       -o t test_dmr_rctl_stock.c ../application/source/crypto/dmr_rctl_stock.c && ./t
  */
 #include "crypto/dmr_rctl_stock.h"
+#include "crypto/dmr_rctl_pdu.h"   /* DMR_RCTL_ALLOW_* */
 #include <stdio.h>
 #include <string.h>
 
@@ -85,6 +86,23 @@ int main(void)
 		/* перший бургст — преамбула (не команда) з лічильником = PREAMBLES */
 		CHECK(dmr_rctl_stock_parse(q + 1, NULL, NULL, NULL) == 0 && q[1] == 0xBD && q[4] == DMR_RCTL_STOCK_PREAMBLES,
 		      "перший бургст = преамбула, лічильник = PREAMBLES");
+	}
+
+	/* --- гейт прийому (форк як ціль): dst==ourId + дозвіл --- */
+	{
+		const uint32_t US = 2550313u, OTHER = 2550333u;
+		const uint8_t ALL = DMR_RCTL_ALLOW_CHECK | DMR_RCTL_ALLOW_MONITOR |
+		                    DMR_RCTL_ALLOW_STUN | DMR_RCTL_ALLOW_REVIVE;
+
+		CHECK(dmr_rctl_stock_should_act(DMR_RCTL_STOCK_CHECK, US, US, ALL) == 1, "Check нам+дозволено -> діяти");
+		CHECK(dmr_rctl_stock_should_act(DMR_RCTL_STOCK_CHECK, OTHER, US, ALL) == 0, "Check не нам -> ігнор");
+		CHECK(dmr_rctl_stock_should_act(DMR_RCTL_STOCK_CHECK, US, US, 0) == 0, "Check без дозволу -> ігнор");
+		/* точкові дозволи: лише свій біт відмикає свою команду */
+		CHECK(dmr_rctl_stock_should_act(DMR_RCTL_STOCK_DISABLE, US, US, DMR_RCTL_ALLOW_STUN) == 1, "Disable з ALLOW_STUN -> діяти");
+		CHECK(dmr_rctl_stock_should_act(DMR_RCTL_STOCK_DISABLE, US, US, DMR_RCTL_ALLOW_CHECK) == 0, "Disable лише з ALLOW_CHECK -> ігнор");
+		CHECK(dmr_rctl_stock_should_act(DMR_RCTL_STOCK_ENABLE, US, US, DMR_RCTL_ALLOW_REVIVE) == 1, "Enable з ALLOW_REVIVE -> діяти");
+		CHECK(dmr_rctl_stock_should_act(DMR_RCTL_STOCK_MONITOR, US, US, DMR_RCTL_ALLOW_MONITOR) == 1, "Monitor з ALLOW_MONITOR -> діяти");
+		CHECK(dmr_rctl_stock_should_act(DMR_RCTL_STOCK_CHECK, 0, US, ALL) == 0, "dst=0 -> ігнор");
 	}
 
 	printf(fails ? "\nПРОВАЛЕНО: %d\n" : "\nУсі тести пройдено\n", fails);

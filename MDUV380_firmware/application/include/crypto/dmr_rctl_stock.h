@@ -55,4 +55,13 @@ void dmr_rctl_stock_preamble(uint32_t dst, uint32_t src, uint8_t countdown, uint
  * Преамбули (0xBD) НЕ вважаються командою — повертає 0. */
 int dmr_rctl_stock_parse(const uint8_t in12[12], dmr_rctl_stock_cmd_t *cmd, uint32_t *src, uint32_t *dst);
 
+/* Чи має ЦЯ рація виконати команду cmd, адресовану на dst, якщо наш DMR ID = ourId, а
+ * маска дозволів (DMR_RCTL_ALLOW_* із dmr_rctl_pdu.h) = allowMask. Чиста функція, щоб
+ * гейт прийому був хостово-тестований окремо від радійної частини:
+ *   - dst має точно збігатися з ourId (RCTL завжди індивідуальний виклик, без All-Call);
+ *   - для команди має бути виставлений відповідний біт дозволу:
+ *       Check->ALLOW_CHECK, Monitor->ALLOW_MONITOR, Enable->ALLOW_REVIVE, Disable->ALLOW_STUN.
+ * Повертає 1 = виконувати, 0 = ігнорувати (не нам або не дозволено). Fail-closed. */
+int dmr_rctl_stock_should_act(dmr_rctl_stock_cmd_t cmd, uint32_t dst, uint32_t ourId, uint8_t allowMask);
+
 #endif /* DMR_RCTL_STOCK_H */
