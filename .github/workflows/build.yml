@@ -44,6 +44,10 @@ jobs:
         run: python3 MDUV380_firmware/tools/check_string_encoding.py
       # Хостові тести лежали в репозиторії давно, але в CI не потрапляли, тож фактично
       # не ганялися. Тепер ганяються.
+      # Референс стокового формату команд керування: self-test має відтворювати
+      # реальні захвати зі стокової TYT байт-у-байт (див. RCTL_COMPAT.md).
+      - name: Референс стокових RCTL-команд
+        run: python3 MDUV380_firmware/tools/rctl_stock.py
       - name: Хостові тести
         run: ./MDUV380_firmware/tests/run_tests.sh
 
