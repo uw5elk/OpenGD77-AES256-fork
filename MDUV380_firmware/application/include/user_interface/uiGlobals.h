@@ -361,7 +361,10 @@ typedef enum
 	// Ретранслятор не відповів на серію запитів пробудження (WAKING_MODE_FAILED).
 	// Раніше цей стан показувався як TXSTOP_TIMEOUT, тобто тим самим написом, що й
 	// спрацювання таймера передачі -- дві зовсім різні причини під одним словом.
-	TXSTOP_REPEATER_NO_RESPONSE
+	TXSTOP_REPEATER_NO_RESPONSE,
+	// Рацію дистанційно заблоковано (RCTL Disable/stun). Передача заборонена, доки
+	// не прийде Enable по ефіру або зняття кабелем (rctl_capture.py --unlock).
+	TXSTOP_RCTL_INHIBITED
 } txTerminationReason_t;
 
 typedef enum

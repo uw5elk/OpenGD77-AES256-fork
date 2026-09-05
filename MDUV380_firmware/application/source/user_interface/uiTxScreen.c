@@ -27,6 +27,7 @@
  */
 #include "hardware/HR-C6000.h"
 #include "functions/sound.h"
+#include "functions/dmr_rctl_cfg.h"   // dmrRctlIsInhibited (блок передачі при stun)
 #include "user_interface/menuSystem.h"
 #include "user_interface/uiUtilities.h"
 #include "user_interface/uiLocalisation.h"
@@ -45,6 +46,9 @@
 #define TXERR_RPT_LINE1     "Repeater"
 #define TXERR_RPT_LINE2     "not responding"
 #define TXERR_RPT_HINT      "out of range?"
+#define TXERR_INHIBIT_LINE1 "INHIBITED"
+#define TXERR_INHIBIT_LINE2 "remotely"
+#define TXERR_INHIBIT_HINT  "Enable or cable"
 #endif
 
 static void updateScreen(void);
@@ -134,6 +138,17 @@ menuStatus_t menuTxScreen(uiEvent_t *ev, bool isFirstRun)
 			updateScreen();
 		}
 
+#if defined(ENABLE_DMR_DATA) && defined(ENABLE_AES)
+		// Дистанційне блокування (RCTL Disable/stun): передача заборонена повністю, доки
+		// не прийде Enable по ефіру або зняття кабелем. Перевіряємо ПЕРШИМ -- заблокована
+		// рація не має передавати навіть на дозволеному каналі/діапазоні.
+		if (dmrRctlIsInhibited())
+		{
+			menuTxScreenHandleTxTermination(ev, TXSTOP_RCTL_INHIBITED);
+			transmitError = true;
+		}
+		else
+#endif
 		if ((codeplugChannelGetFlag(currentChannelData, CHANNEL_FLAG_RX_ONLY) == 0) && ((nonVolatileSettings.txFreqLimited == BAND_LIMITS_NONE) || trxCheckFrequencyInAmateurBand(currentChannelData->txFreq)
 #if defined(PLATFORM_MD9600)
 				|| (codeplugChannelGetFlag(currentChannelData, CHANNEL_FLAG_OUT_OF_BAND) != 0)
@@ -760,6 +775,26 @@ void menuTxScreenHandleTxTermination(uiEvent_t *ev, txTerminationReason_t reason
 #endif
 
 			txErrorHoldMs = TX_ERROR_HOLD_DEFAULT_MS;
+
+			if (menuSystemGetCurrentMenuNumber() == UI_TX_SCREEN)
+			{
+				mto = ev->time;
+			}
+			break;
+
+		case TXSTOP_RCTL_INHIBITED:
+#if !defined(PLATFORM_GD77S)
+			// Та сама верстка, що й у відмови ретранслятора: заголовок FONT_SIZE_4,
+			// два рядки FONT_SIZE_3, підказка FONT_SIZE_1 -- як зняти блокування.
+			displayThemeApply(THEME_ITEM_FG_ERROR_NOTIFICATION, THEME_ITEM_BG_NOTIFICATION);
+			displayPrintCentered(4 + (DISPLAY_V_EXTRA_PIXELS / 4), currentLanguage->error, FONT_SIZE_4);
+			displayPrintCentered(60, TXERR_INHIBIT_LINE1, FONT_SIZE_3);
+			displayPrintCentered(78, TXERR_INHIBIT_LINE2, FONT_SIZE_3);
+			displayPrintCentered(102, TXERR_INHIBIT_HINT, FONT_SIZE_1);
+#endif
+			voicePromptsAppendLanguageString(currentLanguage->error);
+
+			txErrorHoldMs = TX_ERROR_HOLD_REPEATER_MS;
 
 			if (menuSystemGetCurrentMenuNumber() == UI_TX_SCREEN)
 			{

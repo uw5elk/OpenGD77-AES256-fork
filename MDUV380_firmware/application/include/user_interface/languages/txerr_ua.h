@@ -20,4 +20,11 @@
 #define TXERR_RPT_LINE2          "не відповідає"
 #define TXERR_RPT_HINT           "поза зоною дії?"
 
+
+/* Рацію дистанційно заблоковано (RCTL Disable/stun). Передача заборонена, доки
+ * не прийде Enable по ефіру або зняття кабелем (rctl_capture.py --unlock). */
+#define TXERR_INHIBIT_LINE1      "ЗАБЛОКОВАНО"
+#define TXERR_INHIBIT_LINE2      "дистанційно"
+#define TXERR_INHIBIT_HINT       "Enable або кабель"
+
 #endif /* USER_INTERFACE_LANGUAGES_TXERR_UA_H_ */
