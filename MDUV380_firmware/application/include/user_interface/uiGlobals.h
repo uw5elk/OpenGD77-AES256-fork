@@ -357,7 +357,11 @@ typedef enum
 {
 	TXSTOP_TIMEOUT,
 	TXSTOP_RX_ONLY,
-	TXSTOP_OUT_OF_BAND
+	TXSTOP_OUT_OF_BAND,
+	// Ретранслятор не відповів на серію запитів пробудження (WAKING_MODE_FAILED).
+	// Раніше цей стан показувався як TXSTOP_TIMEOUT, тобто тим самим написом, що й
+	// спрацювання таймера передачі -- дві зовсім різні причини під одним словом.
+	TXSTOP_REPEATER_NO_RESPONSE
 } txTerminationReason_t;
 
 typedef enum

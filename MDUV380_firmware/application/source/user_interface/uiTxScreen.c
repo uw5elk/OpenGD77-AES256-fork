@@ -39,6 +39,14 @@
 #include "functions/aprs.h"
 #endif
 
+#if defined(LANGUAGE_BUILD_UKRAINIAN)
+#include "user_interface/languages/txerr_ua.h"
+#else
+#define TXERR_RPT_LINE1     "Repeater"
+#define TXERR_RPT_LINE2     "not responding"
+#define TXERR_RPT_HINT      "out of range?"
+#endif
+
 static void updateScreen(void);
 static void handleEvent(uiEvent_t *ev);
 
@@ -50,6 +58,13 @@ static bool isShowingLastHeard;
 static bool startBeepPlayed;
 static uint32_t m = 0, micm = 0, mto = 0;
 static bool keepScreenShownOnError = false;
+// Скільки тримати екран невдалої передачі. Було жорстко 500 мс на всі випадки, і саме
+// через це напис "поза зоною ретранслятора" встигав лише блимнути. Спрацювання таймера
+// передачі (TOT) лишається на 500 мс: там оператор і так знає, що сталось -- він щойно
+// говорив хвилинами й чув відлік бипами. Несподівана відмова заслуговує більшого.
+#define TX_ERROR_HOLD_DEFAULT_MS      500U
+#define TX_ERROR_HOLD_REPEATER_MS    3000U
+static uint32_t txErrorHoldMs = TX_ERROR_HOLD_DEFAULT_MS;
 static bool pttWasReleased = false;
 static bool isTransmittingTone = false;
 static bool isTransmittingDTMF = false;
@@ -79,6 +94,7 @@ menuStatus_t menuTxScreen(uiEvent_t *ev, bool isFirstRun)
 		isTransmittingDTMF = false;
 		isShowingLastHeard = false;
 		keepScreenShownOnError = false;
+		txErrorHoldMs = TX_ERROR_HOLD_DEFAULT_MS;
 		timeInSeconds = 0;
 		pttWasReleased = false;
 		xmitErrorTimer = 0;
@@ -320,7 +336,7 @@ menuStatus_t menuTxScreen(uiEvent_t *ev, bool isFirstRun)
 		// screen won't be visible at all.
 		if (((currentChannelData->tot != 0) && (timeInSeconds == 0)) || keepScreenShownOnError)
 		{
-			// Wait the voice ends, then count-down 500ms;
+			// Wait the voice ends, then count-down txErrorHoldMs;
 			if (nonVolatileSettings.audioPromptMode >= AUDIO_PROMPT_MODE_VOICE_THRESHOLD)
 			{
 				if (voicePromptsIsPlaying())
@@ -330,7 +346,10 @@ menuStatus_t menuTxScreen(uiEvent_t *ev, bool isFirstRun)
 				}
 			}
 
-			if ((ev->time - mto) < 500)
+			// Натискання будь-якої клавіші прибирає екран достроково. Без цього довше
+			// утримання перетворилось би на затримку перед повторним натисканням PTT --
+			// у полі це гірше за короткий напис.
+			if (((ev->time - mto) < txErrorHoldMs) && ((ev->events & KEY_EVENT) == 0))
 			{
 				return MENU_STATUS_SUCCESS;
 			}
@@ -368,7 +387,10 @@ menuStatus_t menuTxScreen(uiEvent_t *ev, bool isFirstRun)
 			if ((HRC6000GetIsWakingState() == WAKING_MODE_FAILED) && trxTransmissionEnabled)
 			{
 				trxTransmissionEnabled = false;
-				menuTxScreenHandleTxTermination(ev, TXSTOP_TIMEOUT);
+				// Це НЕ таймер передачі: ретранслятор не відповів на серію запитів
+				// пробудження (codeplugGetRepeaterWakeAttempts() спроб по 600 мс).
+				// Найчастіша причина -- рація поза зоною дії ретранслятора.
+				menuTxScreenHandleTxTermination(ev, TXSTOP_REPEATER_NO_RESPONSE);
 				keepScreenShownOnError = true;
 			}
 		}
@@ -704,6 +726,26 @@ void menuTxScreenHandleTxTermination(uiEvent_t *ev, txTerminationReason_t reason
 			xmitErrorTimer = (100 * 10U);
 			break;
 
+		case TXSTOP_REPEATER_NO_RESPONSE:
+#if !defined(PLATFORM_GD77S)
+			// Верстка в межах рамки (4,4)-(156,126): заголовок FONT_SIZE_4 (16x32),
+			// два рядки FONT_SIZE_3 (8x16) і підказка FONT_SIZE_1 (6x8).
+			displayThemeApply(THEME_ITEM_FG_WARNING_NOTIFICATION, THEME_ITEM_BG_NOTIFICATION);
+			displayPrintCentered(4 + (DISPLAY_V_EXTRA_PIXELS / 4), currentLanguage->error, FONT_SIZE_4);
+			displayPrintCentered(60, TXERR_RPT_LINE1, FONT_SIZE_3);
+			displayPrintCentered(78, TXERR_RPT_LINE2, FONT_SIZE_3);
+			displayPrintCentered(102, TXERR_RPT_HINT, FONT_SIZE_1);
+#endif
+			voicePromptsAppendLanguageString(currentLanguage->error);
+
+			txErrorHoldMs = TX_ERROR_HOLD_REPEATER_MS;
+
+			if (menuSystemGetCurrentMenuNumber() == UI_TX_SCREEN)
+			{
+				mto = ev->time;
+			}
+			break;
+
 		case TXSTOP_TIMEOUT:
 #if !defined(PLATFORM_GD77S)
 			displayThemeApply(THEME_ITEM_FG_WARNING_NOTIFICATION, THEME_ITEM_BG_NOTIFICATION);
@@ -716,6 +758,8 @@ void menuTxScreenHandleTxTermination(uiEvent_t *ev, txTerminationReason_t reason
 #if defined(PLATFORM_GD77) || defined(PLATFORM_GD77S) || defined(PLATFORM_DM1801) || defined(PLATFORM_DM1801A) || defined(PLATFORM_RD5R)
 			voicePromptsAppendLanguageString(currentLanguage->timeout);
 #endif
+
+			txErrorHoldMs = TX_ERROR_HOLD_DEFAULT_MS;
 
 			if (menuSystemGetCurrentMenuNumber() == UI_TX_SCREEN)
 			{
@@ -730,6 +774,8 @@ void menuTxScreenHandleTxTermination(uiEvent_t *ev, txTerminationReason_t reason
 	displayLightOverrideTimeout(-1);
 #endif
 
+	// Відмова ретранслятора звучить як помилка, а не як спрацювання таймера: це різні
+	// події, і на слух вони теж мають різнитись -- оператор часто дивиться не на екран.
 	if ((nonVolatileSettings.audioPromptMode < AUDIO_PROMPT_MODE_VOICE_THRESHOLD) || (reason == TXSTOP_TIMEOUT))
 	{
 		soundSetMelody((reason == TXSTOP_TIMEOUT) ? MELODY_TX_TIMEOUT_BEEP : MELODY_ERROR_BEEP);
