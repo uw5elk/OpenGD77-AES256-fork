@@ -54,6 +54,7 @@
 #include "functions/rxPowerSaving.h"
 #include "functions/dmr_sms.h"
 #include "functions/dmr_rctl_tx.h"
+#include "functions/dmr_rctl_cfg.h"   // dmrRctlIsInhibited (повний stun: сон рації)
 #if defined(ENABLE_AES)
 // dmr_aes_hook.h уже підключено вище; тут лише тексти сповіщення.
 #if defined(LANGUAGE_BUILD_UKRAINIAN)
@@ -339,6 +340,10 @@ void applicationMainTask(void)
 	int rotary_event = EVENT_ROTARY_NONE;
 	int function_event = 0;
 	bool keyOrButtonChanged = false;
+#if defined(ENABLE_DMR_DATA) && defined(ENABLE_AES)
+	bool rctlStunned = false;         // рація зараз у дистанційному сні (RCTL Disable)
+	uint32_t rctlStunBlankMs = 0;     // коли востаннє перемальовували порожній екран
+#endif
 	int16_t *quickkeyPushedMenuMelody = NULL;
 	int keyFunction;
 	bool wasRestoringDefaultsettings = false;
@@ -646,6 +651,60 @@ void applicationMainTask(void)
 
 			(void) txInhibitCheckAndWarn();
 		}
+
+#if defined(ENABLE_DMR_DATA) && defined(ENABLE_AES)
+		// Повний дистанційний сон (RCTL Disable/stun). Рація має виглядати й звучати
+		// вимкненою: погашений екран і підсвітка, тиша, клавіші не реагують. Але приймач
+		// (ISR HR-C6000) і dmrRctlTick() нижче ЛИШАЮТЬСЯ живими -- саме вони приймуть Enable
+		// по ефіру й розбудять рацію. Тобто "вимкнена" лише зовні; насправді слухає ефір.
+		// Аварійний вихід -- кабель (rctl_capture.py --unlock), перевірений на кроці 1.
+		{
+			// Не входимо в сон посеред передачі -- інакше пропустили б штатне завершення TX
+			// (екран передачі) і передавач міг би лишитись увімкненим. Нову передачу
+			// заблокованій рації й так не дає почати гейт у uiTxScreen (крок 2), тож
+			// лишається тільки дочекатись, поки відпустять PTT уже початої передачі.
+			bool stunNow = dmrRctlIsInhibited() && !trxTransmissionEnabled && !trxIsTransmitting;
+
+			if (stunNow)
+			{
+				// Ковтаємо ВЕСЬ ввід: жодних дій, бипів, навігації, підсвітки від клавіш.
+				keys.key = 0; keys.event = 0; key_event = EVENT_KEY_NONE;
+				buttons = BUTTON_NONE; button_event = EVENT_BUTTON_NONE;
+				rotary = 0; rotary_event = EVENT_ROTARY_NONE;
+
+				if (!rctlStunned)
+				{
+					// Вхід у сон -- один раз: замовкнути.
+					voicePromptsTerminateNoTail();
+					soundStopMelody();
+					rctlStunned = true;
+					rctlStunBlankMs = 0;   // форсуємо негайний перший перемалюнок нижче
+				}
+
+				// Щотік (дешево): глушимо RX-аудіо й тримаємо підсвітку вимкненою.
+				audioAmpDisable(AUDIO_AMP_CHANNEL_RF);
+				audioAmpMute(true);
+				displayEnableBacklight(false, 0);
+
+				// Порожній екран малюємо не щотік (це SPI на весь кадр), а ~10 Гц --
+				// достатньо, щоб стерти будь-який випадковий надпис, не забиваючи шину.
+				if ((rctlStunBlankMs == 0) || ((ticksGetMillis() - rctlStunBlankMs) >= 100U))
+				{
+					displayClearBuf();
+					displayRender();
+					rctlStunBlankMs = ticksGetMillis();
+				}
+			}
+			else if (rctlStunned)
+			{
+				// Прокидання (Enable по ефіру АБО кабель): повернути звук, підсвітку й екран.
+				rctlStunned = false;
+				audioAmpMute(false);
+				displayEnableBacklight(true, -1);
+				menuSystemSetCurrentMenu(menuSystemGetCurrentMenuNumber()); // повний перемалюнок
+			}
+		}
+#endif
 
 		// hack to allow SK1 + Up / Down to be Left / Right
 #if ! (defined(PLATFORM_RT84_DM1701) || defined(PLATFORM_MD2017)) // top side button IS orange
@@ -1353,7 +1412,14 @@ void applicationMainTask(void)
 
 		{
 			SCANPROF_START(tMenuTick);
-			menuSystemCallCurrentMenuTick(&ev);
+#if defined(ENABLE_DMR_DATA) && defined(ENABLE_AES)
+			// У сні (RCTL Disable) звичайний UI не малюємо -- екран лишається погашеним.
+			// dmrRctlTick() нижче все одно виконується й прийме Enable, щоб розбудити.
+			if (!rctlStunned)
+#endif
+			{
+				menuSystemCallCurrentMenuTick(&ev);
+			}
 			SCANPROF_END(SCANPROF_MENUTICK, tMenuTick);
 		}
 
@@ -1399,6 +1465,10 @@ void applicationMainTask(void)
 #if !defined(PLATFORM_GD77S)
 		// APO checkings
 		apoTick((keyOrButtonChanged || (function_event != NO_EVENT) ||
+#if defined(ENABLE_DMR_DATA) && defined(ENABLE_AES)
+				rctlStunned ||   // у сні не даємо авто-вимкненню спрацювати: рація має лишатись
+						         // онлайн, щоб прийняти Enable по ефіру й прокинутись
+#endif
 				(settingsIsOptionBitSet(BIT_APO_WITH_RF) ? (audioAmpGetStatus() & AUDIO_AMP_CHANNEL_RF) : false)));
 
 		// Autolock trigger/reset
