@@ -158,6 +158,32 @@ static void gate_load(void)
 	s_gateLoaded = 1;
 }
 
+/* ==== Стан "рація заблокована" (stun/revive), у флеш-блоці RCTS ====
+ * Використовуємо байт reserved блоку стану як бітове поле: bit0 = inhibited. Формат блоку
+ * не міняється (reserved був 0), тож старі блоки читаються як "не заблоковано". Стан у
+ * флеші -- бо заблокована рація має лишатись заблокованою й після перезавантаження (у цьому
+ * й сенс stun). Знімається командою Enable по ефіру АБО кабелем (recovery), тож "назавжди"
+ * закрити по ефіру не можна. */
+#define DMR_RCTL_STATE_INHIBIT_BIT  0x01
+
+int dmrRctlIsInhibited(void)
+{
+	state_ensure();
+	return (s_state.reserved & DMR_RCTL_STATE_INHIBIT_BIT) ? 1 : 0;
+}
+
+int dmrRctlSetInhibited(int on)
+{
+	state_ensure();
+	uint8_t want = on ? DMR_RCTL_STATE_INHIBIT_BIT : 0;
+	if ((s_state.reserved & DMR_RCTL_STATE_INHIBIT_BIT) == want)
+	{
+		return 1;   /* уже в потрібному стані -- зайвий запис у флеш не робимо */
+	}
+	s_state.reserved = (uint8_t)((s_state.reserved & ~DMR_RCTL_STATE_INHIBIT_BIT) | want);
+	return state_save();
+}
+
 int dmrRctlGatePersist(void)
 {
 	if (!s_gateLoaded) { return 0; }

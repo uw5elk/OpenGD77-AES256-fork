@@ -91,6 +91,7 @@ enum CPS_ACCESS_AREA
 #include "functions/dmr_sms.h"
 #include "functions/dmr_rctl_cap.h"
 #include "functions/dmr_rctl_tx.h"   // dmrRctlStockRxDiag/Reset (лічильники прийому стокових команд)
+#include "functions/dmr_rctl_cfg.h"  // dmrRctlSetInhibited (кабельне зняття блокування -- recovery)
 static void handleCPSRequest(void);
 
 volatile int com_request = 0;
@@ -1876,14 +1877,16 @@ static void cpsHandleCommand(void)
 			hasToReply = true;
 			replyLength = 1;
 			break;
-		case 0x9B: // DIAG: лічильники прийому СТОКОВИХ команд (форк як ціль). [2]=1 -> скинути.
-			   //  Reply: [cmd, len_hi, len_lo, 6x uint32 LE: seen,lastSrc,Check,Monitor,Enable,Disable]
+		case 0x9B: // DIAG: лічильники прийому СТОКОВИХ команд (форк як ціль).
+			   //  [2] біт0=1 -> скинути лічильники; біт1=1 -> зняти блокування кабелем (recovery).
+			   //  Reply: [cmd, len_hi, len_lo, 7x uint32 LE: seen,lastSrc,Check,Monitor,Enable,Disable,inhibited]
 			{
 				if (com_requestbuffer[2] & 0x01) { dmrRctlStockRxDiagReset(); }
-				uint32_t d[6];
+				if (com_requestbuffer[2] & 0x02) { dmrRctlSetInhibited(0); } // кабельне розблокування
+				uint32_t d[7];
 				dmrRctlStockRxDiag(d);
 				int n = 0;
-				for (int i = 0; i < 6; i++)
+				for (int i = 0; i < 7; i++)
 				{
 					usbComSendBuf[3 + n++] = (uint8_t)(d[i]);
 					usbComSendBuf[3 + n++] = (uint8_t)(d[i] >> 8);

@@ -242,7 +242,7 @@ void dmrRctlStockRxBurst(const uint8_t *p12)
 	s_stockPending = 1;
 }
 
-void dmrRctlStockRxDiag(uint32_t out[6])
+void dmrRctlStockRxDiag(uint32_t out[7])
 {
 	out[0] = s_stockSeen;
 	out[1] = s_stockLastSrc;
@@ -250,6 +250,7 @@ void dmrRctlStockRxDiag(uint32_t out[6])
 	out[3] = s_stockActed[DMR_RCTL_STOCK_MONITOR];
 	out[4] = s_stockActed[DMR_RCTL_STOCK_ENABLE];
 	out[5] = s_stockActed[DMR_RCTL_STOCK_DISABLE];
+	out[6] = (uint32_t)dmrRctlIsInhibited();   /* поточний стан блокування (переживає ребут) */
 }
 
 void dmrRctlStockRxDiagReset(void)
@@ -281,8 +282,20 @@ static void dmrRctlStockProcessPending(void)
 		{
 			s_stockActed[cmd]++;
 		}
-		/* TODO(інкремент 2+): виконати дію -- Check: ACK; Enable/Disable: блокування;
-		 * Monitor: тихий мікрофон. Кожну додамо окремо з перевіркою зі стоковою. */
+
+		/* Дії (крок 2.4). Поки реалізовано лише блокування -- воно не потребує ACK і
+		 * повністю тестується. Check(ACK)/Monitor(мік) -- наступні інкременти. */
+		switch (cmd)
+		{
+			case DMR_RCTL_STOCK_DISABLE:
+				dmrRctlSetInhibited(1);   /* заблокувати (переживає перезавантаження) */
+				break;
+			case DMR_RCTL_STOCK_ENABLE:
+				dmrRctlSetInhibited(0);   /* розблокувати */
+				break;
+			default:
+				break;                    /* Check/Monitor -- поки лише лічимо */
+		}
 	}
 }
 

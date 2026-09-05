@@ -69,22 +69,31 @@ def main():
         print("кільце очищено")
         return
 
-    if "--rxdiag" in sys.argv:
-        # Лічильники прийому СТОКОВИХ команд (форк як ціль). --rxdiag-reset щоб обнулити.
-        reset = 1 if "--rxdiag-reset" in sys.argv else 0
-        ser.write(bytes([ord("C"), 0x9B, reset])); ser.flush(); time.sleep(0.3)
+    if "--rxdiag" in sys.argv or "--unlock" in sys.argv:
+        # Лічильники прийому СТОКОВИХ команд (форк як ціль). Прапорці в байті [2]:
+        #   біт0 (--rxdiag-reset) — обнулити лічильники;
+        #   біт1 (--unlock)       — зняти блокування кабелем (recovery, якщо рацію
+        #                           заблокувала стокова командою Disable по ефіру).
+        flags = 0
+        if "--rxdiag-reset" in sys.argv: flags |= 0x01
+        if "--unlock" in sys.argv:       flags |= 0x02
+        ser.write(bytes([ord("C"), 0x9B, flags])); ser.flush(); time.sleep(0.3)
         r = ser.read(64)
         if len(r) < 3 or r[0] != ord("C"):
             sys.exit(f"несподівана відповідь: {r.hex()}")
         n = (r[1] << 8) | r[2]; body = r[3:3 + n]
-        if len(body) < 24:
+        if len(body) < 28:
             sys.exit(f"замало даних: {body.hex()}")
-        vals = struct.unpack_from("<6I", body, 0)
+        vals = struct.unpack_from("<7I", body, 0)
         names = ["впізнано команд (seen)", "останній командир (ID)",
                  "виконано Check", "виконано Monitor", "виконано Enable", "виконано Disable"]
         print("Лічильники прийому стокових команд (форк як ціль):")
-        for k, v in zip(names, vals):
+        for k, v in zip(names, vals[:6]):
             print(f"  {k}: {v}")
+        print(f"  СТАН БЛОКУВАННЯ (inhibited): {'ТАК — рацію заблоковано' if vals[6] else 'ні'}")
+        if "--unlock" in sys.argv:
+            print("\n→ подано кабельну команду розблокування (recovery).")
+            print("  Якщо стан вище ще 'ТАК' — повтори; має стати 'ні'.")
         if vals[0] == 0:
             print("\n0 впізнано: стокова-командир ще не слала команду на цей форк,")
             print("або форк її не приймає (перевір канал/адресу).")

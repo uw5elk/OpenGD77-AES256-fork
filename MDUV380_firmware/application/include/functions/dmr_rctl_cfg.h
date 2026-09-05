@@ -77,5 +77,11 @@ int dmrRctlGatePersist(void);
  * відправку треба скасувати, а не слати команду з непевним номером. */
 uint32_t dmrRctlNextTxSeq(void);
 
+/* Стан "рація заблокована" (stun/revive), у флеш-блоці RCTS -- переживає перезавантаження.
+ * dmrRctlIsInhibited() = 1, якщо рацію заблоковано. dmrRctlSetInhibited() пише у флеш
+ * (1 при успіху). Знімається Enable по ефіру або кабелем (recovery). */
+int dmrRctlIsInhibited(void);
+int dmrRctlSetInhibited(int on);
+
 #endif /* ENABLE_DMR_DATA && ENABLE_AES */
 #endif /* _OPENGD77_DMR_RCTL_CFG_H_ */
