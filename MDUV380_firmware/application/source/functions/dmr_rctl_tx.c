@@ -31,7 +31,6 @@
 #include "user_interface/languages/rctl_ua.h"
 #else
 #define RCTL_NOTE_ACK_FMT        "Radio check: ID %lu"
-#define RCTL_NOTE_CHECKED_FMT    "Radio check from %lu"
 #endif
 
 #define DT_DATA_HEADER   6
@@ -240,17 +239,12 @@ void dmrRctlTick(void)
 		case DMR_RCTL_CMD_CHECK_REQ:
 			/* Авто-відповідь. Best-effort: якщо канал даних саме зайнятий -- відповідь
 			 * пропускається, видавець може повторити запит. */
-			dmrRctlSendCmd(msg.issuerId, DMR_RCTL_CMD_CHECK_ACK, 0);
-			{
-				/* Рація щойно САМА вийшла в ефір. Мовчки цього робити не можна: оператор
-				 * має знати, що його передавач працював і хто це спричинив -- інакше
-				 * примусову передачу (напр. відтвореним кадром) неможливо помітити.
-				 * Банер БЕЗ звуку: звуковий сигнал у полі сам по собі демаскує. */
-				char note[40];
-
-				snprintf(note, sizeof note, RCTL_NOTE_CHECKED_FMT, (unsigned long)msg.issuerId);
-				uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 4000, note, true);
-			}
+			/* Жодного сповіщення на ЦІЛЬОВІЙ рації: радіоперевірка навмисно ТИХА, як у
+			 * Motorola/Hytera -- у цьому й сенс функції, перевірити наявність, не
+			 * турбуючи оператора. Спроба (2026-09-04) показувати тут банер була
+			 * відкинута: вона ламала саме ту властивість, заради якої функцію роблять.
+			 * Захист від примусової передачі забезпечує anti-replay у dmr_rctl_cfg.c,
+			 * а не напис на екрані. */
 			break;
 
 		case DMR_RCTL_CMD_CHECK_ACK:
