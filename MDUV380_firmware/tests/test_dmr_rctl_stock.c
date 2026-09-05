@@ -1,0 +1,92 @@
+/*
+ * test_dmr_rctl_stock.c — хостовий тест побудови/розбору стокових CSBK-команд керування.
+ * Головне: відтворити РЕАЛЬНІ захвати зі стокової TYT (2026-09-05) байт-у-байт, і що
+ * парсер упізнає кожну команду й правильно дістає src/dst. Без STM32 — звичайний gcc.
+ *
+ *   gcc -O2 -Wall -Wextra -DENABLE_AES -DENABLE_DMR_DATA -I ../application/include \
+ *       -o t test_dmr_rctl_stock.c ../application/source/crypto/dmr_rctl_stock.c && ./t
+ */
+#include "crypto/dmr_rctl_stock.h"
+#include <stdio.h>
+#include <string.h>
+
+static int fails = 0;
+#define CHECK(cond, name) do { \
+	if (cond) { printf("  PASS %s\n", name); } \
+	else { printf("  FAIL %s\n", name); fails++; } \
+} while (0)
+
+/* стокова 2550333 -> форк 2550287, з реального ефіру */
+#define SRC 2550333u
+#define DST 2550287u
+
+static int eqhex(const uint8_t *got, const char *hexs)
+{
+	uint8_t want[12]; int n = 0;
+	const char *p = hexs;
+	while (*p && n < 12) {
+		if (*p == ' ') { p++; continue; }
+		unsigned v; sscanf(p, "%2x", &v); want[n++] = (uint8_t)v; p += 2;
+	}
+	return (n == 12) && (memcmp(got, want, 12) == 0);
+}
+
+int main(void)
+{
+	uint8_t b[12];
+
+	/* --- команди байт-у-байт --- */
+	dmr_rctl_stock_command(DMR_RCTL_STOCK_CHECK, SRC, DST, b);
+	CHECK(eqhex(b, "a4 10 00 00 26 ea 3d 26 ea 0f 93 7c"), "Radio Check байт-у-байт");
+	dmr_rctl_stock_command(DMR_RCTL_STOCK_MONITOR, SRC, DST, b);
+	CHECK(eqhex(b, "9d 10 00 01 26 ea 3d 26 ea 0f a3 88"), "Remote Monitor байт-у-байт");
+	dmr_rctl_stock_command(DMR_RCTL_STOCK_ENABLE, SRC, DST, b);
+	CHECK(eqhex(b, "a4 10 00 7e 26 ea 3d 26 ea 0f 25 95"), "Radio Enable байт-у-байт");
+	dmr_rctl_stock_command(DMR_RCTL_STOCK_DISABLE, SRC, DST, b);
+	CHECK(eqhex(b, "a4 10 00 7f 26 ea 3d 26 ea 0f 9d f4"), "Radio Disable байт-у-байт");
+
+	/* --- преамбули байт-у-байт (dst,src — порядок стокової) --- */
+	dmr_rctl_stock_preamble(DST, SRC, 0x02, b);
+	CHECK(eqhex(b, "bd 00 00 02 26 ea 0f 26 ea 3d c6 69"), "преамбула 0x02");
+	dmr_rctl_stock_preamble(DST, SRC, 0x10, b);
+	CHECK(eqhex(b, "bd 00 00 10 26 ea 0f 26 ea 3d 91 f1"), "преамбула 0x10");
+
+	/* --- розбір: кожна команда впізнається, src/dst правильні --- */
+	for (int c = 0; c < DMR_RCTL_STOCK_NUM_CMDS; c++)
+	{
+		dmr_rctl_stock_command((dmr_rctl_stock_cmd_t)c, SRC, DST, b);
+		dmr_rctl_stock_cmd_t pc; uint32_t ps, pd;
+		int ok = dmr_rctl_stock_parse(b, &pc, &ps, &pd);
+		char nm[48]; snprintf(nm, sizeof nm, "розбір команди %d (src/dst)", c);
+		CHECK(ok && pc == (dmr_rctl_stock_cmd_t)c && ps == SRC && pd == DST, nm);
+	}
+
+	/* --- преамбула НЕ вважається командою --- */
+	dmr_rctl_stock_preamble(DST, SRC, 0x05, b);
+	CHECK(dmr_rctl_stock_parse(b, NULL, NULL, NULL) == 0, "преамбула не приймається за команду");
+
+	/* --- зіпсований CRC відкидається --- */
+	dmr_rctl_stock_command(DMR_RCTL_STOCK_CHECK, SRC, DST, b);
+	b[11] ^= 0xFF;
+	CHECK(dmr_rctl_stock_parse(b, NULL, NULL, NULL) == 0, "битий CRC відкидається");
+
+	/* --- черга TX: правильна кількість бургстів, останній = команда, решта преамбули --- */
+	{
+		uint8_t q[(DMR_RCTL_STOCK_PREAMBLES + 1) * 13];
+		int n = dmr_rctl_stock_build_tx(DMR_RCTL_STOCK_DISABLE, SRC, DST, q);
+		CHECK(n == DMR_RCTL_STOCK_PREAMBLES + 1, "кількість бургстів = преамбули + 1");
+		int all_csbk = 1;
+		for (int i = 0; i < n; i++) { if (q[i * 13] != DMR_RCTL_STOCK_BURST_CSBK) { all_csbk = 0; } }
+		CHECK(all_csbk, "усі бургсти типу CSBK");
+		/* останній бургст має розбиратись як Disable */
+		dmr_rctl_stock_cmd_t pc;
+		CHECK(dmr_rctl_stock_parse(q + (n - 1) * 13 + 1, &pc, NULL, NULL) == 1 && pc == DMR_RCTL_STOCK_DISABLE,
+		      "останній бургст = команда Disable");
+		/* перший бургст — преамбула (не команда) з лічильником = PREAMBLES */
+		CHECK(dmr_rctl_stock_parse(q + 1, NULL, NULL, NULL) == 0 && q[1] == 0xBD && q[4] == DMR_RCTL_STOCK_PREAMBLES,
+		      "перший бургст = преамбула, лічильник = PREAMBLES");
+	}
+
+	printf(fails ? "\nПРОВАЛЕНО: %d\n" : "\nУсі тести пройдено\n", fails);
+	return fails ? 1 : 0;
+}

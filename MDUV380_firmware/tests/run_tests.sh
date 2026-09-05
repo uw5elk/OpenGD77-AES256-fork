@@ -34,6 +34,7 @@ declare -A SRCS=(
 	[test_dmr_rctl_frame]="$APP/source/crypto/dmr_rctl_frame.c $APP/source/crypto/dmr_rctl_pdu.c $APP/source/crypto/dmr_aes.c"
 	[test_dmr_rctl_cfg]="$TESTS_DIR/mock_codeplug.c $APP/source/functions/dmr_rctl_cfg.c $APP/source/crypto/dmr_rctl_pdu.c"
 	[test_dmr_rctl_cap]="$APP/source/functions/dmr_rctl_cap.c"
+	[test_dmr_rctl_stock]="$APP/source/crypto/dmr_rctl_stock.c"
 	[test_emb_sb]="$APP/source/crypto/dmr_aes.c"
 	[test_le_mi]="$APP/source/crypto/dmr_aes.c"
 )
