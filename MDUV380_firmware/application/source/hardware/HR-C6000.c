@@ -1113,19 +1113,28 @@ static inline void hrc6000SysReceivedDataInt(void)
 		// (тип 3), якого шлях 6/7 не бачить. У звичайній роботі capArmed=0 -> зайвого SPI-читання
 		// в ISR немає. Сторінку читаємо ОДИН раз на обидві потреби.
 		bool wantBurst  = (crcOk && ((rxDataType == 6) || (rxDataType == 7)));
+		// rate-3/4 (тип 8): стокова шле SMS саме так, 18 інфо-байтів/burst. НЕ гейтуємо на
+		// crcOk (per-burst CRC для rate-3/4 недостовірний) -- цілісність гарантує CRC32 усього
+		// PDU у збирачі, а зіпсовані блоки просто не дадуть валідний PDU (стокова ретранслює).
+		bool want34     = (rxDataType == 8);
 		bool wantStock  = (crcOk && (rxDataType == 3));   // стокова команда керування -- CSBK
 		// Під час реверсу ловимо ВСЕ, навіть CRC-невалідне: квитанція-відповідь цілі могла
 		// приходити з CRC, який HW відкидає, тож у звичайному (crcOk) захопленні її не видно.
 		bool wantCap    = dmrRctlCapArmed();
-		if (wantBurst || wantStock || wantCap)
+		if (wantBurst || want34 || wantStock || wantCap)
 		{
-			uint8_t dataBurst[LC_DATA_LENGTH];
-			if (SPI0ReadPageRegByteArray(0x02, 0x00, dataBurst, LC_DATA_LENGTH) == kStatus_Success)
+			// 18 байтів: вистачає і для rate-3/4 (18), і для rate-1/2/CSBK (12 -- зайве ігнорується).
+			uint8_t dataBurst[18];
+			if (SPI0ReadPageRegByteArray(0x02, 0x00, dataBurst, 18) == kStatus_Success)
 			{
 				if (wantBurst)
 				{
 					dmrSmsRxBurst(rxDataType, dataBurst);
 					dmrRctlRxBurst(rxDataType, dataBurst); // паралельний, незалежний збирач RCTL
+				}
+				if (want34)
+				{
+					dmrSmsRxBurst(rxDataType, dataBurst); // навантаження SMS у rate-3/4 (18 Б)
 				}
 				if (wantStock)
 				{

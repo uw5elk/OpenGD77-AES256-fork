@@ -28,6 +28,7 @@
 /* ETSI slot data types as reported in HR-C6000 reg 0x51 [7:4]. */
 #define DT_DATA_HEADER   6
 #define DT_RATE12_DATA   7
+#define DT_RATE34_DATA   8   /* rate-3/4 data: 18 інфо-байтів/burst (стокова шле SMS саме так) */
 /* Burst slot-type bytes we write on TX (page 0x04 reg 0x50: type<<4). */
 #define DTB_CSBK         0x30
 #define DTB_DATA_HEADER  0x60
@@ -703,7 +704,10 @@ static volatile uint8_t  s_rxGroup DMR_AES_CCM;
 static volatile uint8_t  s_rxKeyId DMR_AES_CCM;
 static volatile uint32_t s_rxSrc DMR_AES_CCM;
 static volatile uint32_t s_rxDst DMR_AES_CCM;
-static uint8_t  s_rxBlocks[32][12] DMR_AES_CCM;
+/* Блоки навантаження пишемо ПРЯМО в s_rxPdu у міру надходження (замість окремого масиву
+ * блоків -- економить CCM і природно підтримує і 12-байтні rate-1/2, і 18-байтні rate-3/4).
+ * s_rxLen -- скільки байтів уже накопичено. */
+static volatile uint16_t s_rxLen DMR_AES_CCM;
 /* hand-off to main loop */
 static volatile uint8_t  s_rxReady DMR_AES_CCM;       /* a complete PDU is waiting */
 static uint8_t  s_rxPdu[384] DMR_AES_CCM;
@@ -783,7 +787,7 @@ void dmrSmsRxDiag(uint32_t out[7])
 
 void dmrSmsRxReset(void)
 {
-	s_rxHaveHeader = 0; s_rxHaveEnc = 0; s_rxExpBlocks = 0; s_rxCount = 0;
+	s_rxHaveHeader = 0; s_rxHaveEnc = 0; s_rxExpBlocks = 0; s_rxCount = 0; s_rxLen = 0;
 }
 
 void dmrSmsRxBurst(int rxDataType, const uint8_t *p)
@@ -798,6 +802,7 @@ void dmrSmsRxBurst(int rxDataType, const uint8_t *p)
 			s_rxKeyId = p[3];
 			s_rxHaveEnc = 1;
 			s_rxCount = 0;
+			s_rxLen = 0;
 		}
 		else
 		{
@@ -808,36 +813,35 @@ void dmrSmsRxBurst(int rxDataType, const uint8_t *p)
 			uint8_t nblocks = (uint8_t)(p[8] & 0x7F);
 			s_rxExpBlocks = (uint8_t)((nblocks > 0) ? (nblocks - 1) : 0);  /* minus ENC header */
 			s_rxCount = 0;
+			s_rxLen = 0;
 			s_rxHaveHeader = 1;
 			s_rxHaveEnc = 0;
 		}
 		return;
 	}
 
-	if (rxDataType == DT_RATE12_DATA)
+	/* Блоки навантаження: rate-1/2 (12 байт) АБО rate-3/4 (18 байт -- саме так шле стокова).
+	 * Пишемо прямо в s_rxPdu; тип блока задає довжину. Завершення -- за CRC32 усього PDU
+	 * (самотермінувальне, не довіряємо лічильнику блоків із заголовка). */
+	if (rxDataType == DT_RATE12_DATA || rxDataType == DT_RATE34_DATA)
 	{
-		if (!s_rxHaveHeader || s_rxCount >= 32) { return; }
-		memcpy(s_rxBlocks[s_rxCount], p, 12);
+		if (!s_rxHaveHeader) { return; }
+		/* Не чіпаємо s_rxPdu, поки готовий PDU ще не забрав основний цикл (пишемо тепер
+		 * прямо в s_rxPdu, тож інакше новий burst затер би те, що ще не прочитано). */
+		if (s_rxReady) { return; }
+		int blkLen = (rxDataType == DT_RATE34_DATA) ? 18 : 12;
+		if ((int)s_rxLen + blkLen > (int)sizeof s_rxPdu) { return; }   /* захист від переповнення */
+		memcpy(s_rxPdu + s_rxLen, p, blkLen);
+		s_rxLen = (uint16_t)(s_rxLen + blkLen);
 		s_rxCount++;
 
-		/* Complete when the accumulated blocks form a CRC32-valid data PDU. This is
-		 * self-terminating and does NOT trust the header's block count (which can be
-		 * stale when a header is missed) — block mixing or truncation simply won't
-		 * produce a valid CRC32, so only a correct, complete PDU is accepted.
-		 * Minimum is 2 blocks: a stock 1-char SMS is BLOCKS 05 = 4 rate-1/2 data blocks
-		 * (a hardcoded >=5 gate here silently dropped every short message — 5+ char msgs
-		 * have 5+ data blocks and worked, 1-char have 4 and never completed). CRC32 gates
-		 * correctness, so checking from 2 up is safe. Gate on s_rxHaveHeader (not s_rxHaveEnc)
-		 * so a CLEARTEXT SMS (no ENC header) also completes; the IPv4/UDP check in the tick
-		 * rejects non-SMS data PDUs, and s_rxHaveEnc is carried through to pick decrypt vs clear. */
-		if (s_rxHaveHeader && (s_rxCount >= 2) && !s_rxReady)
+		/* Завершуємо, коли накопичене утворює CRC32-валідний data-PDU. Самотермінувально:
+		 * змішування/обрив блоків просто не дасть валідний CRC32. Мінімум ~2 rate-1/2 блоки
+		 * (24 Б). Гейт на s_rxHaveHeader (не s_rxHaveEnc), щоб і ЧИСТИЙ текст (без ENC-заголовка)
+		 * теж збирався; тип шифрування несе s_rxHaveEnc, IPv4/UDP-перевірка в tick відкине не-SMS. */
+		if (s_rxHaveHeader && (s_rxLen >= 24) && !s_rxReady)
 		{
-			int total = s_rxCount * 12;
-			if (total > (int)sizeof s_rxPdu) { return; }
-			for (int i = 0; i < s_rxCount; i++)
-			{
-				memcpy(s_rxPdu + i * 12, s_rxBlocks[i], 12);
-			}
+			int total = s_rxLen;
 			uint32_t want = ((uint32_t)s_rxPdu[total - 4] << 24) | ((uint32_t)s_rxPdu[total - 3] << 16) |
 					((uint32_t)s_rxPdu[total - 2] << 8) | (uint32_t)s_rxPdu[total - 1];
 			if (crc32_dmr(s_rxPdu, total) != want)
