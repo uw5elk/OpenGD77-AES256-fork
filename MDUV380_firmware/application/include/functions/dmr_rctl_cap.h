@@ -19,7 +19,9 @@
 #include <stdint.h>
 
 #define DMR_RCTL_CAP_BURST_LEN   12   /* інфо-байти одного burst (сторінка 0x02, LC_DATA_LENGTH) */
-#define DMR_RCTL_CAP_SLOTS       24   /* команда стокової — це кілька burst; 24 з запасом */
+#define DMR_RCTL_CAP_SLOTS        8   /* команда стокової -- зазвичай 1 CSBK; 8 з запасом.
+                                        * НЕ більше: CCM майже повний -- 24 слоти давали
+                                        * переповнення регіону CCMRAM на 172 байти (CI #66). */
 
 typedef struct
 {
