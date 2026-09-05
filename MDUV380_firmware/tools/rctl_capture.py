@@ -21,7 +21,7 @@ USB-команди (ті самі, що sms_diag.py, через 'C'-канал C
   6. Надіслати роздруківки — за ними робимо байт-у-байт розбір формату.
 
 Запуск із Windows або WSL; автовизначення рації OpenGD77 (1FC9:0094)."""
-import sys, time
+import sys, time, struct
 import serial
 from serial.tools import list_ports
 
@@ -67,6 +67,27 @@ def main():
         ser.write(bytes([ord("C"), 0x9A])); ser.flush(); time.sleep(0.2)
         ser.read(8)
         print("кільце очищено")
+        return
+
+    if "--rxdiag" in sys.argv:
+        # Лічильники прийому СТОКОВИХ команд (форк як ціль). --rxdiag-reset щоб обнулити.
+        reset = 1 if "--rxdiag-reset" in sys.argv else 0
+        ser.write(bytes([ord("C"), 0x9B, reset])); ser.flush(); time.sleep(0.3)
+        r = ser.read(64)
+        if len(r) < 3 or r[0] != ord("C"):
+            sys.exit(f"несподівана відповідь: {r.hex()}")
+        n = (r[1] << 8) | r[2]; body = r[3:3 + n]
+        if len(body) < 24:
+            sys.exit(f"замало даних: {body.hex()}")
+        vals = struct.unpack_from("<6I", body, 0)
+        names = ["впізнано команд (seen)", "останній командир (ID)",
+                 "виконано Check", "виконано Monitor", "виконано Enable", "виконано Disable"]
+        print("Лічильники прийому стокових команд (форк як ціль):")
+        for k, v in zip(names, vals):
+            print(f"  {k}: {v}")
+        if vals[0] == 0:
+            print("\n0 впізнано: стокова-командир ще не слала команду на цей форк,")
+            print("або форк її не приймає (перевір канал/адресу).")
         return
 
     # За замовчуванням — викачати й надрукувати.

@@ -90,6 +90,7 @@ enum CPS_ACCESS_AREA
 #include "functions/dmr_data.h"
 #include "functions/dmr_sms.h"
 #include "functions/dmr_rctl_cap.h"
+#include "functions/dmr_rctl_tx.h"   // dmrRctlStockRxDiag/Reset (лічильники прийому стокових команд)
 static void handleCPSRequest(void);
 
 volatile int com_request = 0;
@@ -1875,6 +1876,27 @@ static void cpsHandleCommand(void)
 			hasToReply = true;
 			replyLength = 1;
 			break;
+		case 0x9B: // DIAG: лічильники прийому СТОКОВИХ команд (форк як ціль). [2]=1 -> скинути.
+			   //  Reply: [cmd, len_hi, len_lo, 6x uint32 LE: seen,lastSrc,Check,Monitor,Enable,Disable]
+			{
+				if (com_requestbuffer[2] & 0x01) { dmrRctlStockRxDiagReset(); }
+				uint32_t d[6];
+				dmrRctlStockRxDiag(d);
+				int n = 0;
+				for (int i = 0; i < 6; i++)
+				{
+					usbComSendBuf[3 + n++] = (uint8_t)(d[i]);
+					usbComSendBuf[3 + n++] = (uint8_t)(d[i] >> 8);
+					usbComSendBuf[3 + n++] = (uint8_t)(d[i] >> 16);
+					usbComSendBuf[3 + n++] = (uint8_t)(d[i] >> 24);
+				}
+				usbComSendBuf[0] = com_requestbuffer[0];
+				usbComSendBuf[1] = (uint8_t)((n >> 8) & 0xFF);
+				usbComSendBuf[2] = (uint8_t)(n & 0xFF);
+				hasToReply = true;
+				replyLength = n + 3;
+				return; // bypass the trailing generic '-' reply
+			}
 #endif
 #endif
 		case 0:

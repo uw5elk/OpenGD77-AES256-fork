@@ -1112,9 +1112,10 @@ static inline void hrc6000SysReceivedDataInt(void)
 		// з ПК увімкнено захоплення (dmrRctlCapArmed): стокова TYT шле Radio Check/Stun як CSBK
 		// (тип 3), якого шлях 6/7 не бачить. У звичайній роботі capArmed=0 -> зайвого SPI-читання
 		// в ISR немає. Сторінку читаємо ОДИН раз на обидві потреби.
-		bool wantBurst = (crcOk && ((rxDataType == 6) || (rxDataType == 7)));
-		bool wantCap   = (crcOk && dmrRctlCapArmed());
-		if (wantBurst || wantCap)
+		bool wantBurst  = (crcOk && ((rxDataType == 6) || (rxDataType == 7)));
+		bool wantStock  = (crcOk && (rxDataType == 3));   // стокова команда керування -- CSBK
+		bool wantCap    = (crcOk && dmrRctlCapArmed());
+		if (wantBurst || wantStock || wantCap)
 		{
 			uint8_t dataBurst[LC_DATA_LENGTH];
 			if (SPI0ReadPageRegByteArray(0x02, 0x00, dataBurst, LC_DATA_LENGTH) == kStatus_Success)
@@ -1123,6 +1124,10 @@ static inline void hrc6000SysReceivedDataInt(void)
 				{
 					dmrSmsRxBurst(rxDataType, dataBurst);
 					dmrRctlRxBurst(rxDataType, dataBurst); // паралельний, незалежний збирач RCTL
+				}
+				if (wantStock)
+				{
+					dmrRctlStockRxBurst(dataBurst); // стокова команда керування (форк як ціль)
 				}
 				if (wantCap)
 				{

@@ -213,10 +213,85 @@ void dmrRctlRxBurst(int rxDataType, const uint8_t *p)
 	}
 }
 
+/* ==================== RX стокових команд (форк як ціль) ================== */
+/* Стокові команди приходять одним CSBK (тип 3), не rate-1/2 -- тож окремий від
+ * власного PDU шлях. ISR лише розбирає+фільтрує на нашу адресу й лишає "pending";
+ * рішення (гейт дозволів) і дії -- у tick, поза ISR. */
+static volatile uint8_t  s_stockPending;
+static volatile uint8_t  s_stockCmd;
+static volatile uint32_t s_stockSrc;
+static volatile uint32_t s_stockDst;
+
+/* Діагностика (тихе підтвердження прийому по USB, без напису на екрані): */
+static volatile uint32_t s_stockSeen;                            /* упізнаних команд на нашу адресу (до гейта) */
+static volatile uint32_t s_stockLastSrc;                         /* хто останній командував */
+static volatile uint8_t  s_stockLastCmd;
+static volatile uint32_t s_stockActed[DMR_RCTL_STOCK_NUM_CMDS];  /* упізнаних+ДОЗВОЛЕНИХ, по команді */
+
+void dmrRctlStockRxBurst(const uint8_t *p12)
+{
+	dmr_rctl_stock_cmd_t cmd;
+	uint32_t src, dst;
+	/* parse робить і перевірку CRC -- шум/чужі кадри сюди не пройдуть */
+	if (!dmr_rctl_stock_parse(p12, &cmd, &src, &dst)) { return; }
+	if (dst != trxDMRID) { return; }   /* не нам -- мовчки ігноруємо (RCTL індивідуальний) */
+
+	s_stockCmd = (uint8_t)cmd;
+	s_stockSrc = src;
+	s_stockDst = dst;
+	s_stockPending = 1;
+}
+
+void dmrRctlStockRxDiag(uint32_t out[6])
+{
+	out[0] = s_stockSeen;
+	out[1] = s_stockLastSrc;
+	out[2] = s_stockActed[DMR_RCTL_STOCK_CHECK];
+	out[3] = s_stockActed[DMR_RCTL_STOCK_MONITOR];
+	out[4] = s_stockActed[DMR_RCTL_STOCK_ENABLE];
+	out[5] = s_stockActed[DMR_RCTL_STOCK_DISABLE];
+}
+
+void dmrRctlStockRxDiagReset(void)
+{
+	s_stockSeen = 0;
+	s_stockLastSrc = 0;
+	s_stockLastCmd = 0;
+	for (int i = 0; i < DMR_RCTL_STOCK_NUM_CMDS; i++) { s_stockActed[i] = 0; }
+}
+
+/* Обробити відкладену стокову команду (з tick, поза ISR). Поки лише лічимо -- це тихо
+ * підтверджує, що прийом+гейт працюють на залізі. Самі дії (ACK/блокування/монітор)
+ * додамо наступними інкрементами -- кожну окремо й із перевіркою на залізі. */
+static void dmrRctlStockProcessPending(void)
+{
+	if (!s_stockPending) { return; }
+	s_stockPending = 0;
+
+	dmr_rctl_stock_cmd_t cmd = (dmr_rctl_stock_cmd_t)s_stockCmd;
+	uint32_t dst = s_stockDst;
+
+	s_stockSeen++;
+	s_stockLastSrc = s_stockSrc;
+	s_stockLastCmd = s_stockCmd;
+
+	if (dmr_rctl_stock_should_act(cmd, dst, trxDMRID, dmrRctlAllowMask()))
+	{
+		if ((int)cmd >= 0 && (int)cmd < DMR_RCTL_STOCK_NUM_CMDS)
+		{
+			s_stockActed[cmd]++;
+		}
+		/* TODO(інкремент 2+): виконати дію -- Check: ACK; Enable/Disable: блокування;
+		 * Monitor: тихий мікрофон. Кожну додамо окремо з перевіркою зі стоковою. */
+	}
+}
+
 /* ============================ RX (основний цикл) ========================== */
 
 void dmrRctlTick(void)
 {
+	dmrRctlStockProcessPending();   /* стокові команди -- незалежно від власного PDU нижче */
+
 	if (!s_rxReady) { return; }
 
 	uint8_t pdu[24];
