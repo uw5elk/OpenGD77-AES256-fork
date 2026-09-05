@@ -13,7 +13,12 @@ custom_data.py (див. коментар там -- регіон спільний
 enabled=0 (fail closed, той самий стан, що й "фічі в збірці нема").
 
 Формат payload (8 байт, дзеркалить dmrRctlOnFlashCfg_t у dmr_rctl_cfg.c):
-    magic[4]="RCTL"  version=2  enabled  reserved[2]
+    magic[4]="RCTL"  version=3  enabled  allow  reserved
+
+allow -- бітова маска дозволених команд (2026-09-05, за зразком Motorola/Hytera:
+радіоперевірка, прослуховування, вимкнення й ввімкнення дозволяються НЕЗАЛЕЖНО).
+Блок версії 2 прошивка читає як "дозволено лише радіоперевірку" -- оновлення не
+роздає прав, яких власник не вмикав.
 
 Використання:
   python3 rctl_config.py --show       # прочитати поточний стан
@@ -25,16 +30,26 @@ import aes_key_store as aks
 import custom_data as cd
 
 TYPE_RCTL_CONFIG = 9   # CODEPLUG_CUSTOM_DATA_TYPE_RCTL_CONFIG (codeplug.h) -- 9-й елемент enum
-VERSION = 2             # 2026-09-03: без allowlist
+VERSION = 3             # 2026-09-05: додано allow (окремі дозволи на команди)
 PAYLOAD_LEN = 4 + 1 + 1 + 2   # = 8
 
 
-def build_payload(enabled):
+ALLOW_CHECK   = 1 << 0
+ALLOW_MONITOR = 1 << 1
+ALLOW_STUN    = 1 << 2
+ALLOW_REVIVE  = 1 << 3
+ALLOW_ALL     = ALLOW_CHECK | ALLOW_MONITOR | ALLOW_STUN | ALLOW_REVIVE
+
+ALLOW_NAMES = [("check", ALLOW_CHECK), ("monitor", ALLOW_MONITOR),
+               ("stun", ALLOW_STUN), ("revive", ALLOW_REVIVE)]
+
+
+def build_payload(enabled, allow):
     p = bytearray(PAYLOAD_LEN)
     p[0:4] = b"RCTL"
     p[4] = VERSION
     p[5] = 1 if enabled else 0
-    p[6] = 0   # reserved
+    p[6] = allow & ALLOW_ALL
     p[7] = 0   # reserved
     return bytes(p)
 
@@ -42,7 +57,10 @@ def build_payload(enabled):
 def parse_payload(payload):
     if len(payload) < PAYLOAD_LEN or payload[0:4] != b"RCTL":
         return None
-    return {"version": payload[4], "enabled": payload[5] != 0}
+    allow = payload[6] if payload[4] >= 3 else ALLOW_CHECK
+    return {"version": payload[4], "enabled": payload[5] != 0,
+            "allow": allow & ALLOW_ALL,
+            "allow_names": [n for n, b in ALLOW_NAMES if allow & b] or ["-"]}
 
 
 def main():
@@ -51,6 +69,9 @@ def main():
                      help="дозволити команди RCTL від БУДЬ-КОГО з правильним канальним ключем")
     ap.add_argument("--disable", action="store_true", help="заборонити приймання команд RCTL (default)")
     ap.add_argument("--show", action="store_true", help="лише прочитати поточний стан")
+    ap.add_argument("--allow", default=None,
+                     help="які команди дозволити, через кому: check,monitor,stun,revive або all/none. "
+                          "Не вказано -- лишити як є (при --enable на порожньому блоці: лише check)")
     ap.add_argument("--port", default=None)
     a = ap.parse_args()
 
@@ -75,11 +96,31 @@ def main():
             print("нічого не змінюю (передай --enable або --disable)")
             return
 
-        payload = build_payload(a.enable)
+        # allow: явно задане -> воно; інакше зберігаємо наявне; якщо блоку не було --
+        # лише радіоперевірка (не роздаємо прав, яких ніхто не просив).
+        if a.allow is not None:
+            txt = a.allow.strip().lower()
+            if txt in ("all", "усі", "все"):
+                allow = ALLOW_ALL
+            elif txt in ("none", "-", ""):
+                allow = 0
+            else:
+                allow = 0
+                known = dict(ALLOW_NAMES)
+                for part in (x.strip() for x in txt.split(",") if x.strip()):
+                    if part not in known:
+                        ap.error("невідома команда в --allow: %r (можна: %s, all, none)"
+                                 % (part, ", ".join(n for n, _ in ALLOW_NAMES)))
+                    allow |= known[part]
+        else:
+            allow = cur["allow"] if cur else ALLOW_CHECK
+
+        payload = build_payload(a.enable, allow)
         ok, msg = cd.write_block(ser, TYPE_RCTL_CONFIG, payload)
         if not ok:
             sys.exit("ЗАПИС НЕ ВДАВСЯ: %s" % msg)
-        print("записано:", msg, "-> enabled =", a.enable)
+        print("записано:", msg, "-> enabled =", a.enable,
+              ", allow =", ",".join(n for n, b in ALLOW_NAMES if allow & b) or "-")
 
         # звірка читанням назад
         rb = cd.read_block(ser, TYPE_RCTL_CONFIG, PAYLOAD_LEN)

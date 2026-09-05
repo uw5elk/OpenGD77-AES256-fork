@@ -13,10 +13,19 @@
 typedef struct
 {
 	char     magic[4];      /* "RCTL" */
-	uint8_t  version;       /* 2 -- 2026-09-03: без allowlist (див. dmr_rctl_pdu.h) */
-	uint8_t  enabled;       /* 0 = вимкнено (default/не налаштовано) = ніхто, 1 = увімкнено = будь-хто з канальним ключем */
-	uint8_t  reserved[2];   /* про запас/майбутні прапорці, мають бути 0 */
+	uint8_t  version;       /* 3 -- 2026-09-05: додано allow (див. нижче). 2 -- без allow */
+	uint8_t  enabled;       /* головний перемикач: 0 = не приймати команди НІ ВІД КОГО */
+	uint8_t  allow;         /* бітова маска DMR_RCTL_ALLOW_*: які саме команди дозволені */
+	uint8_t  reserved;      /* про запас, має бути 0 */
 } dmrRctlOnFlashCfg_t;
+
+/* Розмір блока НЕ змінився (8 байт): allow зайняв один із двох reserved-байтів. Тому старий
+ * блок версії 2 читається тим самим кодом, і CPS-утиліті достатньо дописати один байт.
+ *
+ * Міграція з версії 2: там існувала лише радіоперевірка, тож allow = ALLOW_CHECK. Не
+ * ALLOW_ALL: інакше оновлення прошивки мовчки роздало б рації дозволи на команди, яких
+ * власник ніколи не вмикав. */
+#define RCTL_CFG_VERSION  3
 
 /* На відміну від MSGC-структури в dmr_sms.c цей блок навмисно НЕ кладемо в CCM RAM
  * (DMR_AES_CCM з dmr_aes.h) — він у рази менший за MSGC (з його 10 текстовими
@@ -113,6 +122,15 @@ static void cfg_load(void)
 	if (codeplugGetOpenGD77CustomDataBounded(CODEPLUG_CUSTOM_DATA_TYPE_RCTL_CONFIG, (uint8_t *)&s_cfg, (int)sizeof s_cfg) &&
 			(memcmp(s_cfg.magic, "RCTL", 4) == 0))
 	{
+		if (s_cfg.version < 3)
+		{
+			/* Блок версії 2: поля allow там не було, а вміла прошивка лише радіоперевірку.
+			 * Даємо рівно її -- не ALLOW_ALL, щоб оновлення не роздало дозволів мовчки. */
+			s_cfg.allow = DMR_RCTL_ALLOW_CHECK;
+			s_cfg.reserved = 0;
+			s_cfg.version = RCTL_CFG_VERSION;
+		}
+		s_cfg.allow &= (uint8_t)DMR_RCTL_ALLOW_ALL;   /* чужі біти ігноруємо */
 		return;
 	}
 	memset(&s_cfg, 0, sizeof s_cfg);   /* відсутній/побитий блок -> fail closed: enabled=0 (ніхто) */
@@ -199,6 +217,53 @@ int dmrRctlConfigEnabled(void)
 	return (s_cfg.enabled != 0);
 }
 
+uint8_t dmrRctlAllowMask(void)
+{
+	cfg_ensure();
+	return (uint8_t)(s_cfg.enabled ? (s_cfg.allow & DMR_RCTL_ALLOW_ALL) : 0);
+}
+
+uint8_t dmrRctlConfigAllowRaw(void)
+{
+	cfg_ensure();
+	return (uint8_t)(s_cfg.allow & DMR_RCTL_ALLOW_ALL);
+}
+
+int dmrRctlCommandAllowed(uint8_t cmd)
+{
+	uint8_t bit;
+
+	switch (cmd)
+	{
+		case DMR_RCTL_CMD_CHECK_REQ:     bit = DMR_RCTL_ALLOW_CHECK;   break;
+		case DMR_RCTL_CMD_MONITOR_START:
+		case DMR_RCTL_CMD_MONITOR_STOP:  bit = DMR_RCTL_ALLOW_MONITOR; break;
+		case DMR_RCTL_CMD_STUN:          bit = DMR_RCTL_ALLOW_STUN;    break;
+		case DMR_RCTL_CMD_REVIVE:        bit = DMR_RCTL_ALLOW_REVIVE;  break;
+		/* Невідома команда -- заборонено. Fail closed: майбутній код команди не має
+		 * випадково отримати дозвіл від старої прошивки. */
+		default:                         return 0;
+	}
+	return ((dmrRctlAllowMask() & bit) != 0);
+}
+
+int dmrRctlConfigSetAllow(uint8_t mask)
+{
+	cfg_ensure();
+
+	if (memcmp(s_cfg.magic, "RCTL", 4) != 0)
+	{
+		memset(&s_cfg, 0, sizeof s_cfg);
+		memcpy(s_cfg.magic, "RCTL", 4);
+	}
+	s_cfg.version = RCTL_CFG_VERSION;
+	s_cfg.allow = (uint8_t)(mask & DMR_RCTL_ALLOW_ALL);
+
+	int ok = codeplugSetOpenGD77CustomData(CODEPLUG_CUSTOM_DATA_TYPE_RCTL_CONFIG, (uint8_t *)&s_cfg, (int)sizeof s_cfg) ? 1 : 0;
+	dmrRctlConfigReload();
+	return ok;
+}
+
 int dmrRctlConfigSetEnabled(int enabled)
 {
 	cfg_ensure();
@@ -210,8 +275,11 @@ int dmrRctlConfigSetEnabled(int enabled)
 	{
 		memset(&s_cfg, 0, sizeof s_cfg);
 		memcpy(s_cfg.magic, "RCTL", 4);
-		s_cfg.version = 2;
+		s_cfg.version = RCTL_CFG_VERSION;
+		/* Свіжий блок: жодного дозволу. Вмикати кожен треба свідомо. */
+		s_cfg.allow = 0;
 	}
+	s_cfg.version = RCTL_CFG_VERSION;
 	s_cfg.enabled = enabled ? 1 : 0;
 
 	int ok = codeplugSetOpenGD77CustomData(CODEPLUG_CUSTOM_DATA_TYPE_RCTL_CONFIG, (uint8_t *)&s_cfg, (int)sizeof s_cfg) ? 1 : 0;

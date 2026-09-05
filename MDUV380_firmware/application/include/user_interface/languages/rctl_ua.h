@@ -14,8 +14,21 @@
 
 /* ---- menuRCTLConfig.c: Options > RCTL access (увімк/вимк приймання команд) ---- */
 #define RCFG_TITLE               "Доступ RCTL"
-#define RCFG_STATE_FMT           "Стан: %s"
-#define RCFG_HINT                "L/R:зміна GRN:зберегти RED:відміна"
+/* Підказка внизу екрана. ДВА рядки, і кожен не довший за 26 символів: FONT_SIZE_1 --
+ * це 6 пікселів на символ, екран 160 пікселів, а displayPrintCore обрізає надлишок
+ * МОВЧКИ (HX8353E_display.c: sLen = (DISPLAY_SIZE_X - xPos) / charWidthPixels).
+ * Попередній однорядковий варіант мав 34 символи, тобто на екрані було видно
+ * "L/R:зміна GRN:зберегти RED" -- саме та частина, що пояснює скасування, і зникала. */
+#define RCFG_HINT                "L/R:зміна  GRN:зберегти"
+#define RCFG_HINT2               "RED:вийти без збереження"
+
+/* Пункти екрана дозволів. Бюджет рядка -- 16 символів разом із ":" і значенням
+ * ("On"/"Off"), тож найдовший підпис тут 10 символів. */
+#define RCFG_ITEM_ACCESS         "Доступ"
+#define RCFG_ITEM_CHECK          "Перевірка"
+#define RCFG_ITEM_MONITOR        "Моніторинг"
+#define RCFG_ITEM_STUN           "Вимкнення"
+#define RCFG_ITEM_REVIVE         "Ввімкнення"
 
 /* ---- menuRCTLRemote.c: "Від. керування" (запит Radio Check іншій рації) ---- */
 #define RCTL_TITLE               "Від. керування"
@@ -42,7 +55,10 @@
 #define RCTL_NOTE_ACK_FMT        "Радіоперевірка: ID %lu"
 #define RCTL_ERR_NO_KEY          "немає AES-ключа"
 #define RCTL_ERR_FRAME           "збірка кадру не вдалась"
-#define RCTL_SEND_FAILED         "Надсилання не вдалось"
+/* 18 символів: FONT_SIZE_3 -- 8 px на символ, екран 160 px, межа 20 символів.
+ * Попередній варіант ("Надсилання не вдалось", 21 символ) на рації обрізався до
+ * "Надсилання не вдалос". */
+#define RCTL_SEND_FAILED         "Помилка надсилання"
 #define RCTL_FAIL_FMT            "%s (код %d)"
 
 #endif

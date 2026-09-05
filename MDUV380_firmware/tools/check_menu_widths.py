@@ -194,5 +194,84 @@ for left, f, key, label, fmt in sorted(tight, key=lambda x: x[0]):
 print(f'  разом підозрілих: {len(tight)}')
 fails += tight
 
+# ---------------------------------------------------------------------------
+# 4. ПІКСЕЛЬНА ширина рядків, які малюються НЕ через меню-список.
+#
+# Розділи 1--3 рахують СИМВОЛИ, бо там межа -- SCREEN_LINE_BUFFER_SIZE. Але підказки й
+# банери всередині екранів малюються напряму (displayPrintCentered/displayPrintAt), і там
+# межа інша -- ПІКСЕЛІ. displayPrintCore обрізає рядок так само мовчки:
+#
+#     if ((charWidthPixels * sLen) + xPos > DISPLAY_SIZE_X)
+#             sLen = (DISPLAY_SIZE_X - xPos) / charWidthPixels;
+#
+# Реальний випадок, який це знайшло: RCFG_HINT був 34 символи при FONT_SIZE_1 (6 px) на
+# екрані 160 px -> на рації було видно рівно 26 символів, "L/R:зміна GRN:зберегти RED",
+# і саме пояснення про скасування зникало.
+#
+# Рядки з '%' пропускаємо: довжина аргументу тут невідома, це вже робота розділу 3.
+# Обмеження: аргументи виклику ріжуться по комі, тож літерал із комою всередині просто
+# не розпізнається (хибних тривог це не дає -- лише пропуск).
+FONT_W = {
+    'FONT_SIZE_1': 6, 'FONT_SIZE_1_BOLD': 6, 'FONT_SIZE_2': 8,
+    'FONT_SIZE_3': 8, 'FONT_SIZE_4': 16,
+}
+DISPLAY_SIZE_X = 160          # 128 + DISPLAY_H_EXTRA_PIXELS(32), uiGlobals.h для MDUV380
+
+print('\n=== 4. Піксельна ширина підказок і банерів (displayPrintCentered/At) ===')
+
+# Значення макросів: наші cp1251-заголовки + локальні #define всередині самих .c
+macros = {}
+for path in glob.glob(os.path.join(LANG, '*.h')):
+    raw = open(path, 'rb').read()
+    try:
+        txt = raw.decode('cp1251')
+    except UnicodeDecodeError:
+        txt = raw.decode('utf-8', 'replace')
+    for m in re.finditer(r'#\s*define\s+(\w+)\s+"((?:[^"\\]|\\.)*)"', txt):
+        macros.setdefault(m.group(1), set()).add(m.group(2))
+
+UI = os.path.join(BASE, 'source', 'user_interface')
+wide = []
+for path in sorted(glob.glob(os.path.join(UI, '*.c'))):
+    raw = open(path, 'rb').read()
+    try:
+        src = raw.decode('cp1251')
+    except UnicodeDecodeError:
+        src = raw.decode('utf-8', 'replace')
+    local = {}
+    for m in re.finditer(r'#\s*define\s+(\w+)\s+"((?:[^"\\]|\\.)*)"', src):
+        local.setdefault(m.group(1), set()).add(m.group(2))
+
+    call = re.compile(r'displayPrint(?:Centered|At)\s*\(([^;]*?)\)\s*;', re.S)
+    for m in call.finditer(src):
+        args = [a.strip() for a in m.group(1).split(',')]
+        font = next((a for a in args if a in FONT_W), None)
+        if font is None:
+            continue
+        # текстовий аргумент -- передостанній перед вирівнюванням/шрифтом
+        idx = args.index(font)
+        if idx < 1:
+            continue
+        arg = args[idx - 1]
+        cands = set()
+        lit = re.fullmatch(r'"((?:[^"\\]|\\.)*)"', arg)
+        if lit:
+            cands.add(lit.group(1))
+        else:
+            cands |= local.get(arg, set()) | macros.get(arg, set())
+        for text in cands:
+            if '%' in text:
+                continue
+            px = FONT_W[font] * len(text)
+            if px > DISPLAY_SIZE_X:
+                wide.append((px, os.path.basename(path), arg, font, text))
+
+for px, f, arg, font, text in sorted(wide, key=lambda x: -x[0]):
+    fits = DISPLAY_SIZE_X // FONT_W[font]
+    print(f'  {px:>4} px > {DISPLAY_SIZE_X}  {f:26} {arg} ({font})')
+    print(f'        "{text}"  -> буде видно лише "{text[:fits]}"')
+print(f'  разом задовгих: {len(wide)}')
+fails += wide
+
 print(f'\n{"Є ПЕРЕПОВНЕННЯ" if fails else "Переповнень не знайдено"} (всього: {len(fails)})')
 sys.exit(1 if fails else 0)

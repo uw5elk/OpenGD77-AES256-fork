@@ -114,8 +114,11 @@ int main(void)
 
     uint8_t rb[8];
     CHECK(codeplugGetOpenGD77CustomDataBounded(CODEPLUG_CUSTOM_DATA_TYPE_RCTL_CONFIG, rb, (int)sizeof rb), "T7: блок читається назад");
-    CHECK(memcmp(rb, "RCTL", 4) == 0 && rb[4] == 2 && rb[5] == 1 && rb[6] == 0 && rb[7] == 0,
-          "T7: записаний блок побайтово відповідає формату magic+version+enabled+reserved[2]");
+    /* Формат ВЕРСІЇ 3 (2026-09-05): другий reserved-байт став маскою дозволів allow,
+     * розмір блока лишився 8 Б. Тест і далі слугує документацією формату для CPS-сторони
+     * (tools/rctl_config.py): magic(4) + version(1) + enabled(1) + allow(1) + reserved(1). */
+    CHECK(memcmp(rb, "RCTL", 4) == 0 && rb[4] == 3 && rb[5] == 1 && rb[7] == 0,
+          "T7: записаний блок відповідає формату v3 magic+version+enabled+allow+reserved");
 
     CHECK(dmrRctlConfigSetEnabled(0) == 1, "T7: повторний запис enabled=0 вдався (оновлення того самого блоку)");
     CHECK(dmrRctlConfigEnabled() == 0, "T7: після другого запису -- знову вимкнено");
@@ -186,6 +189,50 @@ int main(void)
     CHECK(dmr_rctl_gate_check(dmrRctlGate(), 0x888888u, 7) == 1,
           "T11: побитий блок стану -> кеш порожній, робота триває");
     CHECK(dmrRctlNextTxSeq() != 0, "T11: побитий блок стану -> номер відправки все одно видається");
+
+    /* ============ T12-T16: ОКРЕМІ ДОЗВОЛИ НА КОЖНУ КОМАНДУ (2026-09-05) ==========
+     *
+     * Модель за зразком Motorola/Hytera: доступ має будь-яка станція мережі, і на
+     * ВІДКРИТОМУ каналі теж, а вирішує цільова рація -- окремим дозволом на кожну команду.
+     * На відкритому каналі це єдина межа: підтвердити відправника там нічим. */
+
+    /* T12: свіжий блок -> не дозволено НІЧОГО, навіть при увімкненому доступі */
+    mock_codeplug_clear();
+    dmrRctlConfigReload();
+    CHECK(dmrRctlConfigSetEnabled(1) == 1, "T12: доступ увімкнено");
+    CHECK(dmrRctlAllowMask() == 0, "T12: свіжий блок -- маска порожня");
+    CHECK(dmrRctlCommandAllowed(DMR_RCTL_CMD_CHECK_REQ) == 0, "T12: радіоперевірка ЗАБОРОНЕНА за замовчуванням");
+
+    /* T13: вмикаємо лише радіоперевірку -- решта лишається забороненою */
+    CHECK(dmrRctlConfigSetAllow(DMR_RCTL_ALLOW_CHECK) == 1, "T13: маску записано");
+    CHECK(dmrRctlCommandAllowed(DMR_RCTL_CMD_CHECK_REQ) == 1, "T13: радіоперевірка дозволена");
+    CHECK(dmrRctlCommandAllowed(DMR_RCTL_CMD_STUN) == 0, "T13: блокування НЕ дозволене");
+    CHECK(dmrRctlCommandAllowed(DMR_RCTL_CMD_MONITOR_START) == 0, "T13: прослуховування НЕ дозволене");
+    CHECK(dmrRctlCommandAllowed(DMR_RCTL_CMD_REVIVE) == 0, "T13: розблокування НЕ дозволене");
+
+    /* T14: головний перемикач перекриває все, але виставлені біти НЕ губляться */
+    CHECK(dmrRctlConfigSetEnabled(0) == 1, "T14: доступ вимкнено");
+    CHECK(dmrRctlCommandAllowed(DMR_RCTL_CMD_CHECK_REQ) == 0, "T14: вимкнений доступ забороняє навіть дозволену команду");
+    CHECK(dmrRctlAllowMask() == 0, "T14: робоча маска порожня, поки доступ вимкнено");
+    CHECK(dmrRctlConfigAllowRaw() == DMR_RCTL_ALLOW_CHECK, "T14: але сира маска збережена (меню не втратить налаштування)");
+
+    /* T15: старий блок версії 2 -> лише радіоперевірка, а не всі права.
+     * Оновлення прошивки не має мовчки роздавати дозволи, яких власник не вмикав. */
+    mock_codeplug_clear();
+    len = pack_block(buf, (int)sizeof buf, 2, 1);
+    mock_codeplug_set_block(CODEPLUG_CUSTOM_DATA_TYPE_RCTL_CONFIG, buf, len);
+    dmrRctlConfigReload();
+    CHECK(dmrRctlCommandAllowed(DMR_RCTL_CMD_CHECK_REQ) == 1, "T15: блок v2 -> радіоперевірка дозволена");
+    CHECK(dmrRctlCommandAllowed(DMR_RCTL_CMD_STUN) == 0, "T15: блок v2 -> блокування НЕ дозволене");
+    CHECK(dmrRctlCommandAllowed(DMR_RCTL_CMD_MONITOR_START) == 0, "T15: блок v2 -> прослуховування НЕ дозволене");
+
+    /* T16: невідомий код команди -> заборонено (fail closed) */
+    mock_codeplug_clear();
+    dmrRctlConfigReload();
+    dmrRctlConfigSetEnabled(1);
+    dmrRctlConfigSetAllow(DMR_RCTL_ALLOW_ALL);
+    CHECK(dmrRctlCommandAllowed(DMR_RCTL_CMD_CHECK_REQ) == 1, "T16: при повній масці перевірка дозволена");
+    CHECK(dmrRctlCommandAllowed(99) == 0, "T16: невідома команда заборонена навіть при повній масці");
 
     if (fails)
     {
