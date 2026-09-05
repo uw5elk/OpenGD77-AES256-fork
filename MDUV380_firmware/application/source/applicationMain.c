@@ -674,9 +674,11 @@ void applicationMainTask(void)
 
 				if (!rctlStunned)
 				{
-					// Вхід у сон -- один раз: замовкнути.
+					// Вхід у сон -- один раз: замовкнути й прибрати будь-яке віконце-сповіщення
+					// (гучність тощо), щоб воно не лишилось на екрані.
 					voicePromptsTerminateNoTail();
 					soundStopMelody();
+					uiNotificationHide(true);
 					rctlStunned = true;
 					rctlStunBlankMs = 0;   // форсуємо негайний перший перемалюнок нижче
 				}
@@ -1577,6 +1579,18 @@ void applicationMainTask(void)
 		}
 
 		int8_t latestVolume = getVolumeControl();
+#if defined(ENABLE_DMR_DATA) && defined(ENABLE_AES)
+		if (rctlStunned)
+		{
+			// У сні регулятор гучності не показує своє віконце -- рація має лишатись
+			// "мертвою". Значення все одно відстежуємо, щоб на пробудженні гучність не
+			// стрибнула й не блимнув індикатор.
+			lastVolume = latestVolume;
+			lastDisplayedVolume = latestVolume;
+			volumeIsStillChanging = false;
+		}
+		else
+#endif
 		if (latestVolume != lastVolume)
 		{
 			volumeIsStillChanging = true;
