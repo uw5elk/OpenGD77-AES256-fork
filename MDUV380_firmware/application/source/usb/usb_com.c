@@ -89,6 +89,7 @@ enum CPS_ACCESS_AREA
 #include "crypto/dmr_aes_hook.h"
 #include "functions/dmr_data.h"
 #include "functions/dmr_sms.h"
+#include "functions/dmr_rctl_cap.h"
 static void handleCPSRequest(void);
 
 volatile int com_request = 0;
@@ -1849,6 +1850,31 @@ static void cpsHandleCommand(void)
 				replyLength = 2;
 				return; // bypass the trailing generic '-' reply
 			}
+		case 0x98: // DIAG: arm/disarm сирого захоплення data-burst для реверсу стокового
+			   // протоколу керування (RCTL_COMPAT.md). [2]=1 arm / 0 disarm. Reply:[cmd,armed]
+			dmrRctlCapArm(com_requestbuffer[2] & 0x01);
+			usbComSendBuf[0] = com_requestbuffer[0];
+			usbComSendBuf[1] = (uint8_t)(dmrRctlCapArmed() ? 1 : 0);
+			hasToReply = true;
+			replyLength = 2;
+			return; // bypass the trailing generic '-' reply
+		case 0x99: // DIAG: dump захоплених burst -> [cmd,len_hi,len_lo, count,dropHi,dropLo,armed,
+			   //  далі count x (seq,type,12 байт)]. Див. dmrRctlCapDump().
+			{
+				int n = dmrRctlCapDump((uint8_t *)&usbComSendBuf[3], COM_BUFFER_SIZE - 3);
+				usbComSendBuf[0] = com_requestbuffer[0];
+				usbComSendBuf[1] = (uint8_t)((n >> 8) & 0xFF);
+				usbComSendBuf[2] = (uint8_t)(n & 0xFF);
+				hasToReply = true;
+				replyLength = n + 3;
+				return; // bypass the trailing generic '-' reply
+			}
+		case 0x9A: // DIAG: скинути кільце захоплення
+			dmrRctlCapReset();
+			usbComSendBuf[0] = com_requestbuffer[0];
+			hasToReply = true;
+			replyLength = 1;
+			break;
 #endif
 #endif
 		case 0:
