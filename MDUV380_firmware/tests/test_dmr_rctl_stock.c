@@ -105,6 +105,43 @@ int main(void)
 		CHECK(dmr_rctl_stock_should_act(DMR_RCTL_STOCK_CHECK, 0, US, ALL) == 0, "dst=0 -> ігнор");
 	}
 
+	/* --- КВИТАНЦІЯ на Radio Check: байт-у-байт проти реального захвату (2026-09-11) --- */
+	{
+		/* Ефір: RT4D(2550299) перевіряє стокову(2550333); квитанція стокової:
+		 *   a4 10 00 80 26ea1b(RT4D=хто питав) 26ea3d(стокова=хто відповідає) 3e43 */
+		const uint32_t RT4D = 2550299u, STOCKID = 2550333u;
+		dmr_rctl_stock_ack(RT4D, STOCKID, b);
+		CHECK(eqhex(b, "a4 10 00 80 26 ea 1b 26 ea 3d 3e 43"), "квитанція байт-у-байт (реальний захват)");
+
+		/* розбір квитанції: requester/responder правильні */
+		uint32_t rq = 0, rp = 0;
+		int ok = dmr_rctl_stock_parse_ack(b, &rq, &rp);
+		CHECK(ok && rq == RT4D && rp == STOCKID, "розбір квитанції (requester/responder)");
+
+		/* квитанція НЕ впізнається як команда (arg 0x80 не входить у CMD_ARG) */
+		CHECK(dmr_rctl_stock_parse(b, NULL, NULL, NULL) == 0, "квитанція не приймається за команду");
+		/* команда Check НЕ впізнається як квитанція (arg 0x00 != 0x80) */
+		dmr_rctl_stock_command(DMR_RCTL_STOCK_CHECK, RT4D, STOCKID, b);
+		CHECK(dmr_rctl_stock_parse_ack(b, NULL, NULL) == 0, "команда Check не приймається за квитанцію");
+
+		/* битий CRC квитанції відкидається */
+		dmr_rctl_stock_ack(RT4D, STOCKID, b); b[10] ^= 0x55;
+		CHECK(dmr_rctl_stock_parse_ack(b, NULL, NULL) == 0, "битий CRC квитанції відкидається");
+
+		/* черга TX квитанції: рівно ACK_REPEATS бургстів CSBK, кожен розбирається як квитанція */
+		uint8_t q[DMR_RCTL_STOCK_ACK_REPEATS * 13];
+		int n = dmr_rctl_stock_build_ack_tx(RT4D, STOCKID, q);
+		CHECK(n == DMR_RCTL_STOCK_ACK_REPEATS, "черга квитанції = ACK_REPEATS бургстів");
+		int okq = 1;
+		for (int i = 0; i < n; i++)
+		{
+			if (q[i * 13] != DMR_RCTL_STOCK_BURST_CSBK) { okq = 0; }
+			uint32_t a = 0, c = 0;
+			if (!dmr_rctl_stock_parse_ack(q + i * 13 + 1, &a, &c) || a != RT4D || c != STOCKID) { okq = 0; }
+		}
+		CHECK(okq, "усі бургсти квитанції валідні й однакові");
+	}
+
 	printf(fails ? "\nПРОВАЛЕНО: %d\n" : "\nУсі тести пройдено\n", fails);
 	return fails ? 1 : 0;
 }

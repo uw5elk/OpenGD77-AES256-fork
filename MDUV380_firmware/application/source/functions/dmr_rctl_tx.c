@@ -271,6 +271,7 @@ static void dmrRctlStockProcessPending(void)
 
 	dmr_rctl_stock_cmd_t cmd = (dmr_rctl_stock_cmd_t)s_stockCmd;
 	uint32_t dst = s_stockDst;
+	uint32_t requester = s_stockSrc;   /* хто нас перевіряє -- йому й адресуємо квитанцію */
 
 	s_stockSeen++;
 	s_stockLastSrc = s_stockSrc;
@@ -283,10 +284,21 @@ static void dmrRctlStockProcessPending(void)
 			s_stockActed[cmd]++;
 		}
 
-		/* Дії (крок 2.4). Поки реалізовано лише блокування -- воно не потребує ACK і
-		 * повністю тестується. Check(ACK)/Monitor(мік) -- наступні інкременти. */
 		switch (cmd)
 		{
+			case DMR_RCTL_STOCK_CHECK:
+				/* Квитанція «я на зв'язку»: командир (стокова/RT4D) показує нашу рацію
+				 * онлайн. Формат знято з ефіру (RCTL_COMPAT.md §5a). Слот-точність не
+				 * потрібна -- командир чекає відповідь ~1.3 с; наш data-TX стартує за
+				 * ~100 мс. Не відповідаємо, якщо рація заблокована (stun): заблокована
+				 * має виглядати «мертвою», тож і на Check вона мовчить -- як стокова. */
+				if (!dmrRctlIsInhibited())
+				{
+					uint8_t q[DMR_RCTL_STOCK_ACK_REPEATS * 13];
+					int n = dmr_rctl_stock_build_ack_tx(requester, trxDMRID, q);
+					if (n > 0) { dmrDataTxLoad(q, (uint8_t)n); }
+				}
+				break;
 			case DMR_RCTL_STOCK_DISABLE:
 				dmrRctlSetInhibited(1);   /* заблокувати (переживає перезавантаження) */
 				break;
@@ -294,7 +306,7 @@ static void dmrRctlStockProcessPending(void)
 				dmrRctlSetInhibited(0);   /* розблокувати */
 				break;
 			default:
-				break;                    /* Check/Monitor -- поки лише лічимо */
+				break;                    /* Monitor(мік) -- наступний інкремент */
 		}
 	}
 }

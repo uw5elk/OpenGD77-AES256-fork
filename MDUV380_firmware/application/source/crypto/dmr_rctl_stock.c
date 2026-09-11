@@ -74,6 +74,44 @@ int dmr_rctl_stock_build_tx(dmr_rctl_stock_cmd_t cmd, uint32_t src, uint32_t dst
 	return n;
 }
 
+/* ---- Квитанція на Radio Check (формат знято з ефіру, див. .h і RCTL_COMPAT.md §5a) ----
+ * Той самий опкод/FID, що в команді Check; відрізняє її лише керуючий байт 0x80
+ * (старший біт = «це відповідь»). Адреси віддзеркалюються з команди БЕЗ перестановки:
+ * поле в позиції src несе того, хто питав, поле в позиції dst -- того, хто відповідає. */
+void dmr_rctl_stock_ack(uint32_t requester, uint32_t responder, uint8_t out12[12])
+{
+	out12[0] = CMD_B0[DMR_RCTL_STOCK_CHECK];   /* 0xA4 -- як у команді Check */
+	out12[1] = STOCK_FID;
+	out12[2] = 0x00;
+	out12[3] = DMR_RCTL_STOCK_ACK_ARG;         /* 0x80 */
+	out12[4] = (uint8_t)(requester >> 16); out12[5] = (uint8_t)(requester >> 8); out12[6] = (uint8_t)requester;
+	out12[7] = (uint8_t)(responder >> 16); out12[8] = (uint8_t)(responder >> 8); out12[9] = (uint8_t)responder;
+	csbk_crc(out12);
+}
+
+int dmr_rctl_stock_build_ack_tx(uint32_t requester, uint32_t responder, uint8_t *q)
+{
+	for (int i = 0; i < DMR_RCTL_STOCK_ACK_REPEATS; i++)
+	{
+		q[i * 13] = DMR_RCTL_STOCK_BURST_CSBK;
+		dmr_rctl_stock_ack(requester, responder, q + i * 13 + 1);
+	}
+	return DMR_RCTL_STOCK_ACK_REPEATS;
+}
+
+int dmr_rctl_stock_parse_ack(const uint8_t in12[12], uint32_t *requester, uint32_t *responder)
+{
+	if (in12[0] != CMD_B0[DMR_RCTL_STOCK_CHECK] || in12[1] != STOCK_FID) { return 0; }
+	if (in12[2] != 0x00 || in12[3] != DMR_RCTL_STOCK_ACK_ARG) { return 0; }
+
+	uint16_t want = (uint16_t)((in12[10] << 8) | in12[11]);
+	if ((uint16_t)(crc16d(in12, 10) ^ 0xA5A5) != want) { return 0; }
+
+	if (requester) { *requester = ((uint32_t)in12[4] << 16) | ((uint32_t)in12[5] << 8) | in12[6]; }
+	if (responder) { *responder = ((uint32_t)in12[7] << 16) | ((uint32_t)in12[8] << 8) | in12[9]; }
+	return 1;
+}
+
 int dmr_rctl_stock_parse(const uint8_t in12[12], dmr_rctl_stock_cmd_t *cmd, uint32_t *src, uint32_t *dst)
 {
 	/* Обгортка: FID=0x10, байт2=0x00; преамбула (0xBD) сюди не підходить -> 0. */
