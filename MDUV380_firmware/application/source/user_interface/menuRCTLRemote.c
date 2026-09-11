@@ -62,7 +62,7 @@
 
 #if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
 
-enum { RCTL_PICK_CMD = 0, RCTL_ENTRY, RCTL_PICK_CONTACT, RCTL_RESULT };
+enum { RCTL_PICK_CMD = 0, RCTL_ENTRY, RCTL_PICK_CONTACT, RCTL_WAIT, RCTL_RESULT };
 
 // ЧАС У МІЛІСЕКУНДАХ, а не в тіках.
 //
@@ -78,8 +78,13 @@ enum { RCTL_PICK_CMD = 0, RCTL_ENTRY, RCTL_PICK_CONTACT, RCTL_RESULT };
 //
 // Тепер час рахується ticksTimer_t -- реальними мілісекундами, як у решті прошивки.
 // Такий код не залежить від частоти головного циклу й не зламається, якщо її змінять.
-// (Очікування ACK тимчасово прибрано: стокову ACK-відповідь ще не парсимо -- крок 2.5.)
 #define RCTL_RESULT_HOLD_MS     20000U
+
+// Скільки чекати квитанцію після Radio Check. Наш власний запит займає ефір ~0.7 с
+// (16 преамбул + команда по 30 мс, плюс ~100 мс на keying), і лише ПІСЛЯ цього ціль
+// відповідає (стокова -- за ~37 мс). 4 с -- з великим запасом; командир-стокова, для
+// порівняння, повторює запит раз на ~1.3 с.
+#define RCTL_WAIT_ACK_MS         4000U
 
 // Персистентно між тіками, в CCM -- той самий idiom, що й menuMessages.c/menuAESKeys.c.
 static struct
@@ -88,7 +93,12 @@ static struct
 	uint8_t  cmd;           // обрана команда: dmr_rctl_stock_cmd_t (Check/Monitor/Enable/Disable)
 	char     rcpt[10];      // ID цілі, що вводиться/обирається
 	int8_t   sendResult;    // повернене dmrRctlStockSend(): 0 = надіслано, <0 = помилка TX
-	ticksTimer_t holdTimer; // показ результату -- реальний час, не тіки
+	uint8_t  waitedAck;     // 1 = це був Radio Check, і ми чекали квитанцію
+	uint8_t  gotAck;        // 1 = квитанція прийшла (інакше -- тайм-аут)
+	uint32_t ackGenAtSend;  // покоління ACK на момент надсилання (щоб не взяти стару відповідь)
+	uint32_t ackFrom;       // хто відповів
+	uint32_t ackAgeSecs;    // скільки секунд тому
+	ticksTimer_t holdTimer; // показ результату / очікування -- реальний час, не тіки
 } s_rc DMR_AES_CCM;
 
 // Пункти екрана вибору команди -- у ПОРЯДКУ dmr_rctl_stock_cmd_t (Check,Monitor,Enable,Disable),
@@ -108,6 +118,7 @@ static const char *cmdName(int i)
 static void updatePickCmd(void);
 static void updateEntry(void);
 static void updatePickContact(void);
+static void updateWait(void);
 static void updateResult(void);
 static void pickCmdEvent(uiEvent_t *ev);
 static void entryEvent(uiEvent_t *ev);
@@ -138,11 +149,43 @@ menuStatus_t menuRCTLRemote(uiEvent_t *ev, bool isFirstRun)
 
 	menuStatus_t exitCode = MENU_STATUS_SUCCESS;
 
+	if (s_rc.view == RCTL_WAIT)
+	{
+		// Чекаємо квитанцію на Radio Check. Ознака "прийшла НОВА" -- зросле покоління
+		// ACK (а не просто наявність старого стану), тож повторна перевірка тієї ж цілі
+		// не показує торішню відповідь.
+		if (dmrRctlAckGeneration() != s_rc.ackGenAtSend)
+		{
+			uint32_t from = 0, ageMs = 0;
+			if (dmrRctlLastCheckAck(&from, &ageMs))
+			{
+				s_rc.gotAck = 1;
+				s_rc.ackFrom = from;
+				s_rc.ackAgeSecs = ageMs / 1000U;
+			}
+			ticksTimerStart(&s_rc.holdTimer, RCTL_RESULT_HOLD_MS);
+			s_rc.view = RCTL_RESULT;
+			updateResult();
+			return exitCode;
+		}
+		if (ev->hasEvent && (ev->events & KEY_EVENT))
+		{
+			gotoPickCmd();   // RED/будь-яка клавіша -- скасувати очікування
+			return exitCode;
+		}
+		if (ticksTimerHasExpired(&s_rc.holdTimer))
+		{
+			s_rc.gotAck = 0;   // тайм-аут -> "Немає відповіді"
+			ticksTimerStart(&s_rc.holdTimer, RCTL_RESULT_HOLD_MS);
+			s_rc.view = RCTL_RESULT;
+			updateResult();
+		}
+		return exitCode;
+	}
+
 	if (s_rc.view == RCTL_RESULT)
 	{
-		// Результат надсилання показано; будь-яка клавіша або тайм-аут -> назад до вибору
-		// команди. ACK від цілі тут поки НЕ очікується: формат стокової ACK-відповіді ще
-		// не реалізовано в RX (спершу треба захопити його з ефіру -- крок 2.5 RCTL_COMPAT.md).
+		// Результат показано; будь-яка клавіша або тайм-аут -> назад до вибору команди.
 		if (ev->hasEvent && (ev->events & KEY_EVENT))
 		{
 			gotoPickCmd();
@@ -242,9 +285,24 @@ static void doSend(void)
 	uint32_t dst = (uint32_t)strtoul(s_rc.rcpt, NULL, 10);
 	if (dst == 0) { return; }   // порожній/нульовий ID -- нічого не робимо, лишаємось на ENTRY
 
-	// Шлемо у СТОКОВОМУ форматі (сумісність із заводською TYT). ACK поки не очікуємо
-	// (формат стокової відповіді ще не в RX) -- показуємо лише факт надсилання.
+	// Шлемо у СТОКОВОМУ форматі (сумісність із заводською TYT).
 	s_rc.sendResult = (int8_t)dmrRctlStockSend((int)s_rc.cmd, dst);
+	s_rc.waitedAck = 0;
+	s_rc.gotAck = 0;
+
+	// Radio Check -- єдина команда, на яку ціль відповідає квитанцією (формат знято з
+	// ефіру, RCTL_COMPAT.md §5a). Запам'ятовуємо ПОКОЛІННЯ ACK до очікування, щоб стара
+	// відповідь не зійшла за нову, і чекаємо на екрані "Перевірка...".
+	if ((s_rc.sendResult == 0) && (s_rc.cmd == DMR_RCTL_STOCK_CHECK))
+	{
+		s_rc.waitedAck = 1;
+		s_rc.ackGenAtSend = dmrRctlAckGeneration();
+		ticksTimerStart(&s_rc.holdTimer, RCTL_WAIT_ACK_MS);
+		s_rc.view = RCTL_WAIT;
+		updateWait();
+		return;
+	}
+
 	ticksTimerStart(&s_rc.holdTimer, RCTL_RESULT_HOLD_MS);
 	s_rc.view = RCTL_RESULT;
 	updateResult();
@@ -378,6 +436,17 @@ static void pickContactEvent(uiEvent_t *ev)
 	}
 }
 
+/* ============================= WAIT ACK ================================= */
+static void updateWait(void)
+{
+	displayClearBuf();
+	menuDisplayTitle(RCTL_TITLE);
+	displayPrintCentered(40, cmdName(s_rc.cmd), FONT_SIZE_2);
+	displayPrintCentered(64, RCTL_WAITING, FONT_SIZE_3);
+	displayPrintCentered(112, RCTL_HINT_CANCEL, FONT_SIZE_1);
+	displayRender();
+}
+
 /* ============================ RESULT ==================================== */
 static void updateResult(void)
 {
@@ -397,9 +466,28 @@ static void updateResult(void)
 		snprintf(buf, sizeof buf, RCTL_FAIL_FMT, why, s_rc.sendResult);
 		displayPrintCentered(72, buf, FONT_SIZE_2);
 	}
+	else if (s_rc.waitedAck)
+	{
+		// Radio Check: показуємо результат перевірки, а не просто факт відправки.
+		displayPrintCentered(40, cmdName(s_rc.cmd), FONT_SIZE_2);
+		if (s_rc.gotAck)
+		{
+			char buf[24];
+			displayPrintCentered(64, RCTL_ACK_OK, FONT_SIZE_3);
+			snprintf(buf, sizeof buf, RCTL_ACK_AGE_FMT,
+			         (unsigned long)s_rc.ackFrom, (unsigned long)s_rc.ackAgeSecs);
+			// FONT_SIZE_1 (6 px/символ): у FONT_SIZE_2 рядок з 8-значним ID і двозначними
+			// секундами виходить за 160 px і обрізається на рації.
+			displayPrintCentered(90, buf, FONT_SIZE_1);
+		}
+		else
+		{
+			displayPrintCentered(64, RCTL_TIMEOUT, FONT_SIZE_3);
+		}
+	}
 	else
 	{
-		// показуємо надіслану команду + факт відправки; ACK ще не парсимо (крок 2.5)
+		// Решта команд квитанції не мають -- показуємо лише факт відправки.
 		displayPrintCentered(40, cmdName(s_rc.cmd), FONT_SIZE_2);
 		displayPrintCentered(64, RCTL_SENT, FONT_SIZE_3);
 	}

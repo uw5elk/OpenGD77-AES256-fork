@@ -222,6 +222,11 @@ static volatile uint8_t  s_stockCmd;
 static volatile uint32_t s_stockSrc;
 static volatile uint32_t s_stockDst;
 
+/* Квитанція на НАШ Radio Check (ми -- командир). ISR лише фіксує факт, облік часу й
+ * поколінь -- у tick, як і для команд. */
+static volatile uint8_t  s_stockAckPending;
+static volatile uint32_t s_stockAckFrom;
+
 /* Діагностика (тихе підтвердження прийому по USB, без напису на екрані): */
 static volatile uint32_t s_stockSeen;                            /* упізнаних команд на нашу адресу (до гейта) */
 static volatile uint32_t s_stockLastSrc;                         /* хто останній командував */
@@ -232,6 +237,26 @@ void dmrRctlStockRxBurst(const uint8_t *p12)
 {
 	dmr_rctl_stock_cmd_t cmd;
 	uint32_t src, dst;
+
+	/* Спершу -- квитанція на НАШ запит (форк як командир). Вона має той самий опкод,
+	 * що й команда Check, і відрізняється лише керуючим байтом (0x80), тож
+	 * dmr_rctl_stock_parse() її не впізнає -- перевіряємо окремо й раніше.
+	 * Формат знято з ефіру, див. RCTL_COMPAT.md §5a. */
+	{
+		uint32_t requester = 0, responder = 0;
+		if (dmr_rctl_stock_parse_ack(p12, &requester, &responder))
+		{
+			/* Реагуємо лише на відповідь САМЕ на наш запит -- чужі квитанції в ефірі
+			 * не мають вмикати нам "рація на зв'язку". */
+			if (requester == trxDMRID)
+			{
+				s_stockAckFrom = responder;
+				s_stockAckPending = 1;
+			}
+			return;
+		}
+	}
+
 	/* parse робить і перевірку CRC -- шум/чужі кадри сюди не пройдуть */
 	if (!dmr_rctl_stock_parse(p12, &cmd, &src, &dst)) { return; }
 	if (dst != trxDMRID) { return; }   /* не нам -- мовчки ігноруємо (RCTL індивідуальний) */
@@ -266,6 +291,17 @@ void dmrRctlStockRxDiagReset(void)
  * додамо наступними інкрементами -- кожну окремо й із перевіркою на залізі. */
 static void dmrRctlStockProcessPending(void)
 {
+	/* Квитанція на наш запит -- окремо від команд: вона нічого не виконує, лише оновлює
+	 * стан "рація на зв'язку" для екрана Від. керування. */
+	if (s_stockAckPending)
+	{
+		s_stockAckPending = 0;
+		s_lastAckFromId = s_stockAckFrom;
+		s_lastAckMillis = ticksGetMillis();
+		s_haveAck = 1;
+		s_ackGen++;
+	}
+
 	if (!s_stockPending) { return; }
 	s_stockPending = 0;
 
