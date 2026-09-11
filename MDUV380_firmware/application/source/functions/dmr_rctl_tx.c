@@ -247,6 +247,7 @@ static volatile uint32_t s_winAny;       /* усі переривання "пр�
 static volatile uint32_t s_winData;      /* з них із data-синхронізацією */
 static volatile uint32_t s_winFirstMs;   /* затримка до першого data-бургста (0 = не було) */
 static volatile uint32_t s_winFirstInfo; /* type | crcOk<<8 | txEnabled<<9 */
+static volatile uint32_t s_winFirstAnyMs; /* затримка до ПЕРШОГО переривання будь-якого класу */
 static volatile uint32_t s_intTotal;      /* УСІ переривання "прийнято дані" від обнулення -- перевірка самого хука */
 
 void dmrRctlNoteOwnTxEnd(uint32_t txFinishMs)
@@ -257,6 +258,7 @@ void dmrRctlNoteOwnTxEnd(uint32_t txFinishMs)
 	s_winData = 0;
 	s_winFirstMs = 0;
 	s_winFirstInfo = 0;
+	s_winFirstAnyMs = 0;
 	s_winArmed = 1;
 }
 
@@ -270,6 +272,13 @@ void dmrRctlNoteRxDataInt(int rxDataType, int rxSyncClass, int crcOk, int txEnab
 	if (dt > RCTL_WIN_MS) { s_winArmed = 0; return; }
 
 	s_winAny++;
+	if (s_winFirstAnyMs == 0)
+	{
+		/* Ось це й є міра глухоти: через скільки мс після власної передачі чіп
+		 * узагалі зміг щось почути. На відміну від data-бургстів, голосовий сигнал
+		 * дає переривання безперервно, тож контрольний PTT дає чисте число. */
+		s_winFirstAnyMs = (dt == 0) ? 1 : dt;
+	}
 	if (rxSyncClass == 2)   /* SYNC_CLASS_DATA */
 	{
 		s_winData++;
@@ -326,7 +335,7 @@ void dmrRctlStockRxBurst(const uint8_t *p12)
 	s_stockPending = 1;
 }
 
-void dmrRctlStockRxDiag(uint32_t out[16])
+void dmrRctlStockRxDiag(uint32_t out[17])
 {
 	out[0] = s_stockSeen;
 	out[1] = s_stockLastSrc;
@@ -344,6 +353,7 @@ void dmrRctlStockRxDiag(uint32_t out[16])
 	out[13] = s_winFirstInfo;
 	out[14] = s_winTxEndMs;
 	out[15] = s_intTotal;
+	out[16] = s_winFirstAnyMs;
 }
 
 void dmrRctlStockRxDiagReset(void)
@@ -361,6 +371,7 @@ void dmrRctlStockRxDiagReset(void)
 	s_winFirstInfo = 0;
 	s_winTxEndMs = 0;
 	s_intTotal = 0;
+	s_winFirstAnyMs = 0;
 }
 
 /* Обробити відкладену стокову команду (з tick, поза ISR). Поки лише лічимо -- це тихо
