@@ -29,13 +29,10 @@
 
 #if defined(ENABLE_AES)
 
-// List layout: 15 key-slot rows (keyId 1..15) then the global TX-key row.
+// List layout: 15 key-slot rows (keyId 1..15). Global TX-key рядок прибрано (2026-09-11):
+// шифрування вибирається лише в налаштуваннях каналу, за замовчуванням вимкнено.
 #define AES_NUM_KEYS        15
-enum
-{
-	AES_ITEM_GLOBAL_TX = AES_NUM_KEYS, // 15
-	AES_NUM_ITEMS                      // 16
-};
+#define AES_NUM_ITEMS       AES_NUM_KEYS
 
 // Hex editor grid (160x128 colour screen). Pixel coords; tweak on hardware if needed.
 #define GRID_COLS    16
@@ -50,8 +47,6 @@ enum
 static struct
 {
 	uint16_t keyMask;     // bit k set => keyId k (1..15) has a stored key
-	uint8_t  txKeyId;     // working copy of the global TX selector (0 = off)
-	bool     dirtyTx;     // global TX selector changed (persist on exit)
 	bool     editing;     // hex editor active
 	uint8_t  editKeyId;   // key id being edited (1..15)
 	int16_t  editPos;     // cursor nibble 0..63
@@ -71,28 +66,16 @@ static char hexChar(uint8_t nibble)
 	return (nibble < 10) ? (char)('0' + nibble) : (char)('A' + nibble - 10);
 }
 
-static void applyChanges(void)
-{
-	if (s_aes.dirtyTx)
-	{
-		dmrAesEnsureCustomDataRegion();
-		dmrAesSetTxKeyId(s_aes.txKeyId);
-		s_aes.dirtyTx = false;
-	}
-}
-
 menuStatus_t menuAESKeys(uiEvent_t *ev, bool isFirstRun)
 {
 	if (isFirstRun)
 	{
 		s_aes.editing  = false;
-		s_aes.dirtyTx  = false;
 		s_aes.editPos  = 0;
 		s_aes.editKeyId = 0;
 		memset(s_aes.nib, 0, sizeof s_aes.nib);
 
 		s_aes.keyMask  = dmrAesGetKeyMask();
-		s_aes.txKeyId  = dmrAesTxKeyId();
 
 		menuDataGlobal.currentItemIndex = 0;
 		menuDataGlobal.numItems = AES_NUM_ITEMS;
@@ -119,8 +102,7 @@ menuStatus_t menuAESKeys(uiEvent_t *ev, bool isFirstRun)
 
 static void updateScreen(void)
 {
-	char buf[16 + LANGUAGE_TEXTS_LENGTH];  // "Global TX key:" prefix + max language value (off); avoids -Wformat-truncation
-	char vb[12];
+	char buf[16 + LANGUAGE_TEXTS_LENGTH];
 
 	displayClearBuf();
 	menuDisplayTitle("AES Keys");
@@ -139,24 +121,10 @@ static void updateScreen(void)
 			break;
 		}
 
-		if (mNum < AES_NUM_KEYS)
 		{
 			int keyId = mNum + 1;
 			value = (s_aes.keyMask & (1u << keyId)) ? "set" : "---";
 			snprintf(buf, sizeof buf, "Key %d:%s", keyId, value);
-		}
-		else if (mNum == AES_ITEM_GLOBAL_TX)
-		{
-			if (s_aes.txKeyId == 0)
-			{
-				value = currentLanguage->off;
-			}
-			else
-			{
-				snprintf(vb, sizeof vb, "%d", s_aes.txKeyId);
-				value = vb;
-			}
-			snprintf(buf, sizeof buf, "Global TX key:%s", value);
 		}
 
 		// Colour the value after the ':' like the other option menus.
@@ -166,21 +134,6 @@ static void updateScreen(void)
 	}
 
 	displayRender();
-}
-
-static void changeSetting(int idx, int dir)
-{
-	if (idx == AES_ITEM_GLOBAL_TX)
-	{
-		int v = (int)s_aes.txKeyId + dir;
-		if (v < 0)  { v = 0; }
-		if (v > 15) { v = 15; }
-		if ((uint8_t)v != s_aes.txKeyId)
-		{
-			s_aes.txKeyId = (uint8_t)v;
-			s_aes.dirtyTx = true;
-		}
-	}
 }
 
 static void handleEvent(uiEvent_t *ev, menuStatus_t *exitCode)
@@ -206,14 +159,13 @@ static void handleEvent(uiEvent_t *ev, menuStatus_t *exitCode)
 	}
 	if (KEYCHECK_SHORTUP(ev->keys, KEY_RED))
 	{
-		applyChanges();
 		menuSystemPopPreviousMenu();
 		return;
 	}
 
 	int idx = menuDataGlobal.currentItemIndex;
 
-	if (idx < AES_NUM_KEYS)
+	// Усі рядки -- слоти ключів (1..15). Global TX key прибрано.
 	{
 		int keyId = idx + 1;
 
@@ -234,27 +186,6 @@ static void handleEvent(uiEvent_t *ev, menuStatus_t *exitCode)
 			s_aes.editPos  = 0;
 			memset(s_aes.nib, 0, sizeof s_aes.nib);
 			editorUpdateScreen();
-			return;
-		}
-	}
-	else
-	{
-		if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN))
-		{
-			applyChanges();
-			menuSystemPopPreviousMenu();
-			return;
-		}
-		if (KEYCHECK_PRESS(ev->keys, KEY_RIGHT))
-		{
-			changeSetting(idx, +1);
-			updateScreen();
-			return;
-		}
-		if (KEYCHECK_PRESS(ev->keys, KEY_LEFT))
-		{
-			changeSetting(idx, -1);
-			updateScreen();
 			return;
 		}
 	}

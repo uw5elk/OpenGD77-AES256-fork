@@ -689,11 +689,10 @@ static void updateScreen(bool isFirstRun, bool allowedToSpeakUpdate)
 						{
 							rightSideConst = currentLanguage->n_a;
 						}
-						else if (codeplugChannelGetAesKeySlot(&tmpChannel) == 0)
-						{
-							strcpy(rightSideVar, "Inherit");
-						}
-						else if (codeplugChannelGetAesKeySlot(&tmpChannel) == 0xFF)
+						// Global TX key/"Inherit" прибрано: лише Off або конкретний ключ.
+						// Старий slot 0 (спадок) показуємо як Off -- він тепер = без шифру.
+						else if ((codeplugChannelGetAesKeySlot(&tmpChannel) == 0) ||
+								(codeplugChannelGetAesKeySlot(&tmpChannel) == 0xFF))
 						{
 							strcpy(rightSideVar, "Off");
 						}
@@ -1388,10 +1387,11 @@ static void handleEvent(uiEvent_t *ev)
 				case CH_DETAILS_ENCRYPT:
 					if ((rootMenuIsVFO == false) && (tmpChannel.chMode == RADIO_MODE_DIGITAL))
 					{
+						// Порядок: Off, Key 1 ... Key 15 (без Inherit). 0 = Off.
 						uint8_t slot = codeplugChannelGetAesKeySlot(&tmpChannel);
-						int eidx = (slot == 0) ? 0 : ((slot == 0xFF) ? 16 : slot);
-						if (eidx < 16) { eidx++; }
-						codeplugChannelSetAesKeySlot(&tmpChannel, (eidx == 0) ? 0 : ((eidx == 16) ? 0xFF : (uint8_t)eidx));
+						int eidx = ((slot >= 1) && (slot <= 15)) ? slot : 0;
+						if (eidx < 15) { eidx++; }
+						codeplugChannelSetAesKeySlot(&tmpChannel, (eidx == 0) ? 0xFF : (uint8_t)eidx);
 					}
 					break;
 #endif
@@ -1652,10 +1652,11 @@ static void handleEvent(uiEvent_t *ev)
 				case CH_DETAILS_ENCRYPT:
 					if ((rootMenuIsVFO == false) && (tmpChannel.chMode == RADIO_MODE_DIGITAL))
 					{
+						// Порядок: Off, Key 1 ... Key 15 (без Inherit). 0 = Off.
 						uint8_t slot = codeplugChannelGetAesKeySlot(&tmpChannel);
-						int eidx = (slot == 0) ? 0 : ((slot == 0xFF) ? 16 : slot);
+						int eidx = ((slot >= 1) && (slot <= 15)) ? slot : 0;
 						if (eidx > 0) { eidx--; }
-						codeplugChannelSetAesKeySlot(&tmpChannel, (eidx == 0) ? 0 : ((eidx == 16) ? 0xFF : (uint8_t)eidx));
+						codeplugChannelSetAesKeySlot(&tmpChannel, (eidx == 0) ? 0xFF : (uint8_t)eidx);
 					}
 					break;
 #endif

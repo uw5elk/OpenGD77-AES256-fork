@@ -2451,24 +2451,20 @@ static void hrc6000DataTxStartBurst(void)
 // Backward compatible: a channel with slot == 0 behaves exactly as the global selector.
 static uint8_t hrc6000ResolveAesTxKeyId(void)
 {
-	uint8_t keyId = dmrAesTxKeyId(); // global default
-
+	// Global TX key прибрано (2026-09-11, прохання користувача): шифрування вибирається
+	// ЛИШЕ в налаштуваннях каналу. slot 1..15 -> цей ключ; усе інше (0 = старий "Inherit",
+	// 0xFF = Off, або поза діапазоном) -> без шифру. Тобто за замовчуванням TX чистий.
 	if (currentChannelData != NULL)
 	{
 		uint8_t chEnc = codeplugChannelGetAesKeySlot(currentChannelData);
 
-		if (chEnc == 0xFF)
+		if ((chEnc >= 1) && (chEnc < DMR_AES_MAX_KEYS))
 		{
-			keyId = 0;                 // per-channel: force clear
+			return chEnc;              // per-channel: use this key slot
 		}
-		else if ((chEnc >= 1) && (chEnc < DMR_AES_MAX_KEYS))
-		{
-			keyId = chEnc;             // per-channel: use this key slot
-		}
-		// chEnc == 0 (or an out-of-range value): inherit the global selector
 	}
 
-	return keyId;
+	return 0;                          // без шифру за замовчуванням
 }
 
 // Seed the per-call Message Indicator from the STM32 on-chip TRNG (RNG @ 0x50060800).

@@ -40,6 +40,10 @@
 #endif
 #define HAS_GPS            1
 #define LOG_GPS_DATA       1
+/* Форк для рацій БЕЗ GPS-приймача: лишаємо всю GPS/APRS-інфраструктуру (HAS_GPS),
+ * щоб APRS з фіксованою позицією й далі працював, але ХОВАЄМО пункти GPS у меню --
+ * без заліза вони лише плутають. Прибрати цей #define, щоб повернути пункти GPS. */
+#define FORK_NO_GPS_MENU   1
 #elif defined(PLATFORM_MD9600)
 #define HAS_GPS            1
 #define LOG_GPS_DATA       1

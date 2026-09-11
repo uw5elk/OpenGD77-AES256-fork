@@ -664,7 +664,7 @@ const menuItemNewData_t mainMenuItems[] =
 	{   7, MENU_LAST_HEARD      },
 	{ 150, MENU_RADIO_INFOS     },
 	{ 173, MENU_SATELLITE       },
-#if defined(HAS_GPS)
+#if defined(HAS_GPS) && !defined(FORK_NO_GPS_MENU)
 	{ 195, MENU_GPS		        },
 #endif
 #if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
