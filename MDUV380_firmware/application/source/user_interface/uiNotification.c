@@ -191,6 +191,13 @@ void uiNotificationRefresh(void)
 				int16_t fillW;
 				const char *title;
 
+				// Форк: фіксований яскраво-жовтий на темному тлі -- максимальна
+				// читабельність у русі/полі, незалежно від денної чи нічної теми
+				// (на білому тлі денної теми жовтий не читався б).
+				const uint16_t colBg  = PLATFORM_COLOUR_FORMAT_SWAP_BYTES(RGB888_TO_PLATFORM_COLOUR_FORMAT(0x0C0C14));
+				const uint16_t colFg  = PLATFORM_COLOUR_FORMAT_SWAP_BYTES(RGB888_TO_PLATFORM_COLOUR_FORMAT(0xFFE000));
+				const uint16_t colDec = PLATFORM_COLOUR_FORMAT_SWAP_BYTES(RGB888_TO_PLATFORM_COLOUR_FORMAT(0x786914));
+
 #if defined(HAS_SOFT_VOLUME)
 				if (notificationData.type == NOTIFICATION_TYPE_VOLUME)
 				{
@@ -217,15 +224,15 @@ void uiNotificationRefresh(void)
 				}
 
 				// Фон на весь екран
-				displayThemeApply(THEME_ITEM_FG_NOTIFICATION, THEME_ITEM_BG_NOTIFICATION);
+				displaySetForegroundAndBackgroundColours(colFg, colBg);
 				displayFillRect(0, 0, DISPLAY_SIZE_X, DISPLAY_SIZE_Y, true);
 
 				// Рамка
-				displayThemeApply(THEME_ITEM_FG_DECORATION, THEME_ITEM_BG_NOTIFICATION);
+				displaySetForegroundAndBackgroundColours(colDec, colBg);
 				displayDrawRect(1, 1, (DISPLAY_SIZE_X - 2), (DISPLAY_SIZE_Y - 2), false);
 
 				// Заголовок
-				displayThemeApply(THEME_ITEM_FG_NOTIFICATION, THEME_ITEM_BG_NOTIFICATION);
+				displaySetForegroundAndBackgroundColours(colFg, colBg);
 				strncpy(buffer, title, (SCREEN_LINE_BUFFER_SIZE - 1));
 				buffer[SCREEN_LINE_BUFFER_SIZE - 1] = 0;
 				displayPrintCentered(16, buffer, FONT_SIZE_3);
@@ -235,13 +242,13 @@ void uiNotificationRefresh(void)
 				displayPrintCentered(44, buffer, FONT_SIZE_4);
 
 				// Смуга-індикатор
-				displayThemeApply(THEME_ITEM_FG_DECORATION, THEME_ITEM_BG_NOTIFICATION);
+				displaySetForegroundAndBackgroundColours(colDec, colBg);
 				displayDrawRect(barX, barY, barW, barH, false);
 
 				fillW = (int16_t)(((barW - 4) * pct) / 100);
 				if (fillW > 0)
 				{
-					displayThemeApply(THEME_ITEM_FG_NOTIFICATION, THEME_ITEM_BG_NOTIFICATION);
+					displaySetForegroundAndBackgroundColours(colFg, colBg);
 					displayFillRect((barX + 2), (barY + 2), fillW, (barH - 4), false);
 				}
 			}
