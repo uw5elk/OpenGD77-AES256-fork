@@ -1070,6 +1070,9 @@ void applicationMainTask(void)
 			{
 				PTTToggledDown = false;
 				ticksTimerReset(&pttLatchFallbackTimer);
+				// Форк: короткий сигнал таймауту, щоб оператор почув, що залипання
+				// зняте автоматично і передача обірвалась сама.
+				soundSetMelody(MELODY_TX_TIMEOUT_BEEP);
 			}
 
 			if (PTTToggledDown && ((buttons & BUTTON_PTT) == 0))
