@@ -178,41 +178,72 @@ void uiNotificationRefresh(void)
 			case NOTIFICATION_TYPE_VOLUME:
 #endif
 			{
+				// Форк: повноекранне вікно регулювання гучності / шумоподавлення.
+				// Замість маленької коробки по центру -- на весь екран: заголовок,
+				// велике число у відсотках і акуратна смуга-індикатор. Читабельніше
+				// в русі й у польових умовах (баг #5).
 				char buffer[SCREEN_LINE_BUFFER_SIZE];
-				const int16_t totalBarLength = (((DISPLAY_SIZE_X - XBAR) - 4) - 4);
-				double slope;
-				int16_t bargraph;
+				const int16_t barX = 14;
+				const int16_t barW = (DISPLAY_SIZE_X - (2 * barX));
+				const int16_t barY = 92;
+				const int16_t barH = 18;
+				int16_t pct;
+				int16_t fillW;
+				const char *title;
 
 #if defined(HAS_SOFT_VOLUME)
 				if (notificationData.type == NOTIFICATION_TYPE_VOLUME)
 				{
 					uint16_t volValue = CLAMP((lastVolume + 32), 0, 62);
 
-					slope = 1.0 * (totalBarLength) / 62.0;
-					bargraph = slope * volValue;
-
-					strncpy(buffer, currentLanguage->volume, 9);
+					pct = (int16_t)((volValue * 100) / 62);
+					title = currentLanguage->volume;
 				}
 				else
 #endif
 				{
-					slope = 1.0 * (totalBarLength) / (CODEPLUG_MAX_VARIABLE_SQUELCH - CODEPLUG_MIN_VARIABLE_SQUELCH);
-					bargraph = slope * (currentChannelData->sql - CODEPLUG_MIN_VARIABLE_SQUELCH);
-
-					strncpy(buffer, currentLanguage->squelch, 9);
+					pct = (int16_t)(((currentChannelData->sql - CODEPLUG_MIN_VARIABLE_SQUELCH) * 100) /
+						(CODEPLUG_MAX_VARIABLE_SQUELCH - CODEPLUG_MIN_VARIABLE_SQUELCH));
+					title = currentLanguage->squelch;
 				}
-				buffer[8] = 0;
 
-				size_t sLen = (strlen(buffer) * 8);
+				if (pct < 0)
+				{
+					pct = 0;
+				}
+				else if (pct > 100)
+				{
+					pct = 100;
+				}
 
-				displayThemeApply(THEME_ITEM_FG_DECORATION, THEME_ITEM_BG_NOTIFICATION);
-				displayDrawRoundRectWithDropShadow(1, YBOX, DISPLAY_SIZE_X - 4, INNERBOX_H, 3, true);
-
+				// Фон на весь екран
 				displayThemeApply(THEME_ITEM_FG_NOTIFICATION, THEME_ITEM_BG_NOTIFICATION);
-				displayPrintAt(2 + ((sLen < (XBAR - 2)) ? (((XBAR - 2) - sLen) >> 1) : 0), YTEXT, buffer, FONT_SIZE_3);
+				displayFillRect(0, 0, DISPLAY_SIZE_X, DISPLAY_SIZE_Y, true);
 
-				displayDrawRect((XBAR - 2), YBAR, (totalBarLength + 4), (SQUELCH_BAR_H + 4), true);
-				displayFillRect(XBAR, (YBAR + 2), bargraph, SQUELCH_BAR_H, false);
+				// Рамка
+				displayThemeApply(THEME_ITEM_FG_DECORATION, THEME_ITEM_BG_NOTIFICATION);
+				displayDrawRect(1, 1, (DISPLAY_SIZE_X - 2), (DISPLAY_SIZE_Y - 2), false);
+
+				// Заголовок
+				displayThemeApply(THEME_ITEM_FG_NOTIFICATION, THEME_ITEM_BG_NOTIFICATION);
+				strncpy(buffer, title, (SCREEN_LINE_BUFFER_SIZE - 1));
+				buffer[SCREEN_LINE_BUFFER_SIZE - 1] = 0;
+				displayPrintCentered(16, buffer, FONT_SIZE_3);
+
+				// Велике число у відсотках
+				snprintf(buffer, SCREEN_LINE_BUFFER_SIZE, "%d%%", pct);
+				displayPrintCentered(44, buffer, FONT_SIZE_4);
+
+				// Смуга-індикатор
+				displayThemeApply(THEME_ITEM_FG_DECORATION, THEME_ITEM_BG_NOTIFICATION);
+				displayDrawRect(barX, barY, barW, barH, false);
+
+				fillW = (int16_t)(((barW - 4) * pct) / 100);
+				if (fillW > 0)
+				{
+					displayThemeApply(THEME_ITEM_FG_NOTIFICATION, THEME_ITEM_BG_NOTIFICATION);
+					displayFillRect((barX + 2), (barY + 2), fillW, (barH - 4), false);
+				}
 			}
 			break;
 
