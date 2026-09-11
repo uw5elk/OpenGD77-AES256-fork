@@ -57,6 +57,7 @@ static volatile uint8_t s_burstCount;   /* read in the HR-C6000 ISR (dmrDataTxNe
 static volatile uint8_t s_burstIndex;   /* volatile: dmrDataTxEnd's resets must not reorder  */
 static volatile uint8_t s_dataTxActive; /* past the active=0 store the ISR gates on           */
 static uint16_t         s_txFinishPolls;
+static volatile uint8_t s_fastEnd;      /* 1 = обірвати передачу відразу після останнього бургста */
 
 /*
  * Форк: період опитування 25 -> 5 мс. Причина -- квитанція RCTL: після нашої команди
@@ -120,6 +121,28 @@ static void dmrDataKeyTx(void)
 	addTimerCallback(dmrDataTxFinishPoll, DMR_DATA_TX_FINISH_POLL_MS, MENU_ANY, false);
 }
 
+/*
+ * Швидке завершення: не шлемо термінатор і не йдемо довгим шляхом TX_END, а
+ * глушимо передачу одразу, як тільки черга спорожніла. Потрібно для RCTL як командир:
+ * стокова відповідає вже через 30 мс після нашого останнього бургста, а хвіст із двох
+ * термінаторів плюс TX_END займає ~120 мс і затуляє всю квитанцію (RCTL_COMPAT.md §5h).
+ * Звичайний dmrDataTxLoad() поведінки не міняє -- SMS і решта шлють термінатор як і раніше.
+ */
+void dmrDataTxLoadFast(const uint8_t *bursts, uint8_t count)
+{
+	if (s_dataTxActive)
+	{
+		return;
+	}
+	s_fastEnd = 1;
+	dmrDataTxLoad(bursts, count);
+}
+
+int dmrDataTxFastEnd(void)
+{
+	return s_fastEnd;
+}
+
 void dmrDataTxLoad(const uint8_t *bursts, uint8_t count)
 {
 	if (s_dataTxActive)
@@ -161,6 +184,7 @@ int dmrDataTxNextBurst(uint8_t *dataTypeOut, uint8_t *payload12Out)
 
 void dmrDataTxEnd(void)
 {
+	s_fastEnd = 0;
 	s_dataTxActive = 0;
 	s_burstIndex = 0;
 	s_burstCount = 0;

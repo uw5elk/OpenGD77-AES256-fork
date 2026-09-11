@@ -1970,8 +1970,29 @@ void hrc6000TimeslotInterruptHandler(void)
 				}
 				else
 				{
+					int fastEnd = dmrDataTxFastEnd();          // читати ДО dmrDataTxEnd() -- вона гасить прапорець
 					dmrDataTxEnd();                            // clears trxTransmissionEnabled
 					hrc.transmissionEnabled = false;          // -> next TX_1 exits to TX_END
+
+					if (fastEnd)
+					{
+						// Форк: обірвати передачу НЕГАЙНО -- без термінатора й без TX_END.
+						// З ефіру (RCTL_COMPAT.md §5h): стокова починає квитанцію через 30 мс
+						// після нашого останнього бургста і шле її 89 мс поспіль, а звичайний хвіст
+						// (термінатор + TX_END_1/2 + 29 мс) триває ~120 мс -- рівно поверх неї.
+						// Ми й заглушували єї власними термінаторами, й повертались у прийом аж
+						// після її кінця. Термінатор тут нічого не вартий: стокова вже відповідає
+						// до нього, тобто команду вона вважає завершеною по самому CSBK.
+						SPI0WritePageRegByte(0x04, 0x41, 0x00);   // в наступному слоті не передавати
+						HRC6000InitDigitalDmrRx();
+						hrc.isWaking = WAKING_MODE_NONE;
+						hrc.keepMonitorCapturedTSAfterTxing = false;
+						hrc.timeCode = -1;
+						trxIsTransmitting = false;                // -> dmrDataTxFinishPoll зніме ПА за <=5 мс
+						slotState = DMR_STATE_IDLE;
+						break;
+					}
+
 					SPI0WritePageRegByte(0x04, 0x41, 0x80);
 					SPI0WritePageRegByte(0x04, 0x50, 0x20);   // Terminator with LC, Data
 				}

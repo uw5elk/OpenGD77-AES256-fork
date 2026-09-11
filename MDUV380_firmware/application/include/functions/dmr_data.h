@@ -38,6 +38,10 @@ void dmrDataTriggerReboot(void);
 /* Load the burst queue (bursts = count * (1 type byte + DMR_DATA_BURST_LEN payload))
  * and key a data call (deferred to the main loop). Called from the CPS handler. */
 void dmrDataTxLoad(const uint8_t *bursts, uint8_t count);
+/* Те саме, але без термінатора й довгого TX_END -- передача гасне одразу після
+ * останнього бургста, щоб встигнути почути відповідь (RCTL_COMPAT.md §5h). */
+void dmrDataTxLoadFast(const uint8_t *bursts, uint8_t count);
+int  dmrDataTxFastEnd(void);
 
 /* HR-C6000 TX state-machine hooks (called from the ISR): is a data call queued, and
  * fetch the next burst (1 + fills dataType/payload; 0 when the queue is drained). */

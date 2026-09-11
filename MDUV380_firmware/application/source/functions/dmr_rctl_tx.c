@@ -110,7 +110,9 @@ int dmrRctlStockSend(int cmd, uint32_t targetId)
 	int n = dmr_rctl_stock_build_tx((dmr_rctl_stock_cmd_t)cmd, trxDMRID, targetId, q);
 	if (n <= 0) { return -4; }
 
-	dmrDataTxLoad(q, (uint8_t)n);
+	/* Швидке завершення: відповідь цілі починається через 30 мс після останнього
+	 * бургста, тож звичайний хвіст передачі її просто заглушує (RCTL_COMPAT.md §5h). */
+	dmrDataTxLoadFast(q, (uint8_t)n);
 	return 0;
 }
 
