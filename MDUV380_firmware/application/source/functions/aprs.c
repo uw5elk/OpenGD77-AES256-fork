@@ -1264,22 +1264,27 @@ static void aprsBeaconingTxStateTick(uiEvent_t *ev)
 					trxSetFrequency(rxFreq, txFreq, (((currentChannelData->chMode == RADIO_MODE_DIGITAL) && codeplugChannelGetFlag(currentChannelData, CHANNEL_FLAG_FORCE_DMO)) ? DMR_MODE_DMO : DMR_MODE_AUTO));
 				}
 
-				trxSetModeAndBandwidth(currentChannelData->chMode, (codeplugChannelGetFlag(currentChannelData, CHANNEL_FLAG_BW_25K) != 0));
-
-				if (currentChannelData->chMode == RADIO_MODE_ANALOG)
-				{
-					trxSetRxCSS(RADIO_DEVICE_PRIMARY, currentChannelData->rxTone);
-				}
-
-				vTaskDelay((40U / portTICK_PERIOD_MS));
-
-				if (currentChannelData->chMode == RADIO_MODE_DIGITAL)
-				{
-					HRC6000ResetTimeSlotDetection();
-					HRC6000ClearActiveDMRID();
-				}
-
 				aprsBcnData.hasDoneQSY = false;
+			}
+
+			// ЗАВЖДИ (навіть без QSY, напр. у PTT-режимі бікону): відновити режим/смугу й
+			// скинути стан прийому DMR. Без цього, якщо PTT натиснули на ЗАЙНЯТОМУ каналі
+			// (йшов прийом), переривання лишало DMR-машину застряглою в старому виклику ->
+			// прийом не відновлювався, поки канал не перемкнути туди-назад. Ці скиди -- саме
+			// те, що робить перемикання каналу.
+			trxSetModeAndBandwidth(currentChannelData->chMode, (codeplugChannelGetFlag(currentChannelData, CHANNEL_FLAG_BW_25K) != 0));
+
+			if (currentChannelData->chMode == RADIO_MODE_ANALOG)
+			{
+				trxSetRxCSS(RADIO_DEVICE_PRIMARY, currentChannelData->rxTone);
+			}
+
+			vTaskDelay((40U / portTICK_PERIOD_MS));
+
+			if (currentChannelData->chMode == RADIO_MODE_DIGITAL)
+			{
+				HRC6000ResetTimeSlotDetection();
+				HRC6000ClearActiveDMRID();
 			}
 
 			uiDataGlobal.displayQSOState = QSO_DISPLAY_DEFAULT_SCREEN;
