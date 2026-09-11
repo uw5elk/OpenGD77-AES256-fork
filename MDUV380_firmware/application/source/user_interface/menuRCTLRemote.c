@@ -442,7 +442,14 @@ static void pickContactEvent(uiEvent_t *ev)
 
 /* Товстий штрих: кілька ліній зі зсувом у межах квадрата -- на діагоналях дає рівну
  * товщину, на відміну від зсуву лише по X. Малюється один раз на екран, тож
- * дешевизна тут не критична. */
+ * дешевизна тут не критична.
+ *
+ * УВАГА, пастка драйвера (та сама, що з displayDrawRect у PLANS.md): у цього дисплея
+ * ДВІ протилежні конвенції прапорця isInverted --
+ *     displayFillRect/DrawRect: isInverted ? background : foreground  -> false = видимий
+ *     displaySetPixel/DrawLine: isInverted ? foreground : background  -> false = НЕВИДИМИЙ
+ * displayDrawLine() йде через displaySetPixel(), тож видимий колір -- це TRUE.
+ * З false символ малювався кольором тла (на рації екран лишався порожнім). */
 static void thickLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1, int8_t t)
 {
 	for (int8_t dx = -t; dx <= t; dx++)
@@ -450,7 +457,7 @@ static void thickLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1, int8_t t)
 		for (int8_t dy = -t; dy <= t; dy++)
 		{
 			displayDrawLine((int16_t)(x0 + dx), (int16_t)(y0 + dy),
-			                (int16_t)(x1 + dx), (int16_t)(y1 + dy), false);
+			                (int16_t)(x1 + dx), (int16_t)(y1 + dy), true);
 		}
 	}
 }
