@@ -57,8 +57,17 @@ static volatile uint8_t s_burstIndex;   /* volatile: dmrDataTxEnd's resets must 
 static volatile uint8_t s_dataTxActive; /* past the active=0 store the ISR gates on           */
 static uint16_t         s_txFinishPolls;
 
-#define DMR_DATA_TX_FINISH_POLL_MS   25
-#define DMR_DATA_TX_FINISH_TIMEOUT   120  // * poll period -> ~3 s safety cap
+/*
+ * Форк: період опитування 25 -> 5 мс. Причина -- квитанція RCTL: після нашої команди
+ * стокова відповідає вже через ~30 мс (виміряно SDR-захватом, RCTL_COMPAT.md §5a), а
+ * поки ми опитували раз на 25 мс, рація не встигала повернутись у прийом і квитанцію
+ * не чула взагалі (на екрані був хрест, хоча в ефірі відповідь була).
+ * Опитування дешеве (один таймерний колбек), тож 5 мс нічого не коштує.
+ */
+#define DMR_DATA_TX_FINISH_POLL_MS   5
+/* Запобіжна стеля ~3 с. Виражена через період, щоб не зламатись при його зміні
+ * (з фіксованим числом опитувань зменшення періоду тихо вкоротило б таймаут). */
+#define DMR_DATA_TX_FINISH_TIMEOUT   (3000 / DMR_DATA_TX_FINISH_POLL_MS)
 
 /*
  * Un-key the data call cleanly, mirroring a PTT release. The command path keys via
@@ -78,6 +87,16 @@ static void dmrDataTxFinishPoll(void)
 	}
 	dmrDataTxEnd();           // ensure the queue/flags are cleared (idempotent)
 	trxDisableTransmission(); // LED_RED off + trxActivateRx() -> back to RX, like PTT release
+
+	// Форк: одразу привести DMR-приймач у чистий стан. Без цього машина станів лишається
+	// в стані "наша передача", і перший бургст, що прилітає одразу за нами (квитанція RCTL
+	// -- через ~30 мс), губиться, поки йде пересинхронізація. Та сама пара скидів, що
+	// лікувала невідновлення прийому після APRS-бікона (див. aprs.c, баг #7).
+	if (trxGetMode() == RADIO_MODE_DIGITAL)
+	{
+		HRC6000ResetTimeSlotDetection();
+		HRC6000ClearActiveDMRID();
+	}
 }
 
 static void dmrDataKeyTx(void)
