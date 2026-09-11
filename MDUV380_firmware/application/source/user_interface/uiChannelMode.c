@@ -1876,24 +1876,43 @@ static void selectPrevNextZone(bool nextZone)
 {
 	int numZones = codeplugZonesGetCount();
 
-	if (nextZone)
+	// Пропускаємо ПОРОЖНІ зони (позначені "в роботі", але без жодного каналу) -- вони лише
+	// плутають при перемиканні. Віртуальну "Всі канали" (остання зона) не пропускаємо
+	// ніколи. guard обмежує цикл кількістю зон -- захист від зациклення, якщо порожні всі.
+	for (int guard = 0; guard < numZones; guard++)
 	{
-		settingsIncrement(nonVolatileSettings.currentZone, 1);
+		if (nextZone)
+		{
+			settingsIncrement(nonVolatileSettings.currentZone, 1);
 
-		if (nonVolatileSettings.currentZone >= numZones)
-		{
-			settingsSet(nonVolatileSettings.currentZone, 0);
-		}
-	}
-	else
-	{
-		if (nonVolatileSettings.currentZone == 0)
-		{
-			settingsSet(nonVolatileSettings.currentZone, (int16_t) (numZones - 1));
+			if (nonVolatileSettings.currentZone >= numZones)
+			{
+				settingsSet(nonVolatileSettings.currentZone, 0);
+			}
 		}
 		else
 		{
-			settingsDecrement(nonVolatileSettings.currentZone, 1);
+			if (nonVolatileSettings.currentZone == 0)
+			{
+				settingsSet(nonVolatileSettings.currentZone, (int16_t) (numZones - 1));
+			}
+			else
+			{
+				settingsDecrement(nonVolatileSettings.currentZone, 1);
+			}
+		}
+
+		// "Всі канали" -- остання зона (віртуальна), її не пропускаємо.
+		if (nonVolatileSettings.currentZone == (numZones - 1))
+		{
+			break;
+		}
+
+		CodeplugZone_t z;
+		codeplugZoneGetDataForNumber(nonVolatileSettings.currentZone, &z);
+		if (z.NOT_IN_CODEPLUGDATA_numChannelsInZone > 0)
+		{
+			break;   // непорожня зона -- зупиняємось на ній
 		}
 	}
 
