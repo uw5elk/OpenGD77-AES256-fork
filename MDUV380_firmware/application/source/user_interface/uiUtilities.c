@@ -2400,6 +2400,10 @@ void uiUtilityRenderHeader(bool isVFODualWatchScanning, bool isVFOSweepScanning,
 #endif
 #endif
 
+	// Форк (#6): відступ справа під годинник. За замовчуванням 0 -- заряд
+	// праворуч, як і було. Коли показуємо годинник, зсуваємо заряд ліворуч.
+	int16_t headerRightMargin = 0;
+
 #if defined(HAS_COLOURS) || defined(PLATFORM_MD9600)
 	if (displayTime)
 	{
@@ -2408,14 +2412,19 @@ void uiUtilityRenderHeader(bool isVFODualWatchScanning, bool isVFOSweepScanning,
 		gmtime_r_Custom(&t, &timeAndDate);
 
 		snprintf(buffer, SCREEN_LINE_BUFFER_SIZE, "%02u%c%02u", timeAndDate.tm_hour, (((timeAndDate.tm_sec % 2) == 0) ? ':' : ' ') ,timeAndDate.tm_min);
-		displayPrintCore(0, DISPLAY_Y_POS_HEADER, buffer, (apoEnabled ? FONT_SIZE_1_BOLD : FONT_SIZE_1), TEXT_ALIGN_RIGHT, false);// Display battery percentage at the right
+		displayPrintCore(0, DISPLAY_Y_POS_HEADER, buffer, (apoEnabled ? FONT_SIZE_1_BOLD : FONT_SIZE_1), TEXT_ALIGN_RIGHT, false);
+
+		// Форк (#6): раніше при увімкненому годиннику заряд не показувався
+		// взагалі -- годинник і заряд ділили той самий правий кут (if/else).
+		// Тепер годинник лишається праворуч, а заряд зсуваємо ліворуч на його
+		// ширину плюс невеликий проміжок.
+		headerRightMargin = (int16_t)((strlen(buffer) * 6) + 3);
 	}
-	else
 #endif
 	{
 		if (settingsIsOptionBitSet(BIT_BATTERY_VOLTAGE_IN_HEADER))
 		{
-			int16_t xV = (DISPLAY_SIZE_X - ((4 * 6) + 3));
+			int16_t xV = (DISPLAY_SIZE_X - headerRightMargin - ((4 * 6) + 3));
 
 			snprintf(buffer, SCREEN_LINE_BUFFER_SIZE, "%2d", volts);
 			displayPrintCore(xV, DISPLAY_Y_POS_HEADER, buffer, (apoEnabled ? FONT_SIZE_1_BOLD : FONT_SIZE_1), TEXT_ALIGN_LEFT, ((batteryIsLow ? scanBlinkPhase : false)));
@@ -2428,7 +2437,8 @@ void uiUtilityRenderHeader(bool isVFODualWatchScanning, bool isVFOSweepScanning,
 		else
 		{
 			snprintf(buffer, SCREEN_LINE_BUFFER_SIZE, "%d%%", batteryPercentage);
-			displayPrintCore(0, DISPLAY_Y_POS_HEADER, buffer, (apoEnabled ? FONT_SIZE_1_BOLD : FONT_SIZE_1), TEXT_ALIGN_RIGHT, ((batteryIsLow ? scanBlinkPhase : false)));// Display battery percentage at the right
+			int16_t batW = (int16_t)(strlen(buffer) * 6);
+			displayPrintCore((DISPLAY_SIZE_X - headerRightMargin - batW), DISPLAY_Y_POS_HEADER, buffer, (apoEnabled ? FONT_SIZE_1_BOLD : FONT_SIZE_1), TEXT_ALIGN_LEFT, ((batteryIsLow ? scanBlinkPhase : false)));
 		}
 	}
 
