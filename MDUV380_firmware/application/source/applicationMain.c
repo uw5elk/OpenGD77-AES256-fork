@@ -90,6 +90,16 @@ bool spiFlashInitHasFailed = false;
 ticksTimer_t autolockTimer;
 #endif
 
+// Форк: запобіжний таймаут для залипання PTT ("Фікс. PTT") на каналах без TOT.
+// Коли залипання увімкнене, а на каналі не заданий власний TOT, стокова прошивка
+// взагалі не давала PTT залипати. Ми дозволяємо залипання завжди, але щоб рація не
+// передавала нескінченно (наприклад, якщо її випадково затиснуло в сумці -- це і
+// розряд акумулятора, і демаскування, і забивання каналу), автоматично знімаємо
+// залипання через цей проміжок часу. Якщо на каналі заданий TOT, він має пріоритет
+// і обробляється звичайним шляхом на екрані передачі.
+#define FORK_PTT_LATCH_FALLBACK_MS (120U * 1000U)
+static ticksTimer_t pttLatchFallbackTimer = { 0, 0 };
+
 
 #if (__NVIC_PRIO_BITS != 3)
 #error Files need to be manually after regernation using the STM32Cube configuration tool to support the non-genuine CPU
@@ -1027,17 +1037,39 @@ void applicationMainTask(void)
 				{
 					if (PTTToggledDown == false)
 					{
-						// PTT toggle works only if a TOT value is defined.
-						if (currentChannelData->tot != 0)
+						// Форк: залипання PTT вмикається завжди, коли увімкнено "Фікс. PTT".
+						// Раніше воно спрацьовувало лише за заданого на каналі TOT, тож на
+						// каналах без TOT користувач не бачив жодного залипання. Тепер
+						// вмикаємо завжди; для каналів без TOT стартує запобіжний таймаут
+						// нижче, щоб рація не передавала нескінченно.
+						PTTToggledDown = true;
+
+						if (currentChannelData->tot == 0)
 						{
-							PTTToggledDown = true;
+							ticksTimerStart(&pttLatchFallbackTimer, FORK_PTT_LATCH_FALLBACK_MS);
+						}
+						else
+						{
+							ticksTimerReset(&pttLatchFallbackTimer);
 						}
 					}
 					else
 					{
 						PTTToggledDown = false;
+						ticksTimerReset(&pttLatchFallbackTimer);
 					}
 				}
+			}
+
+			// Форк: запобіжний таймаут знімає залипання на каналі без TOT. Коли
+			// залипання зникає, а фізично PTT не тримають, блок нижче перестає
+			// додавати BUTTON_PTT -- передача завершується так само, як від
+			// повторного натискання PTT.
+			if (PTTToggledDown && (currentChannelData->tot == 0) &&
+				ticksTimerIsEnabled(&pttLatchFallbackTimer) && ticksTimerHasExpired(&pttLatchFallbackTimer))
+			{
+				PTTToggledDown = false;
+				ticksTimerReset(&pttLatchFallbackTimer);
 			}
 
 			if (PTTToggledDown && ((buttons & BUTTON_PTT) == 0))
