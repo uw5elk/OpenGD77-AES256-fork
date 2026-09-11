@@ -86,7 +86,7 @@ def main():
             sys.exit(f"замало даних: {body.hex()}")
         # Стара прошивка віддає 7 лічильників, нова -- 10 (додано діагностику
         # шляху квитанції). Читаємо скільки є, щоб інструмент працював з обома.
-        nvals = 10 if len(body) >= 40 else 7
+        nvals = 15 if len(body) >= 60 else (10 if len(body) >= 40 else 7)
         vals = struct.unpack_from(f"<{nvals}I", body, 0)
         names = ["впізнано команд (seen)", "останній командир (ID)",
                  "виконано Check", "виконано Monitor", "виконано Enable", "виконано Disable"]
@@ -111,6 +111,27 @@ def main():
             else:
                 print("  → Квитанцію прийнято. Якщо на екрані все одно хрест — вона прийшла")
                 print("    пізніше за вікно очікування (4 с).")
+
+        if nvals >= 15:
+            wany, wdata, wfirst, winfo, txend = vals[10], vals[11], vals[12], vals[13], vals[14]
+            print("\nВікно після ВЛАСНОЇ передачі (3 с), до будь-яких фільтрів:")
+            print(f"  завершення передачі зайняло: {txend} мс")
+            print(f"  переривань усього: {wany}")
+            print(f"  з них data-синхронізація: {wdata}")
+            if wfirst:
+                names = {0:"PI-hdr",1:"VLC-hdr",2:"TLC",3:"CSBK",4:"MBC-hdr",5:"MBC-cont",6:"data-hdr",7:"rate-1/2",8:"rate-3/4",10:"rate-1",13:"IdleFill"}
+                t = winfo & 0x0F
+                print(f"  перший data-бургст через: {wfirst} мс")
+                print(f"    тип: {t} ({names.get(t, '?')}), "
+                      f"CRC: {'ок' if winfo & 0x100 else 'БИТИЙ'}, "
+                      f"передача ще активна: {'ТАК' if winfo & 0x200 else 'ні'}")
+            else:
+                print("  перший data-бургст: НЕ БУЛО ВЗАГАЛІ")
+            if wany == 0:
+                print("  → Після власної передачі чіп не дав ЖОДНОГО переривання 3 с.")
+                print("    Це не фільтр і не формат — рація справді глуха (або в ефірі тиша).")
+            elif wdata and not wfirst:
+                pass
         if "--unlock" in sys.argv:
             print("\n→ подано кабельну команду розблокування (recovery).")
             print("  Якщо стан вище ще 'ТАК' — повтори; має стати 'ні'.")

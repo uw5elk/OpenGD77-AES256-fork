@@ -42,6 +42,7 @@ void dmrDataTxLoad(const uint8_t *bursts, uint8_t count);
 /* HR-C6000 TX state-machine hooks (called from the ISR): is a data call queued, and
  * fetch the next burst (1 + fills dataType/payload; 0 when the queue is drained). */
 int  dmrDataTxActive(void);
+uint16_t dmrDataTxFinishMs(void);  /* скільки мс зайняло завершення останньої передачі */
 int  dmrDataTxNextBurst(uint8_t *dataTypeOut, uint8_t *payload12Out);
 void dmrDataTxEnd(void);   /* clear the data-call state (queue drained / TX ended) */
 

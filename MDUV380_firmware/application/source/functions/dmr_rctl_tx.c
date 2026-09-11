@@ -237,6 +237,48 @@ static volatile uint32_t s_csbkSeen;
 static volatile uint32_t s_ackSeen;
 static volatile uint32_t s_ackForUs;
 
+/* Вікно спостереження після ВЛАСНОЇ передачі: чи чуємо хоч щось і через
+ * скільки мс. Це й є відповідь на питання "рація глуха після свого TX чи ні". */
+#define RCTL_WIN_MS   3000U
+static volatile uint8_t  s_winArmed;
+static volatile uint32_t s_winT0;
+static volatile uint32_t s_winTxEndMs;   /* скільки мс тривало завершення передачі */
+static volatile uint32_t s_winAny;       /* усі переривання "прийнято дані" у вікні */
+static volatile uint32_t s_winData;      /* з них із data-синхронізацією */
+static volatile uint32_t s_winFirstMs;   /* затримка до першого data-бургста (0 = не було) */
+static volatile uint32_t s_winFirstInfo; /* type | crcOk<<8 | txEnabled<<9 */
+
+void dmrRctlNoteOwnTxEnd(uint32_t txFinishMs)
+{
+	s_winT0 = ticksGetMillis();
+	s_winTxEndMs = txFinishMs;
+	s_winAny = 0;
+	s_winData = 0;
+	s_winFirstMs = 0;
+	s_winFirstInfo = 0;
+	s_winArmed = 1;
+}
+
+void dmrRctlNoteRxDataInt(int rxDataType, int rxSyncClass, int crcOk, int txEnabled)
+{
+	if (!s_winArmed) { return; }
+
+	uint32_t dt = (uint32_t)(ticksGetMillis() - s_winT0);
+	if (dt > RCTL_WIN_MS) { s_winArmed = 0; return; }
+
+	s_winAny++;
+	if (rxSyncClass == 2)   /* SYNC_CLASS_DATA */
+	{
+		s_winData++;
+		if (s_winFirstMs == 0)
+		{
+			s_winFirstMs = (dt == 0) ? 1 : dt;   /* 0 зарезервовано під "не було" */
+			s_winFirstInfo = (uint32_t)(rxDataType & 0x0F) |
+					 (crcOk ? 0x100U : 0U) | (txEnabled ? 0x200U : 0U);
+		}
+	}
+}
+
 /* Діагностика (тихе підтвердження прийому по USB, без напису на екрані): */
 static volatile uint32_t s_stockSeen;                            /* упізнаних команд на нашу адресу (до гейта) */
 static volatile uint32_t s_stockLastSrc;                         /* хто останній командував */
@@ -281,7 +323,7 @@ void dmrRctlStockRxBurst(const uint8_t *p12)
 	s_stockPending = 1;
 }
 
-void dmrRctlStockRxDiag(uint32_t out[10])
+void dmrRctlStockRxDiag(uint32_t out[15])
 {
 	out[0] = s_stockSeen;
 	out[1] = s_stockLastSrc;
@@ -293,6 +335,11 @@ void dmrRctlStockRxDiag(uint32_t out[10])
 	out[7] = s_csbkSeen;
 	out[8] = s_ackSeen;
 	out[9] = s_ackForUs;
+	out[10] = s_winAny;
+	out[11] = s_winData;
+	out[12] = s_winFirstMs;
+	out[13] = s_winFirstInfo;
+	out[14] = s_winTxEndMs;
 }
 
 void dmrRctlStockRxDiagReset(void)
@@ -304,6 +351,11 @@ void dmrRctlStockRxDiagReset(void)
 	s_csbkSeen = 0;
 	s_ackSeen = 0;
 	s_ackForUs = 0;
+	s_winAny = 0;
+	s_winData = 0;
+	s_winFirstMs = 0;
+	s_winFirstInfo = 0;
+	s_winTxEndMs = 0;
 }
 
 /* Обробити відкладену стокову команду (з tick, поза ISR). Поки лише лічимо -- це тихо

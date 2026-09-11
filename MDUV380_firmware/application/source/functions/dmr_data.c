@@ -11,6 +11,7 @@
 #include "functions/trx.h"             // trxEnableTransmission, trxTransmissionEnabled
 #include "hardware/HR-C6000.h"         // HRC6000ClearIsWakingState
 #include "user_interface/menuSystem.h" // MENU_ANY
+#include "functions/dmr_rctl_tx.h"  // dmrRctlNoteOwnTxEnd (діагностика повороту TX->RX)
 #include <string.h>
 
 #define SYS_BOOTLOADER_ADDR  0x1FFF0000U  // STM32F405 system memory (ROM DFU bootloader)
@@ -97,6 +98,9 @@ static void dmrDataTxFinishPoll(void)
 		HRC6000ResetTimeSlotDetection();
 		HRC6000ClearActiveDMRID();
 	}
+
+	/* Від цієї миті ми вважаємось у прийомі -- відлік для діагностики квитанції. */
+	dmrRctlNoteOwnTxEnd((uint32_t)s_txFinishPolls * DMR_DATA_TX_FINISH_POLL_MS);
 }
 
 static void dmrDataKeyTx(void)
@@ -131,6 +135,11 @@ void dmrDataTxLoad(const uint8_t *bursts, uint8_t count)
 	s_burstIndex = 0;
 	// Defer keying out of the CPS critical section into the main-loop callback context.
 	addTimerCallback(dmrDataKeyTx, 100, MENU_ANY, false);
+}
+
+uint16_t dmrDataTxFinishMs(void)
+{
+	return (uint16_t)((uint32_t)s_txFinishPolls * DMR_DATA_TX_FINISH_POLL_MS);
 }
 
 int dmrDataTxActive(void)

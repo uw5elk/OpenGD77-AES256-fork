@@ -1013,6 +1013,14 @@ static inline void hrc6000SysReceivedDataInt(void)
 
 	rxSyncType = (reg_0x5F & 0x03); //received Sync Type
 
+#if defined(ENABLE_DMR_DATA) && defined(ENABLE_AES)
+	// Форк (діагностика): відмітити КОЖНЕ переривання "прийнято дані" у вікні після
+	// ВЛАСНОЇ передачі -- ДО будь-яких фільтрів (CRC, колір-код, slotState). Це єдиний
+	// спосіб відрізнити "рація глуха" від "чуємо, але відсікаємо на якомусь фільтрі".
+	dmrRctlNoteRxDataInt(rxDataType, rxSyncClass, hrc6000CrcIsValid() ? 1 : 0,
+			     hrc.transmissionEnabled ? 1 : 0);
+#endif
+
 	if (codeplugChannelGetFlag(currentChannelData, CHANNEL_FLAG_FORCE_DMO) == 0)
 	{
 		if (rxSyncType == BS_SYNC)       // if we are receiving from a base station (Repeater)
