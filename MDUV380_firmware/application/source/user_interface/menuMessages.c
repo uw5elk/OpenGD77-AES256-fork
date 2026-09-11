@@ -93,6 +93,25 @@
 
 #if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
 
+/* Позивний/ім'я замість голого DMR ID: спершу список контактів кодплага, потім база DMR ID
+ * (та сама логіка, що й для вхідного дзвінка -- uiPrivateCall.c). Якщо ніде не знайдено --
+ * пишемо номер. out має бути >= 20 байт. */
+static void smsWhoStr(uint32_t id, char *out, int outsz)
+{
+	if (contactIDLookup(id, CONTACT_CALLTYPE_PC, out))
+	{
+		return;
+	}
+	dmrIdDataStruct_t rec;
+	if (dmrIDLookup(id, &rec) && rec.text[0] != 0)
+	{
+		strncpy(out, rec.text, outsz - 1);
+		out[outsz - 1] = 0;
+		return;
+	}
+	snprintf(out, outsz, "%lu", (unsigned long)id);
+}
+
 enum { MSG_HOME = 0, MSG_LIST, MSG_READ, MSG_COMPOSE, MSG_RECIPIENT, MSG_PICK_CONTACT, MSG_RESULT };
 
 static struct
@@ -329,7 +348,9 @@ static void listUpdate(void)
 			// ">" = перехоплене монітором, адресоване НЕ нам. Позначка стоїть перед номером
 			// відправника, бо саме його оператор бачить першим і може прийняти за адресата.
 			const char *foreign = (m->flags & DMR_SMS_FLAG_FOREIGN) ? ">" : "";
-			snprintf(buf, sizeof buf, "%c%s%lu:%s", mark, foreign, (unsigned long)m->peerId, txt);
+			char who[20];
+			smsWhoStr(m->peerId, who, sizeof who);   // позивний/ім'я замість номера
+			snprintf(buf, sizeof buf, "%c%s%s:%s", mark, foreign, who, txt);
 		}
 		menuDisplayEntry(i, mNum, buf, 0, THEME_ITEM_FG_MENU_ITEM, THEME_ITEM_FG_OPTIONS_VALUE, THEME_ITEM_BG);
 	}
@@ -403,8 +424,10 @@ static void readUpdate(void)
 	// а не лише позначкою у списку (FONT_SIZE_1: 26 символів у рядок, найдовший варіант
 	// "From 16777215 (not yours)" = 25).
 	char hdr[40];
-	snprintf(hdr, sizeof hdr, "%s %lu%s", (m->flags & DMR_SMS_FLAG_OUTGOING) ? MSGS_TO : MSGS_FROM,
-			(unsigned long)m->peerId, (m->flags & DMR_SMS_FLAG_FOREIGN) ? MSGS_FOREIGN : "");
+	char who[20];
+	smsWhoStr(m->peerId, who, sizeof who);   // позивний/ім'я, або номер якщо невідомий
+	snprintf(hdr, sizeof hdr, "%s %s%s", (m->flags & DMR_SMS_FLAG_OUTGOING) ? MSGS_TO : MSGS_FROM,
+			who, (m->flags & DMR_SMS_FLAG_FOREIGN) ? MSGS_FOREIGN : "");
 	displayPrintAt(2, 16, hdr, FONT_SIZE_1);
 
 	// word-free char wrap into ~21-char lines
