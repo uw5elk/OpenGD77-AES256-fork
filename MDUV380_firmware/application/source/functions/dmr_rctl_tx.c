@@ -239,7 +239,7 @@ static volatile uint32_t s_ackForUs;
 
 /* Вікно спостереження після ВЛАСНОЇ передачі: чи чуємо хоч щось і через
  * скільки мс. Це й є відповідь на питання "рація глуха після свого TX чи ні". */
-#define RCTL_WIN_MS   3000U
+#define RCTL_WIN_MS   15000U   /* широко: щоб встигнути подати контрольний сигнал вручну */
 static volatile uint8_t  s_winArmed;
 static volatile uint32_t s_winT0;
 static volatile uint32_t s_winTxEndMs;   /* скільки мс тривало завершення передачі */
@@ -247,6 +247,7 @@ static volatile uint32_t s_winAny;       /* усі переривання "пр�
 static volatile uint32_t s_winData;      /* з них із data-синхронізацією */
 static volatile uint32_t s_winFirstMs;   /* затримка до першого data-бургста (0 = не було) */
 static volatile uint32_t s_winFirstInfo; /* type | crcOk<<8 | txEnabled<<9 */
+static volatile uint32_t s_intTotal;      /* УСІ переривання "прийнято дані" від обнулення -- перевірка самого хука */
 
 void dmrRctlNoteOwnTxEnd(uint32_t txFinishMs)
 {
@@ -261,6 +262,8 @@ void dmrRctlNoteOwnTxEnd(uint32_t txFinishMs)
 
 void dmrRctlNoteRxDataInt(int rxDataType, int rxSyncClass, int crcOk, int txEnabled)
 {
+	s_intTotal++;   /* безумовно: якщо це нуль після будь-якого DMR-сигналу -- зламаний сам вимір */
+
 	if (!s_winArmed) { return; }
 
 	uint32_t dt = (uint32_t)(ticksGetMillis() - s_winT0);
@@ -323,7 +326,7 @@ void dmrRctlStockRxBurst(const uint8_t *p12)
 	s_stockPending = 1;
 }
 
-void dmrRctlStockRxDiag(uint32_t out[15])
+void dmrRctlStockRxDiag(uint32_t out[16])
 {
 	out[0] = s_stockSeen;
 	out[1] = s_stockLastSrc;
@@ -340,6 +343,7 @@ void dmrRctlStockRxDiag(uint32_t out[15])
 	out[12] = s_winFirstMs;
 	out[13] = s_winFirstInfo;
 	out[14] = s_winTxEndMs;
+	out[15] = s_intTotal;
 }
 
 void dmrRctlStockRxDiagReset(void)
@@ -356,6 +360,7 @@ void dmrRctlStockRxDiagReset(void)
 	s_winFirstMs = 0;
 	s_winFirstInfo = 0;
 	s_winTxEndMs = 0;
+	s_intTotal = 0;
 }
 
 /* Обробити відкладену стокову команду (з tick, поза ISR). Поки лише лічимо -- це тихо
