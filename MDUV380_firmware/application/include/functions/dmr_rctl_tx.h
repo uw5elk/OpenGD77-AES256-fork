@@ -41,7 +41,7 @@ int dmrRctlStockSend(int cmd, uint32_t targetId);
 void dmrRctlStockRxBurst(const uint8_t *payload12);
 /* Тиха діагностика прийому (USB): out[0]=seen, [1]=lastSrc, [2..5]=acted Check/Monitor/Enable/Disable,
  * [6]=inhibited (1=рацію заблоковано командою Disable по ефіру). */
-void dmrRctlStockRxDiag(uint32_t out[7]);
+void dmrRctlStockRxDiag(uint32_t out[10]);
 void dmrRctlStockRxDiagReset(void);
 
 /* Останній отриманий CHECK_ACK: 1 якщо був хоч один з моменту завантаження, з ID видавця
@@ -76,7 +76,7 @@ static inline int  dmrRctlSendCmd(uint32_t targetId, uint8_t cmd, uint32_t arg) 
 static inline int  dmrRctlRequestCheck(uint32_t targetId) { (void)targetId; return -1; }
 static inline int  dmrRctlStockSend(int cmd, uint32_t targetId) { (void)cmd; (void)targetId; return -1; }
 static inline void dmrRctlStockRxBurst(const uint8_t *payload12) { (void)payload12; }
-static inline void dmrRctlStockRxDiag(uint32_t out[7]) { for (int i = 0; i < 7; i++) { out[i] = 0; } }
+static inline void dmrRctlStockRxDiag(uint32_t out[10]) { for (int i = 0; i < 10; i++) { out[i] = 0; } }
 static inline void dmrRctlStockRxDiagReset(void) { }
 static inline int  dmrRctlLastCheckAck(uint32_t *outFromId, uint32_t *outAgeMs) { (void)outFromId; (void)outAgeMs; return 0; }
 static inline uint32_t dmrRctlAckGeneration(void) { return 0; }

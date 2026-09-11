@@ -227,6 +227,16 @@ static volatile uint32_t s_stockDst;
 static volatile uint8_t  s_stockAckPending;
 static volatile uint32_t s_stockAckFrom;
 
+/* Діагностика шляху квитанції (розрізнити три різні причини хреста на екрані):
+ *  s_csbkSeen -- скільки CSBK-бургстів узагалі дійшло сюди (0 => не чуємо ефір
+ *                в потрібний момент -- питання повороту TX->RX або каналу);
+ *  s_ackSeen  -- з них розібрано як квитанцію (CRC зійшовся);
+ *  s_ackForUs -- з них адресовано саме нам (requester == trxDMRID).
+ * Читається з ПК: rctl_capture.py --rxdiag. */
+static volatile uint32_t s_csbkSeen;
+static volatile uint32_t s_ackSeen;
+static volatile uint32_t s_ackForUs;
+
 /* Діагностика (тихе підтвердження прийому по USB, без напису на екрані): */
 static volatile uint32_t s_stockSeen;                            /* упізнаних команд на нашу адресу (до гейта) */
 static volatile uint32_t s_stockLastSrc;                         /* хто останній командував */
@@ -238,6 +248,8 @@ void dmrRctlStockRxBurst(const uint8_t *p12)
 	dmr_rctl_stock_cmd_t cmd;
 	uint32_t src, dst;
 
+	s_csbkSeen++;
+
 	/* Спершу -- квитанція на НАШ запит (форк як командир). Вона має той самий опкод,
 	 * що й команда Check, і відрізняється лише керуючим байтом (0x80), тож
 	 * dmr_rctl_stock_parse() її не впізнає -- перевіряємо окремо й раніше.
@@ -246,10 +258,12 @@ void dmrRctlStockRxBurst(const uint8_t *p12)
 		uint32_t requester = 0, responder = 0;
 		if (dmr_rctl_stock_parse_ack(p12, &requester, &responder))
 		{
+			s_ackSeen++;
 			/* Реагуємо лише на відповідь САМЕ на наш запит -- чужі квитанції в ефірі
 			 * не мають вмикати нам "рація на зв'язку". */
 			if (requester == trxDMRID)
 			{
+				s_ackForUs++;
 				s_stockAckFrom = responder;
 				s_stockAckPending = 1;
 			}
@@ -267,7 +281,7 @@ void dmrRctlStockRxBurst(const uint8_t *p12)
 	s_stockPending = 1;
 }
 
-void dmrRctlStockRxDiag(uint32_t out[7])
+void dmrRctlStockRxDiag(uint32_t out[10])
 {
 	out[0] = s_stockSeen;
 	out[1] = s_stockLastSrc;
@@ -276,6 +290,9 @@ void dmrRctlStockRxDiag(uint32_t out[7])
 	out[4] = s_stockActed[DMR_RCTL_STOCK_ENABLE];
 	out[5] = s_stockActed[DMR_RCTL_STOCK_DISABLE];
 	out[6] = (uint32_t)dmrRctlIsInhibited();   /* поточний стан блокування (переживає ребут) */
+	out[7] = s_csbkSeen;
+	out[8] = s_ackSeen;
+	out[9] = s_ackForUs;
 }
 
 void dmrRctlStockRxDiagReset(void)
@@ -284,6 +301,9 @@ void dmrRctlStockRxDiagReset(void)
 	s_stockLastSrc = 0;
 	s_stockLastCmd = 0;
 	for (int i = 0; i < DMR_RCTL_STOCK_NUM_CMDS; i++) { s_stockActed[i] = 0; }
+	s_csbkSeen = 0;
+	s_ackSeen = 0;
+	s_ackForUs = 0;
 }
 
 /* Обробити відкладену стокову команду (з tick, поза ISR). Поки лише лічимо -- це тихо
