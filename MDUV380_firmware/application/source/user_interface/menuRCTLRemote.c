@@ -436,6 +436,53 @@ static void pickContactEvent(uiEvent_t *ev)
 	}
 }
 
+/* ===================== Великі символи результату ========================= */
+/* Галочка/хрест замість напису: результат перевірки читається з одного погляду,
+ * не вимагає читання й не залежить від довжини рядка на 160-піксельному екрані. */
+
+/* Товстий штрих: кілька ліній зі зсувом у межах квадрата -- на діагоналях дає рівну
+ * товщину, на відміну від зсуву лише по X. Малюється один раз на екран, тож
+ * дешевизна тут не критична. */
+static void thickLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1, int8_t t)
+{
+	for (int8_t dx = -t; dx <= t; dx++)
+	{
+		for (int8_t dy = -t; dy <= t; dy++)
+		{
+			displayDrawLine((int16_t)(x0 + dx), (int16_t)(y0 + dy),
+			                (int16_t)(x1 + dx), (int16_t)(y1 + dy), false);
+		}
+	}
+}
+
+static void setResultColour(uint32_t rgb)
+{
+#if defined(HAS_COLOURS)
+	uint16_t fg = 0, bg = 0;
+	displayGetForegroundAndBackgroundColours(&fg, &bg);   /* тло лишаємо тим, що в теми */
+	displaySetForegroundAndBackgroundColours(
+			PLATFORM_COLOUR_FORMAT_SWAP_BYTES(RGB888_TO_PLATFORM_COLOUR_FORMAT(rgb)), bg);
+#else
+	(void)rgb;   /* монохромні платформи -- лишаємо поточний колір теми */
+#endif
+}
+
+/* Зелена галочка: короткий штрих униз-праворуч + довгий угору-праворуч. */
+static void drawTick(void)
+{
+	setResultColour(0x22DD22);
+	thickLine(58, 62, 73, 78, 2);
+	thickLine(73, 78, 104, 38, 2);
+}
+
+/* Червоний хрест: дві діагоналі. */
+static void drawCross(void)
+{
+	setResultColour(0xFF3B30);
+	thickLine(60, 40, 100, 80, 2);
+	thickLine(100, 40, 60, 80, 2);
+}
+
 /* ============================= WAIT ACK ================================= */
 static void updateWait(void)
 {
@@ -468,21 +515,24 @@ static void updateResult(void)
 	}
 	else if (s_rc.waitedAck)
 	{
-		// Radio Check: показуємо результат перевірки, а не просто факт відправки.
-		displayPrintCentered(40, cmdName(s_rc.cmd), FONT_SIZE_2);
+		// Radio Check: результат -- великим символом (галочка/хрест), щоб читався з
+		// одного погляду. Підпис лишаємо дрібним: символ несе головне.
+		displayPrintCentered(20, cmdName(s_rc.cmd), FONT_SIZE_2);
 		if (s_rc.gotAck)
 		{
 			char buf[24];
-			displayPrintCentered(64, RCTL_ACK_OK, FONT_SIZE_3);
+			drawTick();
+			displayThemeResetToDefault();   // далі текст -- звичайним кольором теми
 			snprintf(buf, sizeof buf, RCTL_ACK_AGE_FMT,
 			         (unsigned long)s_rc.ackFrom, (unsigned long)s_rc.ackAgeSecs);
 			// FONT_SIZE_1 (6 px/символ): у FONT_SIZE_2 рядок з 8-значним ID і двозначними
 			// секундами виходить за 160 px і обрізається на рації.
-			displayPrintCentered(90, buf, FONT_SIZE_1);
+			displayPrintCentered(94, buf, FONT_SIZE_1);
 		}
 		else
 		{
-			displayPrintCentered(64, RCTL_TIMEOUT, FONT_SIZE_3);
+			drawCross();
+			displayThemeResetToDefault();
 		}
 	}
 	else
