@@ -168,6 +168,12 @@ int main(void)
 		/* битий CRC відкидається й тут */
 		dmr_rctl_stock_ack_for(DMR_RCTL_STOCK_ENABLE, FORK, STOCKID, b); b[11] ^= 0x33;
 		CHECK(dmr_rctl_stock_parse_ack_for(b, &c, &rq, &rp) == 0, "битий CRC квитанції Enable відкинуто");
+
+		/* Квитанція Monitor -- правило біта (0x01 -> 0x81), байти обчислено (§7). */
+		dmr_rctl_stock_ack_for(DMR_RCTL_STOCK_MONITOR, FORK, STOCKID, b);
+		CHECK(eqhex(b, "9d 10 00 81 26 ea 29 26 ea 3d cf 36"), "квитанція Monitor байт-у-байт");
+		CHECK(dmr_rctl_stock_parse_ack_for(b, &c, &rq, &rp) && c == DMR_RCTL_STOCK_MONITOR &&
+		      rq == FORK && rp == STOCKID, "розбір квитанції Monitor");
 	}
 
 	printf(fails ? "\nПРОВАЛЕНО: %d\n" : "\nУсі тести пройдено\n", fails);

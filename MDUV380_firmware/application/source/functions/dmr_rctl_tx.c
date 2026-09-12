@@ -240,6 +240,7 @@ static volatile uint8_t  s_stockAckCmd;   /* яку команду підтве�
 /* Коварт-монітор (форк як ціль) -- стан; логіка нижче, біля dmrRctlTick(). */
 static volatile uint8_t  s_monPending;
 static volatile uint32_t s_monPendingReq;
+static volatile uint32_t s_monPendingDeadline; /* доки чекати кінця квитанції перед голосом */
 static uint8_t   s_monActive;
 static uint32_t  s_monSavedTgOrPc;
 static ticksTimer_t s_monTimer = { 0, 0 };
@@ -403,6 +404,16 @@ void dmrRctlStockRxDiagReset(void)
 /* Обробити відкладену стокову команду (з tick, поза ISR). Поки лише лічимо -- це тихо
  * підтверджує, що прийом+гейт працюють на залізі. Самі дії (ACK/блокування/монітор)
  * додамо наступними інкрементами -- кожну окремо й із перевіркою на залізі. */
+/* Відправити стокову квитанцію на команду cmd тому, хто запитав (форк як ціль).
+ * Стокова-командир чекає цю CSBK-квитанцію й без неї видає помилку (залізо 2026-09-12).
+ * Формат -- та сама команда зі старшим бітом керуючого байта (RCTL_COMPAT.md §6). */
+static void sendStockAck(dmr_rctl_stock_cmd_t cmd, uint32_t requester)
+{
+	uint8_t q[DMR_RCTL_STOCK_ACK_REPEATS * 13];
+	int n = dmr_rctl_stock_build_ack_tx_for(cmd, requester, trxDMRID, q);
+	if (n > 0) { dmrDataTxLoad(q, (uint8_t)n); }
+}
+
 static void dmrRctlStockProcessPending(void)
 {
 	/* Квитанція на наш запит -- окремо від команд: вона нічого не виконує, лише оновлює
@@ -448,25 +459,28 @@ static void dmrRctlStockProcessPending(void)
 				 * вище), а заблокував нас той, хто мав право Disable -- тобто реачність ми
 				 * відкриваємо лише авторизованому командиру. Локально рація лишається
 				 * «мертвою» (чорний екран, тиша) -- це окремий від RF-відповіді стан. */
-				{
-					uint8_t q[DMR_RCTL_STOCK_ACK_REPEATS * 13];
-					int n = dmr_rctl_stock_build_ack_tx(requester, trxDMRID, q);
-					if (n > 0) { dmrDataTxLoad(q, (uint8_t)n); }
-				}
+				sendStockAck(DMR_RCTL_STOCK_CHECK, requester);
 				break;
 			case DMR_RCTL_STOCK_DISABLE:
+				/* Спершу квитанція (a4 10 00 ff), потім стун: стокова-командир чекає
+				 * підтвердження. Дана-TX не гатиться стуном (як і Check у сні), тож
+				 * квитанція встигає вийти. */
+				sendStockAck(DMR_RCTL_STOCK_DISABLE, requester);
 				dmrRctlSetInhibited(1);   /* заблокувати (переживає перезавантаження) */
 				break;
 			case DMR_RCTL_STOCK_ENABLE:
 				dmrRctlSetInhibited(0);   /* розблокувати */
+				sendStockAck(DMR_RCTL_STOCK_ENABLE, requester);   /* a4 10 00 fe */
 				break;
 			case DMR_RCTL_STOCK_MONITOR:
-				/* Коварт-монітор: відкрити мік і вийти приватним голосовим викликом на requester.
-				 * Саме ключування — у monitorTick() (ця гілка може бути вже в tick, але тримаємо
-				 * єдине місце ключування). Працює й коли рація заблокована (stun): це саме
-				 * сценарій «втрачена/захоплена рація». */
+				/* Спершу CSBK-квитанція (9d 10 00 81) -- стокова-командир чекає її,
+				 * інакше видає помилку (залізо 2026-09-12). Потім -- коварт-монітор:
+				 * відкрити мік і вийти приватним голосовим викликом. monitorTick() сам дочекається
+				 * кінця квитанції (гейт dmrDataTxActive) і тоді ключує голос. Працює й у стуні. */
+				sendStockAck(DMR_RCTL_STOCK_MONITOR, requester);
 				s_monPendingReq = requester;
 				s_monPending = 1;
+				s_monPendingDeadline = ticksGetMillis() + 3000u;
 				break;
 		}
 	}
@@ -510,13 +524,14 @@ void dmrRctlMonitorCancel(void)
 	monitorStop();
 }
 
-static void monitorStart(uint32_t requester)
+static int monitorStart(uint32_t requester)
 {
-	/* Не перебиваємо чужу передачу (голос/дані/вже монітор) і працюємо лише в цифровому. */
+	/* Не перебиваємо чужу передачу (голос/дані/вже монітор) і працюємо лише в цифровому.
+	 * dmrDataTxActive() тут -- це ще йде CSBK-квитанція монітора: не помилка, а "ще рано",
+	 * тож повертаємо 0 (monitorTick повторить). */
 	if (s_monActive || trxTransmissionEnabled || dmrDataTxActive() || (trxGetMode() != RADIO_MODE_DIGITAL))
 	{
-		s_monSkipped++;
-		return;
+		return 0;
 	}
 
 	s_monSavedTgOrPc = trxTalkGroupOrPcId;
@@ -530,6 +545,7 @@ static void monitorStart(uint32_t requester)
 
 	uint32_t secs = dmrRctlMonitorSecs();
 	ticksTimerStart(&s_monTimer, secs * 1000u);
+	return 1;
 }
 
 /* Обробка з tick (головний цикл): арм/авто-зняття. */
@@ -537,8 +553,16 @@ static void monitorTick(void)
 {
 	if (s_monPending)
 	{
-		s_monPending = 0;
-		monitorStart(s_monPendingReq);
+		if (monitorStart(s_monPendingReq))
+		{
+			s_monPending = 0;   /* голос почався */
+		}
+		else if ((int32_t)(ticksGetMillis() - s_monPendingDeadline) >= 0)
+		{
+			s_monPending = 0;   /* не вдалось у вікні (канал/передача зайняті) -- кидаємо */
+			s_monSkipped++;
+		}
+		/* інакше — ще йде квитанція, чекаємо наступного тіка */
 	}
 	if (s_monActive && ticksTimerHasExpired(&s_monTimer))
 	{
