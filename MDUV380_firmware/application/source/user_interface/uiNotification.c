@@ -191,12 +191,22 @@ void uiNotificationRefresh(void)
 				int16_t fillW;
 				const char *title;
 
-				// Форк: фіксований яскраво-жовтий на темному тлі -- максимальна
-				// читабельність у русі/полі, незалежно від денної чи нічної теми
-				// (на білому тлі денної теми жовтий не читався б).
-				const uint16_t colBg  = PLATFORM_COLOUR_FORMAT_SWAP_BYTES(RGB888_TO_PLATFORM_COLOUR_FORMAT(0x0C0C14));
-				const uint16_t colFg  = PLATFORM_COLOUR_FORMAT_SWAP_BYTES(RGB888_TO_PLATFORM_COLOUR_FORMAT(0xFFE000));
-				const uint16_t colDec = PLATFORM_COLOUR_FORMAT_SWAP_BYTES(RGB888_TO_PLATFORM_COLOUR_FORMAT(0x786914));
+				// Форк: кольори за темою. НІЧ -- яскраво-жовтий на темному (максимальна
+				// читабельність у русі/полі). ДЕНЬ -- темно-синій на білому (на прохання
+				// fleet: жовтий на світлому тлі денної теми не читався б).
+				uint16_t colBg, colFg, colDec;
+				if (DAYTIME_CURRENT == NIGHT)
+				{
+					colBg  = PLATFORM_COLOUR_FORMAT_SWAP_BYTES(RGB888_TO_PLATFORM_COLOUR_FORMAT(0x0C0C14));
+					colFg  = PLATFORM_COLOUR_FORMAT_SWAP_BYTES(RGB888_TO_PLATFORM_COLOUR_FORMAT(0xFFE000));
+					colDec = PLATFORM_COLOUR_FORMAT_SWAP_BYTES(RGB888_TO_PLATFORM_COLOUR_FORMAT(0x786914));
+				}
+				else
+				{
+					colBg  = PLATFORM_COLOUR_FORMAT_SWAP_BYTES(RGB888_TO_PLATFORM_COLOUR_FORMAT(0xFFFFFF));  // біле тло
+					colFg  = PLATFORM_COLOUR_FORMAT_SWAP_BYTES(RGB888_TO_PLATFORM_COLOUR_FORMAT(0x0A2A6B));  // темно-синій текст/смуга
+					colDec = PLATFORM_COLOUR_FORMAT_SWAP_BYTES(RGB888_TO_PLATFORM_COLOUR_FORMAT(0x6E86C0));  // світліший синій -- рамка
+				}
 
 #if defined(HAS_SOFT_VOLUME)
 				if (notificationData.type == NOTIFICATION_TYPE_VOLUME)
