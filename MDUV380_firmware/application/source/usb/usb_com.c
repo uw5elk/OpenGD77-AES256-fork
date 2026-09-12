@@ -1822,9 +1822,9 @@ static void cpsHandleCommand(void)
 				}
 				// Діагностика квитанції (8x uint32 LE) -- теж у хвіст, старі парсери цілі.
 				{
-					uint32_t a[8];
+					uint32_t a[10];
 					dmrSmsAckDiag(a);
-					for (int i = 0; i < 8; i++)
+					for (int i = 0; i < 10; i++)
 					{
 						usbComSendBuf[3 + n++] = (uint8_t)(a[i]);
 						usbComSendBuf[3 + n++] = (uint8_t)(a[i] >> 8);

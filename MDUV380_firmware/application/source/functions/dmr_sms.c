@@ -595,8 +595,18 @@ static uint32_t s_ackDeadlineMs;/* після цього квитанція пр
  * Квитанцію ключуємо лише після паузи: інакше влучаємо у хвіст/термінатор відправника,
  * він у цей момент ще передає (отже глухий) -- і замість «доставлено» шле все наново. */
 static volatile uint32_t s_lastRxBurstMs;
-#define SMS_ACK_QUIET_MS   60    /* стільки тиші в каналі = передавач замовк (burst кожні ~60 мс) */
+#define SMS_ACK_QUIET_MS   40    /* тиші в каналі = передавач замовк; менше -> швидша відповідь */
 #define SMS_ACK_MAX_WAIT_MS 2500 /* не тягнути квитанцію вічно, якщо канал не звільняється */
+#define SMS_ACK_REPEATS     3    /* повторів заголовка-квитанції, як у квитанції RCTL */
+
+/* Ревізія формату/подачі квитанції -- видно в діагностиці (sms_diag.py), щоб не гадати,
+ * яка саме прошивка залита:
+ *   1 = перша реалізація: 2 преамбули + заголовок, у o9 підставлявся лічильник блоків (00 04);
+ *   2 = ключування по тиші в каналі + лічильники;
+ *   3 = квитуємо будь-який CONFIRMED (без вимоги біта A);
+ *   4 = ВИПРАВЛЕНО o8/o9 = 00 08 (ACK) -- до цього стокова законно не приймала;
+ *   5 = подача як у RCTL: 3 повтори заголовка, без преамбул; гейт тиші 40 мс. */
+#define SMS_ACK_FORMAT_REV  5
 
 /* Лічильники для польової діагностики (USB 0x93, хвіст відповіді). Саме вони мають сказати,
  * де рветься ланцюг: чи бачили ми взагалі CONFIRMED-заголовок із проханням квитанції,
@@ -635,7 +645,12 @@ static void queueSmsAck(uint32_t to)
 }
 
 /* Побудувати й відключити квитанцію, коли настав час і канал вільний. Черга =
- * 2 CSBK-преамбули + один Response data header (за тривалістю збігається з ефірним ~0.2 с). */
+ * Черга = Response data header, ПОВТОРЕНИЙ SMS_ACK_REPEATS разів, БЕЗ CSBK-преамбул.
+ * Саме так влаштована квитанція RCTL (dmr_rctl_stock_build_ack_tx: 3 повтори, без преамбул),
+ * а вона з цією ж стоковою перевірена на залізі. Команди RCTL шлються з 16 преамбулами,
+ * квитанції -- ні: відповідь має початися ЯКНАЙШВИДШЕ, поки відправник ще слухає.
+ * Попередня версія слала 2 преамбули + заголовок, тобто сам заголовок виходив в ефір на
+ * ~120 мс пізніше; в ефірному зразку (BBD_0005) преамбул перед квитанцією теж не знайшлось. */
 static void dmrSmsAckTick(void)
 {
 	if (!s_ackPending) { return; }
@@ -660,28 +675,18 @@ static void dmrSmsAckTick(void)
 
 	uint32_t dst = s_ackTo;         /* кому: початковий відправник */
 	uint32_t src = trxDMRID;        /* від кого: ми */
-	uint8_t  q[(2 + 1) * 13];
+	uint8_t  h[10];
+	h[0] = 0x01; h[1] = 0x40;                          /* Response, SAP=4 IP */
+	h[2] = (uint8_t)(dst >> 16); h[3] = (uint8_t)(dst >> 8); h[4] = (uint8_t)dst;
+	h[5] = (uint8_t)(src >> 16); h[6] = (uint8_t)(src >> 8); h[7] = (uint8_t)src;
+	h[8] = 0x00;                                       /* Blocks-to-Follow = 0 (гола квитанція) */
+	h[9] = 0x08;                                       /* Class=00 ACK, Type=001, Status=000 */
+	uint8_t p12[12]; memcpy(p12, h, 10); hdr_crc(h, 10, 0xCCCC, p12 + 10);
+
+	uint8_t q[SMS_ACK_REPEATS * 13];
 	int n = 0;
-	int preamble = 2;
-	int tail = 1;                   /* один заголовок-відповідь після преамбул */
-	for (int i = 0; i < preamble; i++)
+	for (int i = 0; i < SMS_ACK_REPEATS; i++)
 	{
-		uint8_t body[10];
-		body[0] = 0xBD; body[1] = 0x00; body[2] = 0x80;   /* 0x80: індивід. data-преамбула */
-		body[3] = (uint8_t)((preamble - 1 - i) + tail);
-		body[4] = (uint8_t)(dst >> 16); body[5] = (uint8_t)(dst >> 8); body[6] = (uint8_t)dst;
-		body[7] = (uint8_t)(src >> 16); body[8] = (uint8_t)(src >> 8); body[9] = (uint8_t)src;
-		uint8_t p12[12]; memcpy(p12, body, 10); hdr_crc(body, 10, 0xA5A5, p12 + 10);
-		n = append_burst(q, n, DTB_CSBK, p12);
-	}
-	{
-		uint8_t h[10];
-		h[0] = 0x01; h[1] = 0x40;                          /* Response, SAP=4 IP */
-		h[2] = (uint8_t)(dst >> 16); h[3] = (uint8_t)(dst >> 8); h[4] = (uint8_t)dst;
-		h[5] = (uint8_t)(src >> 16); h[6] = (uint8_t)(src >> 8); h[7] = (uint8_t)src;
-		h[8] = 0x00;                                       /* Blocks-to-Follow = 0 (гола квитанція) */
-		h[9] = 0x08;                                       /* Class=00 ACK, Type=001, Status=000 */
-		uint8_t p12[12]; memcpy(p12, h, 10); hdr_crc(h, 10, 0xCCCC, p12 + 10);
 		n = append_burst(q, n, DTB_DATA_HEADER, p12);
 	}
 	dmrDataTxLoad(q, (uint8_t)n);
@@ -897,12 +902,14 @@ void dmrSmsRxDiagReset(void)
  *   [6]=ост. було груповим, [7]=ост. адресоване нам.
  * Читається: якщо [0]=0 -- стокова не просить квитанції (дивись [4]); якщо [0]>0, а [1]=0 --
  * відсіяв фільтр (груповий/не нам: [6]/[7]); якщо [1]>0, а [2]=0 -- канал не звільнявся. */
-void dmrSmsAckDiag(uint32_t out[8])
+void dmrSmsAckDiag(uint32_t out[10])
 {
 	out[0] = s_ackSeen;   out[1] = s_ackQueued;
 	out[2] = s_ackSent;   out[3] = s_ackStale;
 	out[4] = s_ackLastHdr0; out[5] = s_ackLastHdr1;
 	out[6] = s_ackLastGroup; out[7] = s_ackLastForUs;
+	out[8] = SMS_ACK_FORMAT_REV;   /* яка саме прошивка залита -- щоб не гадати */
+	out[9] = SMS_ACK_REPEATS;
 }
 
 /* Гістограма rxDataType (16 значень) усіх прийнятих data-sync бурстів. */

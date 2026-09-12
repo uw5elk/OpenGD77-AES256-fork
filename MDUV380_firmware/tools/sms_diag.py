@@ -45,7 +45,16 @@ def main():
             print("  -> навантаження SMS іде тим типом, що не data-hdr/CSBK (напр. rate-3/4).")
         # Діагностика квитанції (8x uint32), дописана після гістограми.
         if len(r) >= 3 + 29 + 64 + 32:
-            seen, queued, sent, stale, h0, h1, grp, forus = struct.unpack_from("<8I", r, 3 + 29 + 64)
+            off = 3 + 29 + 64
+            seen, queued, sent, stale, h0, h1, grp, forus = struct.unpack_from("<8I", r, off)
+            if len(r) >= off + 40:
+                rev, reps = struct.unpack_from("<2I", r, off + 32)
+                print("Ревізія квитанції у прошивці: %d (повторів у черзі: %d)" % (rev, reps))
+                if rev < 5:
+                    print("  УВАГА: залита СТАРА прошивка. rev<4 слала хибний код (00 04);"
+                          " rev 5 = 3 повтори без преамбул. Прошийся свіжим бандлом.")
+            else:
+                print("Ревізія квитанції: невідома -- прошивка старіша за rev 5.")
             print("Квитанція: бачив=%d вчергу=%d вефір=%d кинуто=%d  "
                   "ост.заголовок=%02x %02x  груповий=%d нам=%d" %
                   (seen, queued, sent, stale, h0, h1, grp, forus))
