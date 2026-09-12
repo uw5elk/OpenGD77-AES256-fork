@@ -238,9 +238,9 @@ static volatile uint32_t s_stockAckFrom;
 static volatile uint8_t  s_stockAckCmd;   /* яку команду підтверджує квитанція */
 
 /* Коварт-монітор (форк як ціль) -- стан; логіка нижче, біля dmrRctlTick(). */
-static volatile uint8_t  s_monPending;
-static volatile uint32_t s_monPendingReq;
-static volatile uint32_t s_monPendingDeadline; /* доки чекати кінця квитанції перед голосом */
+static volatile uint32_t s_monReq;       /* кому шлемо голос (той, хто запитав) */
+static volatile uint8_t  s_monKeyTries;  /* лічильник спроб ключування (чекаємо кінця квитанції) */
+static void monitorKeyVoice(void);   /* нижче: відкладене ключування голосу */
 static uint8_t   s_monActive;
 static uint32_t  s_monSavedTgOrPc;
 static ticksTimer_t s_monTimer = { 0, 0 };
@@ -482,9 +482,11 @@ static void dmrRctlStockProcessPending(void)
 				 * відкрити мік і вийти приватним голосовим викликом. monitorTick() сам дочекається
 				 * кінця квитанції (гейт dmrDataTxActive) і тоді ключує голос. Працює й у стуні. */
 				sendStockAck(DMR_RCTL_STOCK_MONITOR, requester);
-				s_monPendingReq = requester;
-				s_monPending = 1;
-				s_monPendingDeadline = ticksGetMillis() + 3000u;
+				/* Голос ключуємо ВІДКЛАДЕНО (800 мс), коли CSBK-квитанція вже зійшла з ефіру.
+				 * Детерміновано, через таймерний колбек -- як dmrDataKeyTx, без гонки прапорців. */
+				s_monReq = requester;
+				s_monKeyTries = 0;
+				addTimerCallback(monitorKeyVoice, 800, MENU_ANY, false);
 				break;
 		}
 	}
@@ -529,51 +531,50 @@ void dmrRctlMonitorCancel(void)
 	monitorStop();
 }
 
-static int monitorStart(uint32_t requester)
+/* Відкладене ключування голосу монітора (таймерний колбек, головний цикл). Викликається
+ * через ~800 мс після CSBK-квитанції. Якщо квитанція ще йде (dmrDataTxActive) -- переносимо
+ * себе ще на трохи (до кількох спроб). Ключуємо ДЕТЕРМІНОВАНО через HRC6000ForceDMRIdleForTx()
+ * -- той самий чистий стан IDLE, з якого дана-TX надійно стартує: він скидає trxIsTransmitting
+ * і slotState, тож ми не залежимо від того, чи teardown квитанції встиг усе поскидати. */
+static void monitorKeyVoice(void)
 {
-	/* Не перебиваємо чужу передачу (голос/дані/вже монітор) і працюємо лише в цифровому.
-	 * dmrDataTxActive() тут -- це ще йде CSBK-квитанція монітора: не помилка, а "ще рано",
-	 * тож повертаємо 0 (monitorTick повторить). */
-	if (s_monActive || trxTransmissionEnabled || trxIsTransmitting || dmrDataTxActive() ||
-	    (trxGetMode() != RADIO_MODE_DIGITAL))
+	if (trxGetMode() != RADIO_MODE_DIGITAL) { s_monSkipped++; return; }   // не цифровий -- не можемо
+	if (s_monActive) { return; }                                          // вже йде
+
+	/* Квитанція ще в ефірі? Перенести спробу (bounded), щоб не ключувати поверх неї. */
+	if (dmrDataTxActive() || trxIsTransmitting)
 	{
-		/* trxIsTransmitting -- ще не відпустилась передача CSBK-квитанції (PA ще ключований,
-		 * finishPoll ще не зробив trxDisableTransmission). Ключувати голос тут = колізія
-		 * (голос обривався через ~1 с). Чекаємо повного відпускання. */
-		return 0;
+		if (++s_monKeyTries <= 10)
+		{
+			addTimerCallback(monitorKeyVoice, 200, MENU_ANY, false);
+		}
+		else
+		{
+			s_monSkipped++;   // квитанція незвично довга -- не ризикуємо колізією
+		}
+		return;
 	}
 
 	s_monSavedTgOrPc = trxTalkGroupOrPcId;
 	/* Приватний виклик тому, хто запитав (FLCO 0x03) -- як у стокової. */
-	trxTalkGroupOrPcId = ((uint32_t)PC_CALL_FLAG << 24) | (requester & 0x00FFFFFFu);
+	trxTalkGroupOrPcId = ((uint32_t)PC_CALL_FLAG << 24) | (s_monReq & 0x00FFFFFFu);
 
-	HRC6000ClearIsWakingState();
-	trxSetTX();                        // trxTransmissionEnabled=1; HRC6000 tick почне кодувати мік
+	/* Чистий стан для ключування (як dmrDataKeyTx): скидає slotState=IDLE, trxIsTransmitting=0,
+	 * isWaking=NONE, тож наступний hrc6000Tick() надійно заводить TX_START -> soundReceiveData
+	 * (мік) -> голос. */
+	HRC6000ForceDMRIdleForTx();
+	trxSetTX();                        // trxTransmissionEnabled=1; далі HRC6000 сам кодує мік
 	s_monActive = 1;
 	s_monStarted++;
 	s_monStartMs = ticksGetMillis();
 
 	uint32_t secs = dmrRctlMonitorSecs();
 	ticksTimerStart(&s_monTimer, secs * 1000u);
-	return 1;
 }
 
-/* Обробка з tick (головний цикл): арм/авто-зняття. */
+/* Обробка з tick (головний цикл): лише авто-зняття за таймером тривалості. */
 static void monitorTick(void)
 {
-	if (s_monPending)
-	{
-		if (monitorStart(s_monPendingReq))
-		{
-			s_monPending = 0;   /* голос почався */
-		}
-		else if ((int32_t)(ticksGetMillis() - s_monPendingDeadline) >= 0)
-		{
-			s_monPending = 0;   /* не вдалось у вікні (канал/передача зайняті) -- кидаємо */
-			s_monSkipped++;
-		}
-		/* інакше — ще йде квитанція, чекаємо наступного тіка */
-	}
 	if (s_monActive && ticksTimerHasExpired(&s_monTimer))
 	{
 		monitorStop();
