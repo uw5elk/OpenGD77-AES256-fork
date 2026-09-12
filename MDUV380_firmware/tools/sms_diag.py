@@ -39,14 +39,6 @@ def main():
         print("(діє до вимкнення рації; тепер надішли SMS зі стокової й подивись на її екран)")
         return
 
-    # Просити квитанцію на власних повідомленнях (біт A): --askack 0|1
-    if "--askack" in sys.argv:
-        i = sys.argv.index("--askack")
-        on = int(sys.argv[i + 1]) if len(sys.argv) > i + 1 else 1
-        ser.write(bytes([ord("C"), 0xB4, on & 1])); ser.flush(); time.sleep(0.2); ser.read(8)
-        print("біт A на власних повідомленнях: %s" % ("увімкнено" if on else "вимкнено"))
-        return
-
     if "--reset" in sys.argv:
         ser.write(bytes([ord("C"), 0x94])); ser.flush(); time.sleep(0.2)
         print("counters reset:", ser.read(8).hex())
@@ -98,11 +90,6 @@ def main():
                         print("    -- у межах норми.")
             else:
                 print("Ревізія квитанції: невідома -- прошивка старіша за rev 5.")
-            if len(r) >= off + 60:
-                rcvd, ask = struct.unpack_from("<2I", r, off + 52)
-                print("НАШІ повідомлення: просимо квитанцію (біт A)=%d, "
-                      "квитанцій отримано=%d %s" % (ask, rcvd,
-                      "<-- «доставлено» працює" if rcvd else "(ще жодної)"))
             print("Квитанція: бачив=%d вчергу=%d вефір=%d кинуто=%d  "
                   "ост.заголовок=%02x %02x  груповий=%d нам=%d" %
                   (seen, queued, sent, stale, h0, h1, grp, forus))

@@ -1822,9 +1822,9 @@ static void cpsHandleCommand(void)
 				}
 				// Діагностика квитанції (8x uint32 LE) -- теж у хвіст, старі парсери цілі.
 				{
-					uint32_t a[15];
+					uint32_t a[13];
 					dmrSmsAckDiag(a);
-					for (int i = 0; i < 15; i++)
+					for (int i = 0; i < 13; i++)
 					{
 						usbComSendBuf[3 + n++] = (uint8_t)(a[i]);
 						usbComSendBuf[3 + n++] = (uint8_t)(a[i] >> 8);
@@ -1839,13 +1839,6 @@ static void cpsHandleCommand(void)
 				replyLength = n + 3;
 				return; // bypass the trailing generic '-' reply
 			}
-		case 0xB4: // DIAGNOSTIC: просити квитанцію на власних повідомленнях (біт A): [2]=0/1
-			dmrSmsAckSetAskAck(com_requestbuffer[2]);
-			usbComSendBuf[0] = com_requestbuffer[0];
-			hasToReply = true;
-			replyLength = 1;
-			break;
-
 		case 0xB3: // DIAGNOSTIC: дамп сирих блоків навантаження (зі службовими DBSN+CRC9)
 			{
 				int n = dmrSmsRxRawBlocks(&usbComSendBuf[3], 200);

@@ -31,7 +31,6 @@
 #define DMR_SMS_FLAG_UNREAD    0x02
 #define DMR_SMS_FLAG_OUTGOING  0x04   /* a Sent message (else Inbox)        */
 #define DMR_SMS_FLAG_GROUP     0x08   /* peerId is a talkgroup (else DMR ID) */
-#define DMR_SMS_FLAG_DELIVERED 0x20   /* Надіслані: прийшла квитанція від адресата */
 #define DMR_SMS_FLAG_FOREIGN   0x10   /* Вхідні: адресоване НЕ нам -- прийнято тільки тому, що
                                        * увімкнено монітор (BIT_SMS_MONITOR_ALL). У списку
                                        * позначається окремо, щоб оператор не сплутав чужий
@@ -85,16 +84,12 @@ void dmrSmsRxDiagTypes(uint32_t out[16]);   /* гістограма rxDataType (
  *   [4]=p[0] ост. вхідного data-заголовка, [5]=p[1], [6]=груповий?, [7]=адресоване нам?,
  *   [8]=ревізія формату квитанції (яка прошивка залита), [9]=повторів у черзі,
  *   [10]=виміряна пауза до віддачі квитанції, мс (еталон стокової ~80),
- *   [11]=цільова пауза (підбірна), [12]=CSBK-преамбул перед квитанцією,
- *   [13]=квитанцій НА НАШІ повідомлення прийнято, [14]=чи просимо квитанцію (біт A). */
-void dmrSmsAckDiag(uint32_t out[15]);
+ *   [11]=цільова пауза (підбірна), [12]=CSBK-преамбул перед квитанцією. */
+void dmrSmsAckDiag(uint32_t out[13]);
 /* Підбір подачі квитанції без перепрошивки (USB 0x95): скільки разів повторити заголовок
  * (1..6), через скільки мс після тиші в каналі віддати і скільки CSBK-преамбул поставити
  * попереду (0..16). Типово 1 / 80 / 6 -- преамбули як у нашого SMS, яке стокова приймає. */
 void dmrSmsAckSetTuning(uint8_t repeats, uint16_t delayMs, uint8_t preambles);
-/* Чи виставляти біт A («прошу квитанцію») на власних повідомленнях. Типово так -- саме це
- * дає позначку «доставлено», не потребуючи CONFIRMED-блоків (DBSN/CRC9). USB 0xB4. */
-void dmrSmsAckSetAskAck(int on);
 void dmrSmsRxDiagReset(void);
 /* Dump the last reassembled (still-encrypted) PDU + metadata for offline analysis:
  * out = [pduLen_hi, pduLen_lo, keyId, expBlocks, peer(4 LE), rawPdu...]. Returns length. */
