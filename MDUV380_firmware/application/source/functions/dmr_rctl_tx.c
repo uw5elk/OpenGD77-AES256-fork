@@ -246,6 +246,8 @@ static uint32_t  s_monSavedTgOrPc;
 static ticksTimer_t s_monTimer = { 0, 0 };
 static uint32_t  s_monStarted;   /* діагностика: скільки разів ключували мік */
 static uint32_t  s_monSkipped;   /* скільки разів не ключували (зайнято/не цифровий режим) */
+static uint32_t  s_monStartMs;   /* коли почався останній монітор */
+static uint32_t  s_monLastMs;    /* скільки мс тривав останній (діагностика) */
 
 
 /* Діагностика шляху квитанції (розрізнити три різні причини хреста на екрані):
@@ -282,6 +284,7 @@ void dmrRctlNoteOwnTxEnd(uint32_t txFinishMs)
 	s_winFirstAnyMs = 0;
 	s_monStarted = 0;
 	s_monSkipped = 0;
+	s_monLastMs = 0;
 	s_winArmed = 1;
 }
 
@@ -360,7 +363,7 @@ void dmrRctlStockRxBurst(const uint8_t *p12)
 	s_stockPending = 1;
 }
 
-void dmrRctlStockRxDiag(uint32_t out[19])
+void dmrRctlStockRxDiag(uint32_t out[20])
 {
 	out[0] = s_stockSeen;
 	out[1] = s_stockLastSrc;
@@ -381,6 +384,7 @@ void dmrRctlStockRxDiag(uint32_t out[19])
 	out[16] = s_winFirstAnyMs;
 	out[17] = s_monStarted;
 	out[18] = s_monSkipped;
+	out[19] = s_monLastMs;
 }
 
 void dmrRctlStockRxDiagReset(void)
@@ -507,6 +511,7 @@ static void monitorStop(void)
 {
 	if (!s_monActive) { return; }
 	s_monActive = 0;
+	s_monLastMs = (uint32_t)(ticksGetMillis() - s_monStartMs);
 
 	trxDisableTransmission();          // LED_RED off (був вимкнений) + trxActivateRx() -> назад у прийом
 	trxTransmissionEnabled = false;
@@ -529,8 +534,12 @@ static int monitorStart(uint32_t requester)
 	/* Не перебиваємо чужу передачу (голос/дані/вже монітор) і працюємо лише в цифровому.
 	 * dmrDataTxActive() тут -- це ще йде CSBK-квитанція монітора: не помилка, а "ще рано",
 	 * тож повертаємо 0 (monitorTick повторить). */
-	if (s_monActive || trxTransmissionEnabled || dmrDataTxActive() || (trxGetMode() != RADIO_MODE_DIGITAL))
+	if (s_monActive || trxTransmissionEnabled || trxIsTransmitting || dmrDataTxActive() ||
+	    (trxGetMode() != RADIO_MODE_DIGITAL))
 	{
+		/* trxIsTransmitting -- ще не відпустилась передача CSBK-квитанції (PA ще ключований,
+		 * finishPoll ще не зробив trxDisableTransmission). Ключувати голос тут = колізія
+		 * (голос обривався через ~1 с). Чекаємо повного відпускання. */
 		return 0;
 	}
 
@@ -542,6 +551,7 @@ static int monitorStart(uint32_t requester)
 	trxSetTX();                        // trxTransmissionEnabled=1; HRC6000 tick почне кодувати мік
 	s_monActive = 1;
 	s_monStarted++;
+	s_monStartMs = ticksGetMillis();
 
 	uint32_t secs = dmrRctlMonitorSecs();
 	ticksTimerStart(&s_monTimer, secs * 1000u);

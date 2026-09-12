@@ -41,7 +41,7 @@ int dmrRctlStockSend(int cmd, uint32_t targetId);
 void dmrRctlStockRxBurst(const uint8_t *payload12);
 /* Тиха діагностика прийому (USB): out[0]=seen, [1]=lastSrc, [2..5]=acted Check/Monitor/Enable/Disable,
  * [6]=inhibited (1=рацію заблоковано командою Disable по ефіру). */
-void dmrRctlStockRxDiag(uint32_t out[19]);
+void dmrRctlStockRxDiag(uint32_t out[20]);
 
 /* Коварт-монітор (форк як ціль): чи зараз йде прихована передача мікрофона, і
  * аварійне зняття (напр. власний оператор натиснув PTT). Безпечно звати завжди. */
@@ -85,7 +85,7 @@ static inline int  dmrRctlSendCmd(uint32_t targetId, uint8_t cmd, uint32_t arg) 
 static inline int  dmrRctlRequestCheck(uint32_t targetId) { (void)targetId; return -1; }
 static inline int  dmrRctlStockSend(int cmd, uint32_t targetId) { (void)cmd; (void)targetId; return -1; }
 static inline void dmrRctlStockRxBurst(const uint8_t *payload12) { (void)payload12; }
-static inline void dmrRctlStockRxDiag(uint32_t out[19]) { for (int i = 0; i < 19; i++) { out[i] = 0; } }
+static inline void dmrRctlStockRxDiag(uint32_t out[20]) { for (int i = 0; i < 20; i++) { out[i] = 0; } }
 static inline int  dmrRctlMonitorActive(void) { return 0; }
 static inline void dmrRctlMonitorCancel(void) { }
 static inline void dmrRctlNoteOwnTxEnd(uint32_t txFinishMs) { (void)txFinishMs; }
