@@ -598,6 +598,7 @@ static volatile uint32_t s_lastRxBurstMs;
 #define SMS_ACK_KEY_DELAY_MS 15  /* замість типових 100 мс: стокова слухає вузьке вікно */
 #define SMS_ACK_MAX_WAIT_MS 2500 /* не тягнути квитанцію вічно, якщо канал не звільняється */
 #define SMS_ACK_MAX_REPEATS  6   /* межа буфера черги */
+#define SMS_ACK_MAX_PREAMBLES 16 /* стільки ж, скільки шле стокова перед повідомленням */
 
 /* ПІДБІРНІ ПАРАМЕТРИ (USB 0xB2) -- щоб не перебирати прошивками по одній.
  * Типово = рівно як у стокової, знято з ефіру (BBD_0005): ОДИН burst через ~80 мс після
@@ -607,14 +608,24 @@ static volatile uint32_t s_lastRxBurstMs;
  * передача->прийом. */
 static uint8_t  s_ackRepeats = 1;      /* скільки разів повторити заголовок (1..6) */
 static uint16_t s_ackTargetMs = 80;    /* цільова пауза після тиші в каналі, мс */
+/* CSBK-преамбули перед квитанцією. ТИПОВО 6 -- і ось чому.
+ * Еталоном я довго вважав те, що стокова НАДСИЛАЄ (її квитанція йде без преамбул). Але
+ * правильний еталон -- те, що вона успішно ПРИЙМАЄ, і такий приклад є власний: наше
+ * звичайне SMS стокова приймає, а воно йде з 6 преамбулами (dmrSmsSend). Схоже, її приймач
+ * просто не «заводить» data-виклик без преамбули; RT4D виявився поблажливішим, тому її
+ * власна безпреамбульна квитанція йому зайшла. Коли преамбули були в нас (rev<=4), тоді
+ * стояв хибний код 00 04 -- тож поєднання «преамбули + правильний код» не перевірялось. */
+static uint8_t  s_ackPreambles = 6;
 
-void dmrSmsAckSetTuning(uint8_t repeats, uint16_t delayMs)
+void dmrSmsAckSetTuning(uint8_t repeats, uint16_t delayMs, uint8_t preambles)
 {
 	if (repeats < 1) { repeats = 1; }
 	if (repeats > SMS_ACK_MAX_REPEATS) { repeats = SMS_ACK_MAX_REPEATS; }
 	if (delayMs > 2000) { delayMs = 2000; }
+	if (preambles > SMS_ACK_MAX_PREAMBLES) { preambles = SMS_ACK_MAX_PREAMBLES; }
 	s_ackRepeats = repeats;
 	s_ackTargetMs = delayMs;
+	s_ackPreambles = preambles;
 }
 
 /* Ревізія формату/подачі квитанції -- видно в діагностиці (sms_diag.py), щоб не гадати,
@@ -628,9 +639,11 @@ void dmrSmsAckSetTuning(uint8_t repeats, uint16_t delayMs)
  *       тобто в ефір лізли, поки він передає (глухий). РАНО;
  *   7 = вікно з обох боків: чекаємо тиші 30 мс + ключування 15 мс, блокуючий запис у флеш
  *       відкладено. Таймінг і форма стали правильні -- стокова ВСЕ ОДНО пише помилку;
- *   8 = типово шлемо РІВНО як стокова: ОДИН burst через ~80 мс. Обидва параметри тепер
- *       підбірні по USB 0x95 (dmrSmsAckSetTuning), щоб не перебирати прошивками. */
-#define SMS_ACK_FORMAT_REV  8
+ *   8 = ОДИН burst через ~80 мс (як шле стокова) + підбір по USB. Жодне зі значень сітки
+ *       (1/60..150, 2/100) стокову не влаштувало -> подача ні до чого;
+ *   9 = перевертаємо еталон: копіюємо не те, що стокова НАДСИЛАЄ, а те, що вона успішно
+ *       ПРИЙМАЄ -- наше власне SMS із 6 CSBK-преамбулами. Преамбули тепер теж підбірні. */
+#define SMS_ACK_FORMAT_REV  9
 
 /* Лічильники для польової діагностики (USB 0x93, хвіст відповіді). Саме вони мають сказати,
  * де рветься ланцюг: чи бачили ми взагалі CONFIRMED-заголовок із проханням квитанції,
@@ -741,8 +754,19 @@ static void buildAndLoadSmsAck(uint32_t dst)
 	h[9] = 0x08;                                       /* Class=00 ACK, Type=001, Status=000 */
 	uint8_t p12[12]; memcpy(p12, h, 10); hdr_crc(h, 10, 0xCCCC, p12 + 10);
 
-	uint8_t q[SMS_ACK_MAX_REPEATS * 13];
+	static uint8_t q[(SMS_ACK_MAX_PREAMBLES + SMS_ACK_MAX_REPEATS) * 13];
 	int n = 0;
+	/* CSBK-преамбули (як перед звичайним повідомленням) -- «заводять» data-виклик у приймача. */
+	for (int i = 0; i < (int)s_ackPreambles; i++)
+	{
+		uint8_t body[10];
+		body[0] = 0xBD; body[1] = 0x00; body[2] = 0x80;   /* індивідуальна data-преамбула */
+		body[3] = (uint8_t)(((int)s_ackPreambles - 1 - i) + (int)s_ackRepeats);
+		body[4] = (uint8_t)(dst >> 16); body[5] = (uint8_t)(dst >> 8); body[6] = (uint8_t)dst;
+		body[7] = (uint8_t)(src >> 16); body[8] = (uint8_t)(src >> 8); body[9] = (uint8_t)src;
+		uint8_t pb[12]; memcpy(pb, body, 10); hdr_crc(body, 10, 0xA5A5, pb + 10);
+		n = append_burst(q, n, DTB_CSBK, pb);
+	}
 	for (int i = 0; i < (int)s_ackRepeats; i++)
 	{
 		n = append_burst(q, n, DTB_DATA_HEADER, p12);
@@ -962,7 +986,7 @@ void dmrSmsRxDiagReset(void)
  *   [6]=ост. було груповим, [7]=ост. адресоване нам.
  * Читається: якщо [0]=0 -- стокова не просить квитанції (дивись [4]); якщо [0]>0, а [1]=0 --
  * відсіяв фільтр (груповий/не нам: [6]/[7]); якщо [1]>0, а [2]=0 -- канал не звільнявся. */
-void dmrSmsAckDiag(uint32_t out[12])
+void dmrSmsAckDiag(uint32_t out[13])
 {
 	out[0] = s_ackSeen;   out[1] = s_ackQueued;
 	out[2] = s_ackSent;   out[3] = s_ackStale;
@@ -972,6 +996,7 @@ void dmrSmsAckDiag(uint32_t out[12])
 	out[9] = s_ackRepeats;
 	out[10] = s_ackLastDelayMs;    /* виміряна пауза; еталон стокової ~80 мс */
 	out[11] = s_ackTargetMs;       /* цільова пауза (підбірна) */
+	out[12] = s_ackPreambles;      /* CSBK-преамбул перед квитанцією (підбірні) */
 }
 
 /* Гістограма rxDataType (16 значень) усіх прийнятих data-sync бурстів. */

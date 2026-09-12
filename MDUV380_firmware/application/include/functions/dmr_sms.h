@@ -84,11 +84,12 @@ void dmrSmsRxDiagTypes(uint32_t out[16]);   /* гістограма rxDataType (
  *   [4]=p[0] ост. вхідного data-заголовка, [5]=p[1], [6]=груповий?, [7]=адресоване нам?,
  *   [8]=ревізія формату квитанції (яка прошивка залита), [9]=повторів у черзі,
  *   [10]=виміряна пауза до віддачі квитанції, мс (еталон стокової ~80),
- *   [11]=цільова пауза (підбірна). */
-void dmrSmsAckDiag(uint32_t out[12]);
+ *   [11]=цільова пауза (підбірна), [12]=CSBK-преамбул перед квитанцією. */
+void dmrSmsAckDiag(uint32_t out[13]);
 /* Підбір подачі квитанції без перепрошивки (USB 0x95): скільки разів повторити заголовок
- * (1..6) і через скільки мс після тиші в каналі віддати. Типово 1 / 80 -- як у стокової. */
-void dmrSmsAckSetTuning(uint8_t repeats, uint16_t delayMs);
+ * (1..6), через скільки мс після тиші в каналі віддати і скільки CSBK-преамбул поставити
+ * попереду (0..16). Типово 1 / 80 / 6 -- преамбули як у нашого SMS, яке стокова приймає. */
+void dmrSmsAckSetTuning(uint8_t repeats, uint16_t delayMs, uint8_t preambles);
 void dmrSmsRxDiagReset(void);
 /* Dump the last reassembled (still-encrypted) PDU + metadata for offline analysis:
  * out = [pduLen_hi, pduLen_lo, keyId, expBlocks, peer(4 LE), rawPdu...]. Returns length. */

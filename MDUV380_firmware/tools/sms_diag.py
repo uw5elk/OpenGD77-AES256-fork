@@ -28,10 +28,14 @@ def main():
         try:
             reps = int(sys.argv[i + 1]); dly = int(sys.argv[i + 2])
         except (IndexError, ValueError):
-            sys.exit("вжиток: sms_diag.py --ack <повторів 1..6> <пауза мс, напр. 80>")
-        ser.write(bytes([ord("C"), 0xB2, reps & 0xFF, dly & 0xFF, (dly >> 8) & 0xFF]))
+            sys.exit("вжиток: sms_diag.py --ack <повторів 1..6> <пауза мс> [преамбул 0..16]")
+        try:
+            pre = int(sys.argv[i + 3])
+        except (IndexError, ValueError):
+            pre = 6
+        ser.write(bytes([ord("C"), 0xB2, reps & 0xFF, dly & 0xFF, (dly >> 8) & 0xFF, pre & 0xFF]))
         ser.flush(); time.sleep(0.2); ser.read(8)
-        print("подача квитанції: %d повтор(ів), пауза %d мс" % (reps, dly))
+        print("подача квитанції: %d повтор(ів), пауза %d мс, преамбул %d" % (reps, dly, pre))
         print("(діє до вимкнення рації; тепер надішли SMS зі стокової й подивись на її екран)")
         return
 
@@ -62,7 +66,11 @@ def main():
             seen, queued, sent, stale, h0, h1, grp, forus = struct.unpack_from("<8I", r, off)
             if len(r) >= off + 40:
                 rev, reps = struct.unpack_from("<2I", r, off + 32)
-                print("Ревізія квитанції у прошивці: %d (повторів у черзі: %d)" % (rev, reps))
+                pre = None
+                if len(r) >= off + 52:
+                    (pre,) = struct.unpack_from("<I", r, off + 48)
+                print("Ревізія квитанції у прошивці: %d (повторів: %d%s)"
+                      % (rev, reps, (", преамбул: %d" % pre) if pre is not None else ""))
                 if rev < 7:
                     print("  УВАГА: залита СТАРА прошивка (rev<7). Прошийся свіжим бандлом.")
                 if len(r) >= off + 44:
