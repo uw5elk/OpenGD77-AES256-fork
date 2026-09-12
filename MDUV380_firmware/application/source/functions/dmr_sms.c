@@ -570,11 +570,16 @@ static uint8_t  s_txMsgSeeded;
  * помилку й ретрансмітить -- рівно як було з монітором до реверсу його квитанції.
  *
  * Знято з ефіру (BBD_0005, стокова 0x26EA3D квитує RT4D 0x26EA1B):
- *   01 40 <кому:3=початк.відправник> <від кого:3=ми> 00 <BF> <CRC16^0xCCCC>
+ *   01 40 <кому:3=початк.відправник> <від кого:3=ми> 00 08 <CRC16^0xCCCC>
  *   o0=0x01: G/I=0 (індивід.), A=0, DPF=1 (Response)
  *   o1=0x40: SAP=4 (IP based packet data) -- той самий SAP, що й у нашому тексті
- *   o8=0x00: Class=00 (ACK/успіх), Type=0, Status=0
- *   o9=BF  : blocks-to-follow початкового повідомлення (стокова слала 0x08); тут луна.
+ *   o8=0x00: Blocks-to-Follow = 0 (гола квитанція, за нею блоків немає)
+ *   o9=0x08: Class=00 (ACK), Type=001, Status=000
+ * ОБИДВА байти -- КОНСТАНТИ, нічого туди не підставляти. Перша реалізація (2026-09-12)
+ * трактувала їх навпаки (o8=код, o9=луна к-сті блоків) і слала в полі `00 04` -- тобто
+ * Status=4 замість ACK. Квитанція йшла в ефір (лічильники: вефір=3), але стокова її не
+ * приймала й ретрансмітила повідомлення 3 рази. Не «винаходити» ці байти: шлемо рівно те,
+ * що знято з ефіру.
  * CRC заголовка -- той самий, що для всіх data-заголовків (crc16d ^ 0xCCCC).
  *
  * Ключуємо з невеликою затримкою після завершення прийому (стокова відповідала ~80 мс по
@@ -582,7 +587,6 @@ static uint8_t  s_txMsgSeeded;
  * зіткнутися з хвостом передачі відправника. */
 static uint8_t  s_ackPending;   /* 1 = винні квитанцію */
 static uint32_t s_ackTo;        /* кому (початковий відправник) */
-static uint8_t  s_ackBF;        /* blocks-to-follow -- луна лічильника блоків оригіналу */
 static uint32_t s_ackAtMs;      /* найраніший момент ключування */
 static uint32_t s_ackDeadlineMs;/* після цього квитанція протухла (канал так і не звільнився) */
 
@@ -620,11 +624,10 @@ static void dmrSmsTxPersistTick(void)
 
 /* Поставити квитанцію в чергу (викликається з dmrSmsRxTick, коли прийнято адресоване нам
  * CONFIRMED повідомлення з проханням підтвердити). Саме ключування -- у dmrSmsAckTick. */
-static void queueSmsAck(uint32_t to, uint8_t bf)
+static void queueSmsAck(uint32_t to)
 {
 	uint32_t now = ticksGetMillis();
 	s_ackTo = to;
-	s_ackBF = (bf != 0) ? bf : 0x08;   /* луна; 0 малоймовірно, але не шлемо порожню */
 	s_ackAtMs = now;                    /* далі чекаємо не таймер, а ТИШУ в каналі */
 	s_ackDeadlineMs = now + SMS_ACK_MAX_WAIT_MS;
 	s_ackPending = 1;
@@ -676,8 +679,8 @@ static void dmrSmsAckTick(void)
 		h[0] = 0x01; h[1] = 0x40;                          /* Response, SAP=4 IP */
 		h[2] = (uint8_t)(dst >> 16); h[3] = (uint8_t)(dst >> 8); h[4] = (uint8_t)dst;
 		h[5] = (uint8_t)(src >> 16); h[6] = (uint8_t)(src >> 8); h[7] = (uint8_t)src;
-		h[8] = 0x00;                                       /* Class=ACK, Type=0, Status=0 */
-		h[9] = s_ackBF;                                    /* blocks-to-follow (луна) */
+		h[8] = 0x00;                                       /* Blocks-to-Follow = 0 (гола квитанція) */
+		h[9] = 0x08;                                       /* Class=00 ACK, Type=001, Status=000 */
 		uint8_t p12[12]; memcpy(p12, h, 10); hdr_crc(h, 10, 0xCCCC, p12 + 10);
 		n = append_burst(q, n, DTB_DATA_HEADER, p12);
 	}
@@ -831,7 +834,6 @@ static volatile uint8_t  s_rxPeerKeyId DMR_AES_CCM;
 static volatile uint8_t  s_rxPeerEnc DMR_AES_CCM;   /* 1 = PDU carried the ENC header (decrypt); 0 = cleartext */
 static volatile uint8_t  s_rxAckReq DMR_AES_CCM;    /* вхідний data-заголовок = CONFIRMED + прохання квитанції */
 static volatile uint8_t  s_rxPeerAckReq DMR_AES_CCM;/* знімок s_rxAckReq на момент готового PDU */
-static volatile uint8_t  s_rxPeerBlocks DMR_AES_CCM;/* скільки блоків навантаження зібрали -- луна в BF квитанції */
 /* diagnostic counters (visible on the Messages home screen) to localise RX failures */
 static volatile uint32_t s_diagData   DMR_AES_CCM; /* ALL data-sync-class bursts the chip delivered */
 static volatile uint32_t s_diagHdrOk  DMR_AES_CCM; /* type-6 data-header, CRC OK   */
@@ -1007,7 +1009,6 @@ void dmrSmsRxBurst(int rxDataType, const uint8_t *p)
 			s_rxPeerKeyId = s_rxKeyId;
 			s_rxPeerEnc = s_rxHaveEnc;   /* decrypt if the ENC header was seen, else read cleartext */
 			s_rxPeerAckReq = s_rxAckReq; /* чи винні ми квитанцію за це повідомлення */
-			s_rxPeerBlocks = s_rxCount;  /* луна лічильника блоків у BF квитанції */
 			s_rxReady = 1;          /* main loop will decrypt (or read cleartext) + store */
 			s_diagPdu++;
 			/* snapshot raw (still-encrypted) PDU for USB inspection (clamped to the
@@ -1077,7 +1078,6 @@ void dmrSmsRxTick(void)
 	uint8_t  keyId = s_rxPeerKeyId;
 	uint8_t  enc = s_rxPeerEnc;
 	uint8_t  ackReq = s_rxPeerAckReq;
-	uint8_t  ackBF = s_rxPeerBlocks;
 	if (pduLen > (int)sizeof pdu) { pduLen = (int)sizeof pdu; }
 	memcpy(pdu, s_rxPdu, pduLen);
 	s_rxReady = 0;
@@ -1116,7 +1116,7 @@ void dmrSmsRxTick(void)
 	s_ackLastForUs = (uint8_t)(forUs ? 1 : 0);
 	if (ackReq && forUs && !group)
 	{
-		queueSmsAck(peer, ackBF);
+		queueSmsAck(peer);
 	}
 
 	char text[DMR_SMS_TEXT_MAX + 1];

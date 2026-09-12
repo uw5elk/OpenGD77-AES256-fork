@@ -38,14 +38,19 @@ static void hdr_crc(const uint8_t *h, int len, uint16_t mask, uint8_t out2[2])
 }
 
 /* Побудова заголовка-квитанції — дзеркало dmrSmsAckTick() (без CSBK-преамбул: тут перевіряємо
- * сам Response header). */
-static void build_ack(uint32_t to, uint32_t from, uint8_t bf, uint8_t out12[12])
+ * сам Response header).
+ *
+ * o8/o9 -- КОНСТАНТИ, параметра тут навмисно немає. Перша версія цього тесту приймала `bf`
+ * і викликалась із 0x08, тож збігалася з ефіром ВИПАДКОВО, а прошивка в полі підставляла туди
+ * лічильник блоків (4) і слала `00 04` = Status=4 замість ACK. Тест це пропустив. Тепер
+ * підставити нічого не можна: o8=BF=0, o9=0x08 (Class=00 ACK, Type=001). */
+static void build_ack(uint32_t to, uint32_t from, uint8_t out12[12])
 {
 	uint8_t h[10];
 	h[0] = 0x01; h[1] = 0x40;
 	h[2] = (uint8_t)(to >> 16); h[3] = (uint8_t)(to >> 8); h[4] = (uint8_t)to;
 	h[5] = (uint8_t)(from >> 16); h[6] = (uint8_t)(from >> 8); h[7] = (uint8_t)from;
-	h[8] = 0x00; h[9] = bf;
+	h[8] = 0x00; h[9] = 0x08;
 	memcpy(out12, h, 10);
 	hdr_crc(h, 10, 0xCCCC, out12 + 10);
 }
@@ -75,8 +80,16 @@ int main(void)
 	/* 1) Квитанція байт-у-байт як в ефірі (BBD_0005). */
 	const uint8_t ackAir[12] = { 0x01,0x40, 0x26,0xea,0x1b, 0x26,0xea,0x3d, 0x00, 0x08, 0xe5,0x0b };
 	uint8_t ack[12];
-	build_ack(0x26EA1B /*кому: RT4D*/, 0x26EA3D /*від кого: стокова*/, 0x08, ack);
+	build_ack(0x26EA1B /*кому: RT4D*/, 0x26EA3D /*від кого: стокова*/, ack);
 	expect_eq("Response header == ефірний зразок", ack, ackAir, 12);
+
+	/* 1a) Регресія польового бага: код відповіді сидить у o9 і дорівнює рівно 0x08.
+	 * Якщо туди колись знову підставлять лічильник блоків -- тест впаде тут. */
+	if (ack[8] != 0x00 || ack[9] != 0x08)
+	{
+		fails++; printf("  FAIL o8/o9 мають бути 00 08, а не %02x %02x\n", ack[8], ack[9]);
+	}
+	else { printf("  ok   o8=00 (BF), o9=08 (Class=ACK) -- константи\n"); }
 
 	/* 2) CRC-контракт заголовка оригіналу (Confirmed data header): ті самі 10 байт -> ті самі CRC. */
 	const uint8_t confAir[12] = { 0x43,0x4b, 0x26,0xea,0x1b, 0x26,0xea,0x3d, 0x83,0x38, 0x35,0xb8 };
@@ -86,7 +99,7 @@ int main(void)
 
 	/* 3) Санітарна: інша адреса -> інший CRC (не константа). */
 	uint8_t ack2[12];
-	build_ack(0x123456, 0x654321, 0x08, ack2);
+	build_ack(0x123456, 0x654321, ack2);
 	if (memcmp(ack2 + 10, ack + 10, 2) == 0) { fails++; printf("  FAIL CRC не залежить від адрес\n"); }
 	else { printf("  ok   CRC залежить від вмісту\n"); }
 
