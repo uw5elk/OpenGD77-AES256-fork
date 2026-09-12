@@ -81,6 +81,22 @@ int dmr_rctl_stock_build_tx(dmr_rctl_stock_cmd_t cmd, uint32_t src, uint32_t dst
 void dmr_rctl_stock_ack_for(dmr_rctl_stock_cmd_t cmd, uint32_t requester, uint32_t responder, uint8_t out12[12])
 {
 	if ((int)cmd < 0 || (int)cmd >= DMR_RCTL_STOCK_NUM_CMDS) { memset(out12, 0, 12); return; }
+
+	if (cmd == DMR_RCTL_STOCK_MONITOR)
+	{
+		/* Квитанція монітора має ВЛАСНИЙ формат (знято з ефіру, BBD_0003, RCTL_COMPAT.md §8e):
+		 * a0 10 9d 00 <requester> <responder> <crc> -- опкод 0xA0, а b2 несе опкод команди
+		 * монітора (0x9d). НЕ правило біта (воно чинне лише для Check/Enable/Disable). */
+		out12[0] = 0xA0;
+		out12[1] = STOCK_FID;
+		out12[2] = CMD_B0[DMR_RCTL_STOCK_MONITOR];   /* 0x9d */
+		out12[3] = 0x00;
+		out12[4] = (uint8_t)(requester >> 16); out12[5] = (uint8_t)(requester >> 8); out12[6] = (uint8_t)requester;
+		out12[7] = (uint8_t)(responder >> 16); out12[8] = (uint8_t)(responder >> 8); out12[9] = (uint8_t)responder;
+		csbk_crc(out12);
+		return;
+	}
+
 	out12[0] = CMD_B0[cmd];                    /* той самий опкод, що в команді */
 	out12[1] = STOCK_FID;
 	out12[2] = 0x00;
@@ -114,11 +130,23 @@ int dmr_rctl_stock_build_ack_tx(uint32_t requester, uint32_t responder, uint8_t 
 int dmr_rctl_stock_parse_ack_for(const uint8_t in12[12], dmr_rctl_stock_cmd_t *cmd,
                                  uint32_t *requester, uint32_t *responder)
 {
-	if (in12[1] != STOCK_FID || in12[2] != 0x00) { return 0; }
-	if ((in12[3] & DMR_RCTL_STOCK_ACK_BIT) == 0) { return 0; }   /* без старшого біта — це команда */
+	if (in12[1] != STOCK_FID) { return 0; }
 
 	uint16_t want = (uint16_t)((in12[10] << 8) | in12[11]);
 	if ((uint16_t)(crc16d(in12, 10) ^ 0xA5A5) != want) { return 0; }
+
+	/* Квитанція монітора -- окремий формат a0 10 9d 00 (BBD_0003). */
+	if (in12[0] == 0xA0 && in12[2] == CMD_B0[DMR_RCTL_STOCK_MONITOR] && in12[3] == 0x00)
+	{
+		if (cmd) { *cmd = DMR_RCTL_STOCK_MONITOR; }
+		if (requester) { *requester = ((uint32_t)in12[4] << 16) | ((uint32_t)in12[5] << 8) | in12[6]; }
+		if (responder) { *responder = ((uint32_t)in12[7] << 16) | ((uint32_t)in12[8] << 8) | in12[9]; }
+		return 1;
+	}
+
+	/* Решта: правило старшого біта керуючого байта. */
+	if (in12[2] != 0x00) { return 0; }
+	if ((in12[3] & DMR_RCTL_STOCK_ACK_BIT) == 0) { return 0; }   /* без старшого біта — це команда */
 
 	uint8_t arg = (uint8_t)(in12[3] & (uint8_t)~DMR_RCTL_STOCK_ACK_BIT);
 	for (int c = 0; c < DMR_RCTL_STOCK_NUM_CMDS; c++)
