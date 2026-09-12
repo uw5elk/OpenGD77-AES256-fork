@@ -563,6 +563,28 @@ static char     s_pendText[DMR_SMS_TEXT_MAX + 1];
 static uint16_t s_txMsgCounter;
 static uint8_t  s_txMsgSeeded;
 
+/* ---- Квитанція на вхідне CONFIRMED SMS (link-layer ACK, реверс #11, ефір BBD_0005) --------
+ * Стокова TYT / RT4D шлють текст CONFIRMED data-заголовком (DPF=3, біт A=1 -> «прошу
+ * підтвердження»). Отримавши всі блоки (CRC32 PDU сходиться), приймач має відповісти
+ * Response data header (DPF=1): відправник тоді показує «доставлено», інакше сигналить
+ * помилку й ретрансмітить -- рівно як було з монітором до реверсу його квитанції.
+ *
+ * Знято з ефіру (BBD_0005, стокова 0x26EA3D квитує RT4D 0x26EA1B):
+ *   01 40 <кому:3=початк.відправник> <від кого:3=ми> 00 <BF> <CRC16^0xCCCC>
+ *   o0=0x01: G/I=0 (індивід.), A=0, DPF=1 (Response)
+ *   o1=0x40: SAP=4 (IP based packet data) -- той самий SAP, що й у нашому тексті
+ *   o8=0x00: Class=00 (ACK/успіх), Type=0, Status=0
+ *   o9=BF  : blocks-to-follow початкового повідомлення (стокова слала 0x08); тут луна.
+ * CRC заголовка -- той самий, що для всіх data-заголовків (crc16d ^ 0xCCCC).
+ *
+ * Ключуємо з невеликою затримкою після завершення прийому (стокова відповідала ~80 мс по
+ * кінці), і лише коли канал звільнився (!dmrDataTxActive && !trxIsTransmitting) -- щоб не
+ * зіткнутися з хвостом передачі відправника. */
+static uint8_t  s_ackPending;   /* 1 = винні квитанцію */
+static uint32_t s_ackTo;        /* кому (початковий відправник) */
+static uint8_t  s_ackBF;        /* blocks-to-follow -- луна лічильника блоків оригіналу */
+static uint32_t s_ackAtMs;      /* найраніший момент ключування */
+
 /* Flush the deferred Sent-folder entry if one is queued and the radio has finished transmitting.
  * Called from the main loop (dmrSmsRxTick). Safe to call every tick; a no-op when idle. */
 static void dmrSmsTxPersistTick(void)
@@ -572,6 +594,54 @@ static void dmrSmsTxPersistTick(void)
 		store_add(s_pendFlags, s_pendPeer, s_pendText, s_pendTextLen);
 		s_pendSent = 0;
 	}
+}
+
+/* Поставити квитанцію в чергу (викликається з dmrSmsRxTick, коли прийнято адресоване нам
+ * CONFIRMED повідомлення з проханням підтвердити). Саме ключування -- у dmrSmsAckTick. */
+static void queueSmsAck(uint32_t to, uint8_t bf)
+{
+	s_ackTo = to;
+	s_ackBF = (bf != 0) ? bf : 0x08;   /* луна; 0 малоймовірно, але не шлемо порожню */
+	s_ackAtMs = ticksGetMillis() + 70;  /* відповідь ~80 мс по кінці прийому (BBD_0005) */
+	s_ackPending = 1;
+}
+
+/* Побудувати й відключити квитанцію, коли настав час і канал вільний. Черга =
+ * 2 CSBK-преамбули + один Response data header (за тривалістю збігається з ефірним ~0.2 с). */
+static void dmrSmsAckTick(void)
+{
+	if (!s_ackPending) { return; }
+	if ((int32_t)(ticksGetMillis() - s_ackAtMs) < 0) { return; }   /* ще рано */
+	if (dmrDataTxActive() || trxIsTransmitting) { return; }        /* канал зайнятий -- чекаємо */
+
+	uint32_t dst = s_ackTo;         /* кому: початковий відправник */
+	uint32_t src = trxDMRID;        /* від кого: ми */
+	uint8_t  q[(2 + 1) * 13];
+	int n = 0;
+	int preamble = 2;
+	int tail = 1;                   /* один заголовок-відповідь після преамбул */
+	for (int i = 0; i < preamble; i++)
+	{
+		uint8_t body[10];
+		body[0] = 0xBD; body[1] = 0x00; body[2] = 0x80;   /* 0x80: індивід. data-преамбула */
+		body[3] = (uint8_t)((preamble - 1 - i) + tail);
+		body[4] = (uint8_t)(dst >> 16); body[5] = (uint8_t)(dst >> 8); body[6] = (uint8_t)dst;
+		body[7] = (uint8_t)(src >> 16); body[8] = (uint8_t)(src >> 8); body[9] = (uint8_t)src;
+		uint8_t p12[12]; memcpy(p12, body, 10); hdr_crc(body, 10, 0xA5A5, p12 + 10);
+		n = append_burst(q, n, DTB_CSBK, p12);
+	}
+	{
+		uint8_t h[10];
+		h[0] = 0x01; h[1] = 0x40;                          /* Response, SAP=4 IP */
+		h[2] = (uint8_t)(dst >> 16); h[3] = (uint8_t)(dst >> 8); h[4] = (uint8_t)dst;
+		h[5] = (uint8_t)(src >> 16); h[6] = (uint8_t)(src >> 8); h[7] = (uint8_t)src;
+		h[8] = 0x00;                                       /* Class=ACK, Type=0, Status=0 */
+		h[9] = s_ackBF;                                    /* blocks-to-follow (луна) */
+		uint8_t p12[12]; memcpy(p12, h, 10); hdr_crc(h, 10, 0xCCCC, p12 + 10);
+		n = append_burst(q, n, DTB_DATA_HEADER, p12);
+	}
+	dmrDataTxLoad(q, (uint8_t)n);
+	s_ackPending = 0;
 }
 
 int dmrSmsSend(const char *text, uint32_t dst, int group, uint8_t keyId)
@@ -717,6 +787,9 @@ static volatile uint32_t s_rxPeerDst DMR_AES_CCM;   /* адресат із ВІ�
 static volatile uint8_t  s_rxPeerGroup DMR_AES_CCM;
 static volatile uint8_t  s_rxPeerKeyId DMR_AES_CCM;
 static volatile uint8_t  s_rxPeerEnc DMR_AES_CCM;   /* 1 = PDU carried the ENC header (decrypt); 0 = cleartext */
+static volatile uint8_t  s_rxAckReq DMR_AES_CCM;    /* вхідний data-заголовок = CONFIRMED + прохання квитанції */
+static volatile uint8_t  s_rxPeerAckReq DMR_AES_CCM;/* знімок s_rxAckReq на момент готового PDU */
+static volatile uint8_t  s_rxPeerBlocks DMR_AES_CCM;/* скільки блоків навантаження зібрали -- луна в BF квитанції */
 /* diagnostic counters (visible on the Messages home screen) to localise RX failures */
 static volatile uint32_t s_diagData   DMR_AES_CCM; /* ALL data-sync-class bursts the chip delivered */
 static volatile uint32_t s_diagHdrOk  DMR_AES_CCM; /* type-6 data-header, CRC OK   */
@@ -788,6 +861,7 @@ void dmrSmsRxDiag(uint32_t out[7])
 void dmrSmsRxReset(void)
 {
 	s_rxHaveHeader = 0; s_rxHaveEnc = 0; s_rxExpBlocks = 0; s_rxCount = 0; s_rxLen = 0;
+	s_rxAckReq = 0;
 }
 
 void dmrSmsRxBurst(int rxDataType, const uint8_t *p)
@@ -816,6 +890,9 @@ void dmrSmsRxBurst(int rxDataType, const uint8_t *p)
 			s_rxLen = 0;
 			s_rxHaveHeader = 1;
 			s_rxHaveEnc = 0;
+			/* CONFIRMED data (DPF=3) з бітом A (0x40) -> відправник чекає link-layer квитанцію.
+			 * Unconfirmed (DPF=2) чи UDT квитанції не потребують. */
+			s_rxAckReq = ((((p[0] & 0x0F) == 0x03) && (p[0] & 0x40)) ? 1 : 0);
 		}
 		return;
 	}
@@ -862,6 +939,8 @@ void dmrSmsRxBurst(int rxDataType, const uint8_t *p)
 			s_rxPeerGroup = s_rxGroup;
 			s_rxPeerKeyId = s_rxKeyId;
 			s_rxPeerEnc = s_rxHaveEnc;   /* decrypt if the ENC header was seen, else read cleartext */
+			s_rxPeerAckReq = s_rxAckReq; /* чи винні ми квитанцію за це повідомлення */
+			s_rxPeerBlocks = s_rxCount;  /* луна лічильника блоків у BF квитанції */
 			s_rxReady = 1;          /* main loop will decrypt (or read cleartext) + store */
 			s_diagPdu++;
 			/* snapshot raw (still-encrypted) PDU for USB inspection (clamped to the
@@ -918,6 +997,7 @@ static int smsIsForUs(uint32_t dst, int group)
 void dmrSmsRxTick(void)
 {
 	dmrSmsTxPersistTick();   /* flush any deferred Sent-folder write once the TX has fully un-keyed */
+	dmrSmsAckTick();         /* відключити квитанцію на вхідне CONFIRMED SMS, коли настав час */
 
 	if (!s_rxReady) { return; }
 
@@ -929,6 +1009,8 @@ void dmrSmsRxTick(void)
 	uint8_t  group = s_rxPeerGroup;
 	uint8_t  keyId = s_rxPeerKeyId;
 	uint8_t  enc = s_rxPeerEnc;
+	uint8_t  ackReq = s_rxPeerAckReq;
+	uint8_t  ackBF = s_rxPeerBlocks;
 	if (pduLen > (int)sizeof pdu) { pduLen = (int)sizeof pdu; }
 	memcpy(pdu, s_rxPdu, pduLen);
 	s_rxReady = 0;
@@ -957,6 +1039,15 @@ void dmrSmsRxTick(void)
 		uint32_t want = ((uint32_t)pdu[pduLen - 4] << 24) | ((uint32_t)pdu[pduLen - 3] << 16) |
 				((uint32_t)pdu[pduLen - 2] << 8) | (uint32_t)pdu[pduLen - 1];
 		if (crc32_dmr(pdu, pduLen) != want) { return; }   /* corrupted reassembly -> drop */
+	}
+
+	/* Link-layer квитанція: блоки прийнято цілими (CRC32 зійшовся) і повідомлення адресоване
+	 * саме нам приватно, а відправник просив підтвердити (CONFIRMED+A) -> шлемо Response header.
+	 * Робимо це ДО розшифровки: квитанція -- про доставку кадрів, а не про те, чи ми прочитали
+	 * текст (стокова так само квитує ще до показу). Групові й «моніторні»/чужі не квитуємо. */
+	if (ackReq && forUs && !group)
+	{
+		queueSmsAck(peer, ackBF);
 	}
 
 	char text[DMR_SMS_TEXT_MAX + 1];
@@ -1005,6 +1096,7 @@ static void runtimeReset(void)
 	s_diagPdu = s_diagMsg = 0;
 	for (int i = 0; i < 16; i++) { s_diagType[i] = 0; }
 	s_rxReady = 0;                   /* don't process stray garbage as a PDU */
+	s_ackPending = 0;                /* не тягнути квитанцію через зміну каналу */
 	dmrSmsRxReset();                 /* clear the burst accumulator */
 }
 

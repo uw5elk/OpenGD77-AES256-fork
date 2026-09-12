@@ -37,6 +37,7 @@ declare -A SRCS=(
 	[test_dmr_rctl_stock]="$APP/source/crypto/dmr_rctl_stock.c"
 	[test_emb_sb]="$APP/source/crypto/dmr_aes.c"
 	[test_le_mi]="$APP/source/crypto/dmr_aes.c"
+	[test_dmr_sms_ack]=""   # самодостатній: контракт формату SMS-квитанції, без чужих джерел
 )
 
 rm -rf "$BUILD" && mkdir -p "$BUILD"
@@ -46,11 +47,11 @@ for src in "$TESTS_DIR"/test_*.c; do
 	name="$(basename "$src" .c)"
 	if [ -n "$FILTER" ] && [[ "$name" != *"$FILTER"* ]]; then continue; fi
 
-	extra="${SRCS[$name]:-}"
-	if [ -z "$extra" ]; then
+	if [ -z "${SRCS[$name]+x}" ]; then
 		echo "ПРОПУЩЕНО $name -- немає запису в таблиці SRCS цього скрипта"
 		continue
 	fi
+	extra="${SRCS[$name]}"   # може бути порожнім -> самодостатній тест (лінкуємо лише сам файл)
 
 	bin="$BUILD/$name"
 	# shellcheck disable=SC2086
