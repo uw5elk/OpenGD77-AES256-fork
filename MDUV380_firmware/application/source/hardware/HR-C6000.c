@@ -1842,7 +1842,14 @@ void hrc6000TimeslotInterruptHandler(void)
 			break;
 
 		case DMR_STATE_TX_START_1: // Start TX (second step)
-			LedWrite(LED_RED, 1); // for repeater wakeup
+			// Форк: під час КОВАРТ-монітора (RCTL Monitor як ціль) НЕ світимо червоний --
+			// це прихована передача, рація не має видавати себе індикатором.
+#if defined(ENABLE_DMR_DATA) && defined(ENABLE_AES)
+			if (!dmrRctlMonitorActive())
+#endif
+			{
+				LedWrite(LED_RED, 1); // for repeater wakeup
+			}
 #ifdef ENABLE_AES
 			{
 				uint8_t aesTxKeyId = hrc6000ResolveAesTxKeyId(); // per-channel key, falling back to the global selector
