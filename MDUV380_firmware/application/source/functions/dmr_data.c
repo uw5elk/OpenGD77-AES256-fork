@@ -143,7 +143,14 @@ int dmrDataTxFastEnd(void)
 	return s_fastEnd;
 }
 
-void dmrDataTxLoad(const uint8_t *bursts, uint8_t count)
+/* Як dmrDataTxLoad(), але з керованою затримкою ключування.
+ *
+ * Навіщо: стандартні 100 мс існують, щоб вийти з критичної секції CPS у контекст
+ * головного циклу. Для КВИТАНЦІЇ (SMS/RCTL), яку кличуть уже з головного циклу, ці 100 мс --
+ * чистий програш: відправник чекає відповідь у вузькому вікні (стокова TYT квитує SMS через
+ * ~80 мс по кінці передачі, RCTL_COMPAT §5h -- через 30 мс). Запис з ефіру (BBD_0006) показав
+ * нашу квитанцію аж через 366 мс -- стокова її вже не приймала. */
+void dmrDataTxLoadDelayed(const uint8_t *bursts, uint8_t count, uint16_t delayMs)
 {
 	if (s_dataTxActive)
 	{
@@ -153,11 +160,17 @@ void dmrDataTxLoad(const uint8_t *bursts, uint8_t count)
 	{
 		count = DMR_DATA_MAX_BURSTS;
 	}
+	if (delayMs < 1) { delayMs = 1; }
 	memcpy(s_bursts, bursts, (size_t)count * (1 + DMR_DATA_BURST_LEN));
 	s_burstCount = count;
 	s_burstIndex = 0;
+	addTimerCallback(dmrDataKeyTx, delayMs, MENU_ANY, false);
+}
+
+void dmrDataTxLoad(const uint8_t *bursts, uint8_t count)
+{
 	// Defer keying out of the CPS critical section into the main-loop callback context.
-	addTimerCallback(dmrDataKeyTx, 100, MENU_ANY, false);
+	dmrDataTxLoadDelayed(bursts, count, 100);
 }
 
 uint16_t dmrDataTxFinishMs(void)

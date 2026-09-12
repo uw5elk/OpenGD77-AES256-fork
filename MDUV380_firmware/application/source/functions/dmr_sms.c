@@ -595,7 +595,8 @@ static uint32_t s_ackDeadlineMs;/* після цього квитанція пр
  * Квитанцію ключуємо лише після паузи: інакше влучаємо у хвіст/термінатор відправника,
  * він у цей момент ще передає (отже глухий) -- і замість «доставлено» шле все наново. */
 static volatile uint32_t s_lastRxBurstMs;
-#define SMS_ACK_QUIET_MS   40    /* тиші в каналі = передавач замовк; менше -> швидша відповідь */
+#define SMS_ACK_QUIET_MS   40    /* лише для РЕЗЕРВНОГО шляху (основний шле негайно) */
+#define SMS_ACK_KEY_DELAY_MS 15  /* замість типових 100 мс: стокова слухає вузьке вікно */
 #define SMS_ACK_MAX_WAIT_MS 2500 /* не тягнути квитанцію вічно, якщо канал не звільняється */
 #define SMS_ACK_REPEATS     3    /* повторів заголовка-квитанції, як у квитанції RCTL */
 
@@ -605,8 +606,11 @@ static volatile uint32_t s_lastRxBurstMs;
  *   2 = ключування по тиші в каналі + лічильники;
  *   3 = квитуємо будь-який CONFIRMED (без вимоги біта A);
  *   4 = ВИПРАВЛЕНО o8/o9 = 00 08 (ACK) -- до цього стокова законно не приймала;
- *   5 = подача як у RCTL: 3 повтори заголовка, без преамбул; гейт тиші 40 мс. */
-#define SMS_ACK_FORMAT_REV  5
+ *   5 = подача як у RCTL: 3 повтори заголовка, без преамбул; гейт тиші 40 мс;
+ *   6 = ТАЙМІНГ: квитанція йде НЕГАЙНО (до розшифровки й до блокуючого запису у флеш),
+ *       ключування через 15 мс замість 100. В ефірі (BBD_0006) rev 5 виходив аж через
+ *       366 мс проти ~80 мс у стокової -- форма була правильна, вікно вже закрите. */
+#define SMS_ACK_FORMAT_REV  6
 
 /* Лічильники для польової діагностики (USB 0x93, хвіст відповіді). Саме вони мають сказати,
  * де рветься ланцюг: чи бачили ми взагалі CONFIRMED-заголовок із проханням квитанції,
@@ -623,6 +627,15 @@ static volatile uint8_t  s_ackLastForUs; /* останнє повідомлен�
 
 /* Flush the deferred Sent-folder entry if one is queued and the radio has finished transmitting.
  * Called from the main loop (dmrSmsRxTick). Safe to call every tick; a no-op when idle. */
+/* Відкладений запис ВХІДНОГО у теку: те саме, що s_pendSent для «Надісланих», але для
+ * прийнятого повідомлення, коли ми щойно віддали квитанцію в ефір -- блокуючий флеш не має
+ * потрапити у вікно, поки квитанція летить. */
+static uint8_t  s_pendInbox;
+static uint8_t  s_pendInboxFlags;
+static uint32_t s_pendInboxPeer;
+static int      s_pendInboxLen;
+static char     s_pendInboxText[DMR_SMS_TEXT_MAX + 1];
+
 static void dmrSmsTxPersistTick(void)
 {
 	if (s_pendSent && !dmrDataTxActive() && !trxIsTransmitting)
@@ -630,10 +643,17 @@ static void dmrSmsTxPersistTick(void)
 		store_add(s_pendFlags, s_pendPeer, s_pendText, s_pendTextLen);
 		s_pendSent = 0;
 	}
+	if (s_pendInbox && !dmrDataTxActive() && !trxIsTransmitting)
+	{
+		store_add(s_pendInboxFlags, s_pendInboxPeer, s_pendInboxText, s_pendInboxLen);
+		s_pendInbox = 0;
+	}
 }
 
 /* Поставити квитанцію в чергу (викликається з dmrSmsRxTick, коли прийнято адресоване нам
- * CONFIRMED повідомлення з проханням підтвердити). Саме ключування -- у dmrSmsAckTick. */
+ * CONFIRMED повідомлення з проханням підтвердити). Це РЕЗЕРВНИЙ шлях -- коли негайно
+ * віддати не вийшло (ми самі щось передавали). Основний шлях -- buildAndLoadSmsAck() одразу. */
+static void buildAndLoadSmsAck(uint32_t dst);
 static void queueSmsAck(uint32_t to)
 {
 	uint32_t now = ticksGetMillis();
@@ -644,7 +664,7 @@ static void queueSmsAck(uint32_t to)
 	s_ackQueued++;
 }
 
-/* Побудувати й відключити квитанцію, коли настав час і канал вільний. Черга =
+/* Резервний шлях: віддати відкладену квитанцію, коли канал звільниться.
  * Черга = Response data header, ПОВТОРЕНИЙ SMS_ACK_REPEATS разів, БЕЗ CSBK-преамбул.
  * Саме так влаштована квитанція RCTL (dmr_rctl_stock_build_ack_tx: 3 повтори, без преамбул),
  * а вона з цією ж стоковою перевірена на залізі. Команди RCTL шлються з 16 преамбулами,
@@ -673,7 +693,13 @@ static void dmrSmsAckTick(void)
 	 * не пішла ніколи. Детерміноване ключування все одно робить сам dmrDataTxLoad()
 	 * (він кличе HRC6000ForceDMRIdleForTx()). */
 
-	uint32_t dst = s_ackTo;         /* кому: початковий відправник */
+	buildAndLoadSmsAck(s_ackTo);
+}
+
+/* Зібрати й НЕГАЙНО віддати квитанцію в ефір. Виділено окремо, бо головний шлях -- саме
+ * негайний: чекати тіка чи блокуючого запису у флеш не можна, вікно відправника вузьке. */
+static void buildAndLoadSmsAck(uint32_t dst)
+{
 	uint32_t src = trxDMRID;        /* від кого: ми */
 	uint8_t  h[10];
 	h[0] = 0x01; h[1] = 0x40;                          /* Response, SAP=4 IP */
@@ -689,7 +715,8 @@ static void dmrSmsAckTick(void)
 	{
 		n = append_burst(q, n, DTB_DATA_HEADER, p12);
 	}
-	dmrDataTxLoad(q, (uint8_t)n);
+	/* Коротка затримка ключування замість типових 100 мс: відправник слухає вузьке вікно. */
+	dmrDataTxLoadDelayed(q, (uint8_t)n, SMS_ACK_KEY_DELAY_MS);
 	s_ackPending = 0;
 	s_ackSent++;
 }
@@ -1121,9 +1148,25 @@ void dmrSmsRxTick(void)
 	 * текст (стокова так само квитує ще до показу). Групові й «моніторні»/чужі не квитуємо. */
 	s_ackLastGroup = group;
 	s_ackLastForUs = (uint8_t)(forUs ? 1 : 0);
+	/* ВІДДАЄМО КВИТАНЦІЮ НЕГАЙНО -- до розшифровки й до запису у флеш.
+	 * Запис з ефіру (BBD_0006) показав: форма квитанції правильна байт-у-байт, але вона
+	 * виходила через 366 мс по кінці передачі, тоді як стокова квитує через ~80 мс -- вікно
+	 * вже закрите. Левову частку тих 366 мс з'їдав store_add() нижче: блокуючий erase+write
+	 * SPI-флеша тримав головний цикл, і відкладена квитанція не могла піти. Тому: спершу
+	 * в ефір, потім усе інше. Якщо ми самі саме передаємо -- відкладаємо (резервний шлях). */
+	int ackedNow = 0;
 	if (ackReq && forUs && !group)
 	{
-		queueSmsAck(peer);
+		if (!dmrDataTxActive() && !trxIsTransmitting)
+		{
+			s_ackQueued++;
+			buildAndLoadSmsAck(peer);
+			ackedNow = 1;
+		}
+		else
+		{
+			queueSmsAck(peer);   /* сам рахує s_ackQueued */
+		}
 	}
 
 	char text[DMR_SMS_TEXT_MAX + 1];
@@ -1150,8 +1193,28 @@ void dmrSmsRxTick(void)
 	}
 	if (got <= 0) { return; }   /* wrong/no key, not IPv4/UDP, or not an SMS */
 
-	store_add((uint8_t)(DMR_SMS_FLAG_UNREAD | (group ? DMR_SMS_FLAG_GROUP : 0) |
-			(forUs ? 0 : DMR_SMS_FLAG_FOREIGN)), peer, text, got);
+	{
+		uint8_t flags = (uint8_t)(DMR_SMS_FLAG_UNREAD | (group ? DMR_SMS_FLAG_GROUP : 0) |
+				(forUs ? 0 : DMR_SMS_FLAG_FOREIGN));
+		if (ackedNow)
+		{
+			/* Квитанція ЗАРАЗ у польоті. store_add() -- блокуючий erase+write SPI-флеша на
+			 * сотні мс; якщо зробити його тут, він з'їсть саме те вікно, заради якого ми
+			 * поспішали (і взагалі блокуючий флеш у вікні ключування -- крихко, та сама
+			 * причина, що й для відкладеного запису теки «Надіслані»). Відкладаємо до
+			 * завершення передачі -- зливає dmrSmsInboxPersistTick() з головного циклу. */
+			s_pendInbox = 1;
+			s_pendInboxFlags = flags;
+			s_pendInboxPeer = peer;
+			s_pendInboxLen = got;
+			memcpy(s_pendInboxText, text, (size_t)got);
+			s_pendInboxText[got] = 0;
+		}
+		else
+		{
+			store_add(flags, peer, text, got);
+		}
+	}
 	s_diagMsg++;
 
 	/* notify the user: visual banner (existing) + audible alert (new — раніше цей шлях був
@@ -1173,6 +1236,7 @@ static void runtimeReset(void)
 	for (int i = 0; i < 16; i++) { s_diagType[i] = 0; }
 	s_rxReady = 0;                   /* don't process stray garbage as a PDU */
 	s_ackPending = 0;                /* не тягнути квитанцію через зміну каналу */
+	s_pendInbox = 0;                 /* і відкладений запис вхідного теж */
 	dmrSmsRxReset();                 /* clear the burst accumulator */
 }
 

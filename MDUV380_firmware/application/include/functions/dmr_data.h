@@ -38,6 +38,10 @@ void dmrDataTriggerReboot(void);
 /* Load the burst queue (bursts = count * (1 type byte + DMR_DATA_BURST_LEN payload))
  * and key a data call (deferred to the main loop). Called from the CPS handler. */
 void dmrDataTxLoad(const uint8_t *bursts, uint8_t count);
+/* Те саме, але з керованою затримкою ключування (типові 100 мс -- це вихід із критичної
+ * секції CPS). Для квитанцій, які й так кличуть із головного циклу, затримку треба різати:
+ * відправник слухає відповідь у вузькому вікні (стокова квитує SMS через ~80 мс). */
+void dmrDataTxLoadDelayed(const uint8_t *bursts, uint8_t count, uint16_t delayMs);
 /* Те саме, але без термінатора й довгого TX_END -- передача гасне одразу після
  * останнього бургста, щоб встигнути почути відповідь (RCTL_COMPAT.md §5h). */
 void dmrDataTxLoadFast(const uint8_t *bursts, uint8_t count);
