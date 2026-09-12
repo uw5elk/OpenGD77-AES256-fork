@@ -22,6 +22,19 @@ def main():
         sys.exit("radio not found (USB 1FC9:0094)")
     ser = serial.Serial(port, 115200, timeout=0.5)
 
+    # Підбір подачі квитанції без перепрошивки: --ack <повторів> <пауза_мс>
+    if "--ack" in sys.argv:
+        i = sys.argv.index("--ack")
+        try:
+            reps = int(sys.argv[i + 1]); dly = int(sys.argv[i + 2])
+        except (IndexError, ValueError):
+            sys.exit("вжиток: sms_diag.py --ack <повторів 1..6> <пауза мс, напр. 80>")
+        ser.write(bytes([ord("C"), 0xB2, reps & 0xFF, dly & 0xFF, (dly >> 8) & 0xFF]))
+        ser.flush(); time.sleep(0.2); ser.read(8)
+        print("подача квитанції: %d повтор(ів), пауза %d мс" % (reps, dly))
+        print("(діє до вимкнення рації; тепер надішли SMS зі стокової й подивись на її екран)")
+        return
+
     if "--reset" in sys.argv:
         ser.write(bytes([ord("C"), 0x94])); ser.flush(); time.sleep(0.2)
         print("counters reset:", ser.read(8).hex())
@@ -54,7 +67,11 @@ def main():
                     print("  УВАГА: залита СТАРА прошивка (rev<7). Прошийся свіжим бандлом.")
                 if len(r) >= off + 44:
                     (dly,) = struct.unpack_from("<I", r, off + 40)
-                    print("  Пауза до віддачі квитанції: %d мс  (еталон стокової ~80 мс)" % dly)
+                    tgt = None
+                    if len(r) >= off + 48:
+                        (tgt,) = struct.unpack_from("<I", r, off + 44)
+                    print("  Пауза до віддачі квитанції: %d мс%s  (еталон стокової ~80 мс)"
+                          % (dly, ("  [ціль %d]" % tgt) if tgt is not None else ""))
                     if dly == 0:
                         print("    -- ще не міряно (квитанція не йшла після ввімкнення).")
                     elif dly > 200:

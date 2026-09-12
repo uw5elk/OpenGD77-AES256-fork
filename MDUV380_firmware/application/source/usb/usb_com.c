@@ -1822,9 +1822,9 @@ static void cpsHandleCommand(void)
 				}
 				// Діагностика квитанції (8x uint32 LE) -- теж у хвіст, старі парсери цілі.
 				{
-					uint32_t a[11];
+					uint32_t a[12];
 					dmrSmsAckDiag(a);
-					for (int i = 0; i < 11; i++)
+					for (int i = 0; i < 12; i++)
 					{
 						usbComSendBuf[3 + n++] = (uint8_t)(a[i]);
 						usbComSendBuf[3 + n++] = (uint8_t)(a[i] >> 8);
@@ -1839,6 +1839,14 @@ static void cpsHandleCommand(void)
 				replyLength = n + 3;
 				return; // bypass the trailing generic '-' reply
 			}
+		case 0xB2: // DIAGNOSTIC: підбір подачі SMS-квитанції [repeats, delay_lo, delay_hi]
+			dmrSmsAckSetTuning(com_requestbuffer[2],
+					(uint16_t)(com_requestbuffer[3] | (com_requestbuffer[4] << 8)));
+			usbComSendBuf[0] = com_requestbuffer[0];
+			hasToReply = true;
+			replyLength = 1;
+			break;
+
 		case 0x94: // DIAGNOSTIC: zero the SMS RX diag counters (clean test runs)
 			dmrSmsRxDiagReset();
 			usbComSendBuf[0] = com_requestbuffer[0];

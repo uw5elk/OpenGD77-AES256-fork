@@ -595,10 +595,27 @@ static uint32_t s_ackDeadlineMs;/* після цього квитанція пр
  * Квитанцію ключуємо лише після паузи: інакше влучаємо у хвіст/термінатор відправника,
  * він у цей момент ще передає (отже глухий) -- і замість «доставлено» шле все наново. */
 static volatile uint32_t s_lastRxBurstMs;
-#define SMS_ACK_QUIET_MS   30    /* тиші в каналі = відправник домовк (разом із термінатором) */
 #define SMS_ACK_KEY_DELAY_MS 15  /* замість типових 100 мс: стокова слухає вузьке вікно */
 #define SMS_ACK_MAX_WAIT_MS 2500 /* не тягнути квитанцію вічно, якщо канал не звільняється */
-#define SMS_ACK_REPEATS     3    /* повторів заголовка-квитанції, як у квитанції RCTL */
+#define SMS_ACK_MAX_REPEATS  6   /* межа буфера черги */
+
+/* ПІДБІРНІ ПАРАМЕТРИ (USB 0xB2) -- щоб не перебирати прошивками по одній.
+ * Типово = рівно як у стокової, знято з ефіру (BBD_0005): ОДИН burst через ~80 мс після
+ * того, як відправник домовк. Ми ж слали 3 повтори через 30 мс -- і форма, і таймінг були
+ * «правильні», але саме ЦИМ від стокової й відрізнялись: три Response header підряд вона
+ * цілком могла зарахувати як дублікати/сміття, а 30 мс -- влучити в її перехід
+ * передача->прийом. */
+static uint8_t  s_ackRepeats = 1;      /* скільки разів повторити заголовок (1..6) */
+static uint16_t s_ackTargetMs = 80;    /* цільова пауза після тиші в каналі, мс */
+
+void dmrSmsAckSetTuning(uint8_t repeats, uint16_t delayMs)
+{
+	if (repeats < 1) { repeats = 1; }
+	if (repeats > SMS_ACK_MAX_REPEATS) { repeats = SMS_ACK_MAX_REPEATS; }
+	if (delayMs > 2000) { delayMs = 2000; }
+	s_ackRepeats = repeats;
+	s_ackTargetMs = delayMs;
+}
 
 /* Ревізія формату/подачі квитанції -- видно в діагностиці (sms_diag.py), щоб не гадати,
  * яка саме прошивка залита:
@@ -609,10 +626,11 @@ static volatile uint32_t s_lastRxBurstMs;
  *   5 = подача як у RCTL: 3 повтори заголовка, без преамбул; гейт тиші 40 мс;
  *   6 = ТАЙМІНГ: квитанція йшла НЕГАЙНО по CRC32 -- але це ще до термінатора відправника,
  *       тобто в ефір лізли, поки він передає (глухий). РАНО;
- *   7 = вікно з обох боків: чекаємо тиші 30 мс + ключування 15 мс (~45-60 мс після кінця,
- *       як у стокової), блокуючий запис у флеш відкладено до моменту, коли квитанція вже
- *       пішла. Додано самовимір паузи (видно в sms_diag.py). */
-#define SMS_ACK_FORMAT_REV  7
+ *   7 = вікно з обох боків: чекаємо тиші 30 мс + ключування 15 мс, блокуючий запис у флеш
+ *       відкладено. Таймінг і форма стали правильні -- стокова ВСЕ ОДНО пише помилку;
+ *   8 = типово шлемо РІВНО як стокова: ОДИН burst через ~80 мс. Обидва параметри тепер
+ *       підбірні по USB 0x95 (dmrSmsAckSetTuning), щоб не перебирати прошивками. */
+#define SMS_ACK_FORMAT_REV  8
 
 /* Лічильники для польової діагностики (USB 0x93, хвіст відповіді). Саме вони мають сказати,
  * де рветься ланцюг: чи бачили ми взагалі CONFIRMED-заголовок із проханням квитанції,
@@ -693,7 +711,11 @@ static void dmrSmsAckTick(void)
 	if (dmrDataTxActive() || trxIsTransmitting) { return; }        /* ми самі передаємо */
 	/* Головна умова: відправник має ЗАМОВКНУТИ. Поки в каналі ідуть data-burst-и (хвіст
 	 * повідомлення, термінатор), він передає і нас не почує. */
-	if ((uint32_t)(now - s_lastRxBurstMs) < SMS_ACK_QUIET_MS) { return; }
+	{
+		uint32_t wait = (s_ackTargetMs > SMS_ACK_KEY_DELAY_MS)
+				? (uint32_t)(s_ackTargetMs - SMS_ACK_KEY_DELAY_MS) : 1u;
+		if ((uint32_t)(now - s_lastRxBurstMs) < wait) { return; }
+	}
 	/* На slotState НЕ гейтуємо навмисно: після прийому він тримається в RX-стані до
 	 * END_TICK_TIMEOUT тиші, тож чекання на IDLE могло б з'їсти весь дедлайн і квитанція б
 	 * не пішла ніколи. Детерміноване ключування все одно робить сам dmrDataTxLoad()
@@ -719,9 +741,9 @@ static void buildAndLoadSmsAck(uint32_t dst)
 	h[9] = 0x08;                                       /* Class=00 ACK, Type=001, Status=000 */
 	uint8_t p12[12]; memcpy(p12, h, 10); hdr_crc(h, 10, 0xCCCC, p12 + 10);
 
-	uint8_t q[SMS_ACK_REPEATS * 13];
+	uint8_t q[SMS_ACK_MAX_REPEATS * 13];
 	int n = 0;
-	for (int i = 0; i < SMS_ACK_REPEATS; i++)
+	for (int i = 0; i < (int)s_ackRepeats; i++)
 	{
 		n = append_burst(q, n, DTB_DATA_HEADER, p12);
 	}
@@ -940,15 +962,16 @@ void dmrSmsRxDiagReset(void)
  *   [6]=ост. було груповим, [7]=ост. адресоване нам.
  * Читається: якщо [0]=0 -- стокова не просить квитанції (дивись [4]); якщо [0]>0, а [1]=0 --
  * відсіяв фільтр (груповий/не нам: [6]/[7]); якщо [1]>0, а [2]=0 -- канал не звільнявся. */
-void dmrSmsAckDiag(uint32_t out[11])
+void dmrSmsAckDiag(uint32_t out[12])
 {
 	out[0] = s_ackSeen;   out[1] = s_ackQueued;
 	out[2] = s_ackSent;   out[3] = s_ackStale;
 	out[4] = s_ackLastHdr0; out[5] = s_ackLastHdr1;
 	out[6] = s_ackLastGroup; out[7] = s_ackLastForUs;
 	out[8] = SMS_ACK_FORMAT_REV;   /* яка саме прошивка залита -- щоб не гадати */
-	out[9] = SMS_ACK_REPEATS;
+	out[9] = s_ackRepeats;
 	out[10] = s_ackLastDelayMs;    /* виміряна пауза; еталон стокової ~80 мс */
+	out[11] = s_ackTargetMs;       /* цільова пауза (підбірна) */
 }
 
 /* Гістограма rxDataType (16 значень) усіх прийнятих data-sync бурстів. */
