@@ -937,6 +937,15 @@ static volatile uint16_t s_diagLastPduLen DMR_AES_CCM;
 static volatile uint8_t  s_diagLastKeyId DMR_AES_CCM;
 static volatile uint8_t  s_diagLastExp DMR_AES_CCM;
 static volatile uint32_t s_diagLastPeer DMR_AES_CCM;
+/* СИРІ блоки навантаження, як їх віддає чип -- РАЗОМ зі службовими байтами (DBSN+CRC9).
+ * Потрібні, щоб реверснути CRC9 по реальному еталону, а не вигадувати його: без валідного
+ * CRC9 наші власні CONFIRMED-блоки приймач відкине. Штатний шлях ці 2 байти відкидає, тож
+ * тут зберігаємо блок цілим. */
+#define SMS_RAWBLK_MAX   8
+#define SMS_RAWBLK_SIZE  18
+static uint8_t  s_rawBlk[SMS_RAWBLK_MAX][SMS_RAWBLK_SIZE] DMR_AES_CCM;
+static volatile uint8_t s_rawBlkLen[SMS_RAWBLK_MAX] DMR_AES_CCM;
+static volatile uint8_t s_rawBlkCount DMR_AES_CCM;
 
 /* Fill out with [pduLen_hi,pduLen_lo, keyId, expBlocks, peer(4 LE), rawPdu...]. Returns bytes.
  * pduLen (and the raw bytes) are clamped to the snapshot buffer size: a PDU longer than
@@ -978,6 +987,23 @@ void dmrSmsRxDiagReset(void)
 	s_ackSeen = s_ackQueued = s_ackSent = s_ackStale = 0;
 	s_ackLastHdr0 = s_ackLastHdr1 = s_ackLastGroup = s_ackLastForUs = 0;
 	s_ackLastDelayMs = 0;
+	s_rawBlkCount = 0;
+}
+
+/* Дамп сирих блоків: [count, (len, bytes...) x count]. Повертає довжину. */
+int dmrSmsRxRawBlocks(uint8_t *out, int maxlen)
+{
+	int n = 0;
+	if (maxlen < 1) { return 0; }
+	out[n++] = s_rawBlkCount;
+	for (int b = 0; b < (int)s_rawBlkCount; b++)
+	{
+		int len = s_rawBlkLen[b];
+		if (n + 1 + len > maxlen) { break; }
+		out[n++] = (uint8_t)len;
+		for (int i = 0; i < len; i++) { out[n++] = s_rawBlk[b][i]; }
+	}
+	return n;
 }
 
 /* Діагностика квитанції (USB 0x93, дописано в хвіст відповіді):
@@ -1075,6 +1101,15 @@ void dmrSmsRxBurst(int rxDataType, const uint8_t *p)
 		 * [16 байтів навантаження]. Беремо лише 16 байтів навантаження: перші 2 службові й НЕ
 		 * входять у data-PDU/CRC32. Підтверджено дампом з ефіру (2026-09-05): так блоки
 		 * складаються в чистий IPv4/UDP/TMS і CRC32 усього PDU сходиться (0x43bc6082). */
+		/* Знімок СИРОГО блока (до відкидання службових байтів) -- еталон для CRC9. */
+		if (s_rawBlkCount < SMS_RAWBLK_MAX)
+		{
+			int raw = (rxDataType == DT_RATE34_DATA) ? 18 : 12;
+			for (int i = 0; i < raw; i++) { s_rawBlk[s_rawBlkCount][i] = p[i]; }
+			s_rawBlkLen[s_rawBlkCount] = (uint8_t)raw;
+			s_rawBlkCount++;
+		}
+
 		const uint8_t *src = p;
 		int blkLen = 12;
 		if (rxDataType == DT_RATE34_DATA) { src = p + 2; blkLen = 16; }

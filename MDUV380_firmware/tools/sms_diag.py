@@ -114,6 +114,28 @@ def main():
     else:
         print("unexpected reply (%d B): %s" % (len(r), r.hex()))
 
+    # Сирі блоки навантаження (зі службовими DBSN+CRC9) -- еталон для реверсу CRC9.
+    if "--blocks" in sys.argv:
+        ser.write(bytes([ord("C"), 0xB3])); ser.flush(); time.sleep(0.3)
+        r = ser.read(512)
+        if len(r) >= 4 and r[0] == ord("C"):
+            n = (r[1] << 8) | r[2]; body = r[3:3 + n]
+            cnt = body[0] if body else 0
+            print("сирих блоків: %d" % cnt)
+            i = 1
+            for b in range(cnt):
+                if i >= len(body): break
+                ln = body[i]; i += 1
+                blk = body[i:i + ln]; i += ln
+                if len(blk) < ln: break
+                print("  блок %d (%d Б): службові=%s  навантаження=%s"
+                      % (b, ln, blk[:2].hex(), blk[2:].hex()))
+            if cnt == 0:
+                print("  порожньо -- спершу прийми SMS зі стокової, потім знімай.")
+        else:
+            print("no blocks reply:", r.hex())
+        return
+
     if "--pdu" in sys.argv:
         ser.write(bytes([ord("C"), 0x95])); ser.flush(); time.sleep(0.3)
         r = ser.read(512)

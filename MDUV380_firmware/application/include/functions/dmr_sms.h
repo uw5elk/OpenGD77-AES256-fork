@@ -94,6 +94,10 @@ void dmrSmsRxDiagReset(void);
 /* Dump the last reassembled (still-encrypted) PDU + metadata for offline analysis:
  * out = [pduLen_hi, pduLen_lo, keyId, expBlocks, peer(4 LE), rawPdu...]. Returns length. */
 int  dmrSmsRxLastPdu(uint8_t *out, int maxlen);
+/* Дамп СИРИХ блоків навантаження разом зі службовими байтами (DBSN+CRC9), як їх віддав чип:
+ * out = [count, (len, bytes...) x count]. Еталон для реверсу CRC9 -- без нього не зібрати
+ * власні CONFIRMED-блоки. Скидається разом з рештою лічильників (0x94). */
+int  dmrSmsRxRawBlocks(uint8_t *out, int maxlen);
 
 /* ---- RX (main-loop context) -------------------------------------------- *
  * Decrypt a completed PDU, store it to the Inbox, and pop a notification. Safe to

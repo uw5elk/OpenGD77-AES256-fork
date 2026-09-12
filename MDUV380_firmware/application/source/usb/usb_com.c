@@ -1839,6 +1839,17 @@ static void cpsHandleCommand(void)
 				replyLength = n + 3;
 				return; // bypass the trailing generic '-' reply
 			}
+		case 0xB3: // DIAGNOSTIC: дамп сирих блоків навантаження (зі службовими DBSN+CRC9)
+			{
+				int n = dmrSmsRxRawBlocks(&usbComSendBuf[3], 200);
+				usbComSendBuf[0] = com_requestbuffer[0];
+				usbComSendBuf[1] = (uint8_t)((n >> 8) & 0xFF);
+				usbComSendBuf[2] = (uint8_t)(n & 0xFF);
+				hasToReply = true;
+				replyLength = n + 3;
+				return;
+			}
+
 		case 0xB2: // DIAGNOSTIC: підбір подачі SMS-квитанції [repeats, delay_lo, delay_hi]
 			dmrSmsAckSetTuning(com_requestbuffer[2],
 					(uint16_t)(com_requestbuffer[3] | (com_requestbuffer[4] << 8)),
