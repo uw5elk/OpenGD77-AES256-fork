@@ -96,6 +96,15 @@ static uiNotificationData_t notificationData =
 		.bearingInfo = { .bearing = 0.0, .distanceX10 = -1 }
 };
 
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+#include "functions/dmr_sms.h"        /* dmrSmsUnreadCount(): скільки ще непрочитаних */
+#if defined(LANGUAGE_BUILD_UKRAINIAN)
+#include "user_interface/languages/messages_ua.h"
+#else
+#define MSGS_MORE_UNREAD_FMT     "+%d unread"
+#endif
+#endif
+
 static void displayMessage(void);
 static void displaySmsFullScreen(void);
 
@@ -427,7 +436,9 @@ static void displaySmsFullScreen(void)
 	const int16_t charW = 8;                      /* FONT_SIZE_2: ~8 px на символ */
 	const int16_t lineH = FONT_SIZE_2_HEIGHT;
 	int16_t perLine = (int16_t)((DISPLAY_SIZE_X - 6) / charW);
-	int16_t maxLines = (int16_t)((DISPLAY_SIZE_Y - 4 - lineH) / lineH);
+	/* Два нижні рядки зарезервовано: «ще N непрочит.» і підказка RED. Навіть так лишається
+	 * 13 рядків -- повне 144-символьне SMS влазить із запасом. */
+	int16_t maxLines = (int16_t)((DISPLAY_SIZE_Y - 4 - (2 * lineH)) / lineH);
 	char line[32];
 
 	if (perLine > (int16_t)(sizeof line - 1)) { perLine = (int16_t)(sizeof line - 1); }
@@ -471,6 +482,22 @@ static void displaySmsFullScreen(void)
 		p += n;
 		if (*p == '\n') { p++; }
 	}
+
+	/* Скільки ще НЕпрочитаних, крім показаного -- окремим кольором (колір попередження),
+	 * щоб не злилось із текстом самого повідомлення. Показуємо лише коли є що показувати:
+	 * банер завжди несе ОСТАННЄ повідомлення, тож решта черги інакше була б невидима. */
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+	{
+		int more = dmrSmsUnreadCount() - 1;   /* показане теж рахується непрочитаним */
+		if (more > 0)
+		{
+			char cnt[24];
+			snprintf(cnt, sizeof cnt, MSGS_MORE_UNREAD_FMT, more);
+			displayThemeApply(THEME_ITEM_FG_WARNING_NOTIFICATION, THEME_ITEM_BG_NOTIFICATION);
+			displayPrintCentered((int16_t)(DISPLAY_SIZE_Y - (2 * lineH) - 1), cnt, FONT_SIZE_2);
+		}
+	}
+#endif
 
 	/* Підказка внизу -- інакше оператор не знає, чим це закрити. */
 	displayThemeApply(THEME_ITEM_FG_DECORATION, THEME_ITEM_BG_NOTIFICATION);

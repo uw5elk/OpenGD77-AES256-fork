@@ -53,6 +53,8 @@
 #define MSGS_MONITOR_FMT         "Монітор: %s"
 #define MSGS_MON_ON              "увімк"
 #define MSGS_MON_OFF             "вимк"
+/* Банер вхідного: скільки ще НЕпрочитаних, крім показаного (окремим кольором). */
+#define MSGS_MORE_UNREAD_FMT     "ще %d непрочит."
 #define MSGS_FOREIGN             " (не вам)"
 
 #endif /* USER_INTERFACE_LANGUAGES_MESSAGES_UA_H_ */
