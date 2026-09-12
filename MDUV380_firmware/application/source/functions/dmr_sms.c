@@ -595,7 +595,7 @@ static uint32_t s_ackDeadlineMs;/* після цього квитанція пр
  * Квитанцію ключуємо лише після паузи: інакше влучаємо у хвіст/термінатор відправника,
  * він у цей момент ще передає (отже глухий) -- і замість «доставлено» шле все наново. */
 static volatile uint32_t s_lastRxBurstMs;
-#define SMS_ACK_QUIET_MS   40    /* лише для РЕЗЕРВНОГО шляху (основний шле негайно) */
+#define SMS_ACK_QUIET_MS   30    /* тиші в каналі = відправник домовк (разом із термінатором) */
 #define SMS_ACK_KEY_DELAY_MS 15  /* замість типових 100 мс: стокова слухає вузьке вікно */
 #define SMS_ACK_MAX_WAIT_MS 2500 /* не тягнути квитанцію вічно, якщо канал не звільняється */
 #define SMS_ACK_REPEATS     3    /* повторів заголовка-квитанції, як у квитанції RCTL */
@@ -607,10 +607,12 @@ static volatile uint32_t s_lastRxBurstMs;
  *   3 = квитуємо будь-який CONFIRMED (без вимоги біта A);
  *   4 = ВИПРАВЛЕНО o8/o9 = 00 08 (ACK) -- до цього стокова законно не приймала;
  *   5 = подача як у RCTL: 3 повтори заголовка, без преамбул; гейт тиші 40 мс;
- *   6 = ТАЙМІНГ: квитанція йде НЕГАЙНО (до розшифровки й до блокуючого запису у флеш),
- *       ключування через 15 мс замість 100. В ефірі (BBD_0006) rev 5 виходив аж через
- *       366 мс проти ~80 мс у стокової -- форма була правильна, вікно вже закрите. */
-#define SMS_ACK_FORMAT_REV  6
+ *   6 = ТАЙМІНГ: квитанція йшла НЕГАЙНО по CRC32 -- але це ще до термінатора відправника,
+ *       тобто в ефір лізли, поки він передає (глухий). РАНО;
+ *   7 = вікно з обох боків: чекаємо тиші 30 мс + ключування 15 мс (~45-60 мс після кінця,
+ *       як у стокової), блокуючий запис у флеш відкладено до моменту, коли квитанція вже
+ *       пішла. Додано самовимір паузи (видно в sms_diag.py). */
+#define SMS_ACK_FORMAT_REV  7
 
 /* Лічильники для польової діагностики (USB 0x93, хвіст відповіді). Саме вони мають сказати,
  * де рветься ланцюг: чи бачили ми взагалі CONFIRMED-заголовок із проханням квитанції,
@@ -624,6 +626,7 @@ static volatile uint8_t  s_ackLastHdr0;  /* p[0] останнього вхідн
 static volatile uint8_t  s_ackLastHdr1;  /* p[1] -- SAP/блоки */
 static volatile uint8_t  s_ackLastGroup; /* останнє повідомлення було груповим? */
 static volatile uint8_t  s_ackLastForUs; /* останнє повідомлення адресоване нам? */
+static volatile uint32_t s_ackLastDelayMs;/* мс від ост. прийнятого burst-а до віддачі квитанції */
 
 /* Flush the deferred Sent-folder entry if one is queued and the radio has finished transmitting.
  * Called from the main loop (dmrSmsRxTick). Safe to call every tick; a no-op when idle. */
@@ -643,7 +646,10 @@ static void dmrSmsTxPersistTick(void)
 		store_add(s_pendFlags, s_pendPeer, s_pendText, s_pendTextLen);
 		s_pendSent = 0;
 	}
-	if (s_pendInbox && !dmrDataTxActive() && !trxIsTransmitting)
+	/* Вхідне пишемо у флеш лише коли квитанція ВЖЕ пішла (s_ackPending знято) і передача
+	 * завершилась. Інакше блокуючий erase+write на сотні мс з'їдає те саме вікно, заради
+	 * якого ми чекаємо тиші -- рівно те, що зламало rev 5. */
+	if (s_pendInbox && !s_ackPending && !dmrDataTxActive() && !trxIsTransmitting)
 	{
 		store_add(s_pendInboxFlags, s_pendInboxPeer, s_pendInboxText, s_pendInboxLen);
 		s_pendInbox = 0;
@@ -693,6 +699,10 @@ static void dmrSmsAckTick(void)
 	 * не пішла ніколи. Детерміноване ключування все одно робить сам dmrDataTxLoad()
 	 * (він кличе HRC6000ForceDMRIdleForTx()). */
 
+	/* Самовимір: скільки минуло від ОСТАННЬОГО прийнятого burst-а відправника до моменту,
+	 * коли ми віддали квитанцію. Еталон -- ~80 мс у стокової; 366 мс (rev 5) було пізно.
+	 * Видно в sms_diag.py, тож наступну перевірку таймінгу можна робити без HackRF. */
+	s_ackLastDelayMs = now - s_lastRxBurstMs;
 	buildAndLoadSmsAck(s_ackTo);
 }
 
@@ -921,6 +931,7 @@ void dmrSmsRxDiagReset(void)
 	for (int i = 0; i < 16; i++) { s_diagType[i] = 0; }
 	s_ackSeen = s_ackQueued = s_ackSent = s_ackStale = 0;
 	s_ackLastHdr0 = s_ackLastHdr1 = s_ackLastGroup = s_ackLastForUs = 0;
+	s_ackLastDelayMs = 0;
 }
 
 /* Діагностика квитанції (USB 0x93, дописано в хвіст відповіді):
@@ -929,7 +940,7 @@ void dmrSmsRxDiagReset(void)
  *   [6]=ост. було груповим, [7]=ост. адресоване нам.
  * Читається: якщо [0]=0 -- стокова не просить квитанції (дивись [4]); якщо [0]>0, а [1]=0 --
  * відсіяв фільтр (груповий/не нам: [6]/[7]); якщо [1]>0, а [2]=0 -- канал не звільнявся. */
-void dmrSmsAckDiag(uint32_t out[10])
+void dmrSmsAckDiag(uint32_t out[11])
 {
 	out[0] = s_ackSeen;   out[1] = s_ackQueued;
 	out[2] = s_ackSent;   out[3] = s_ackStale;
@@ -937,6 +948,7 @@ void dmrSmsAckDiag(uint32_t out[10])
 	out[6] = s_ackLastGroup; out[7] = s_ackLastForUs;
 	out[8] = SMS_ACK_FORMAT_REV;   /* яка саме прошивка залита -- щоб не гадати */
 	out[9] = SMS_ACK_REPEATS;
+	out[10] = s_ackLastDelayMs;    /* виміряна пауза; еталон стокової ~80 мс */
 }
 
 /* Гістограма rxDataType (16 значень) усіх прийнятих data-sync бурстів. */
@@ -1148,25 +1160,23 @@ void dmrSmsRxTick(void)
 	 * текст (стокова так само квитує ще до показу). Групові й «моніторні»/чужі не квитуємо. */
 	s_ackLastGroup = group;
 	s_ackLastForUs = (uint8_t)(forUs ? 1 : 0);
-	/* ВІДДАЄМО КВИТАНЦІЮ НЕГАЙНО -- до розшифровки й до запису у флеш.
-	 * Запис з ефіру (BBD_0006) показав: форма квитанції правильна байт-у-байт, але вона
-	 * виходила через 366 мс по кінці передачі, тоді як стокова квитує через ~80 мс -- вікно
-	 * вже закрите. Левову частку тих 366 мс з'їдав store_add() нижче: блокуючий erase+write
-	 * SPI-флеша тримав головний цикл, і відкладена квитанція не могла піти. Тому: спершу
-	 * в ефір, потім усе інше. Якщо ми самі саме передаємо -- відкладаємо (резервний шлях). */
+	/* Квитанцію ставимо в чергу, а віддає її dmrSmsAckTick() -- щойно канал ЗАМОВКНЕ.
+	 * Два ефірні заміри задали це вікно з обох боків:
+	 *  - rev 5 (BBD_0006): форма квитанції правильна байт-у-байт, але вийшла через 366 мс
+	 *    по кінці передачі проти ~80 мс у стокової -- ПІЗНО, вікно закрите. Левову частку
+	 *    тих 366 мс з'їдав store_add() нижче: блокуючий erase+write SPI-флеша тримав
+	 *    головний цикл, і відкладена квитанція не могла піти.
+	 *  - rev 6: віддавали негайно по CRC32 -- але PDU збирається на ОСТАННЬОМУ блоці даних,
+	 *    після якого відправник ще шле термінатор. Тобто ми лізли в ефір, поки він передає
+	 *    (отже глухий) -- РАНО.
+	 * Тому: чекаємо тиші SMS_ACK_QUIET_MS, ключуємо через SMS_ACK_KEY_DELAY_MS (разом
+	 * ~45-60 мс після кінця передачі, як у стокової), а блокуючий запис у флеш відкладено
+	 * до моменту, коли квитанція вже пішла -- інакше він знову з'їсть усе вікно. */
 	int ackedNow = 0;
 	if (ackReq && forUs && !group)
 	{
-		if (!dmrDataTxActive() && !trxIsTransmitting)
-		{
-			s_ackQueued++;
-			buildAndLoadSmsAck(peer);
-			ackedNow = 1;
-		}
-		else
-		{
-			queueSmsAck(peer);   /* сам рахує s_ackQueued */
-		}
+		queueSmsAck(peer);
+		ackedNow = 1;   /* квитанція винна -> запис у флеш відкладаємо, щоб не тримав цикл */
 	}
 
 	char text[DMR_SMS_TEXT_MAX + 1];

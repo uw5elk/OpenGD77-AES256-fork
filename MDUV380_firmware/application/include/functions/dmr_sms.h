@@ -82,8 +82,9 @@ void dmrSmsRxDiagTypes(uint32_t out[16]);   /* гістограма rxDataType (
 /* Діагностика link-layer квитанції на вхідне CONFIRMED SMS -- де саме рветься ланцюг:
  *   [0]=заголовків CONFIRMED, [1]=в чергу, [2]=в ефір, [3]=кинуто (канал не звільнився),
  *   [4]=p[0] ост. вхідного data-заголовка, [5]=p[1], [6]=груповий?, [7]=адресоване нам?,
- *   [8]=ревізія формату квитанції (яка прошивка залита), [9]=повторів у черзі. */
-void dmrSmsAckDiag(uint32_t out[10]);
+ *   [8]=ревізія формату квитанції (яка прошивка залита), [9]=повторів у черзі,
+ *   [10]=виміряна пауза до віддачі квитанції, мс (еталон стокової ~80). */
+void dmrSmsAckDiag(uint32_t out[11]);
 void dmrSmsRxDiagReset(void);
 /* Dump the last reassembled (still-encrypted) PDU + metadata for offline analysis:
  * out = [pduLen_hi, pduLen_lo, keyId, expBlocks, peer(4 LE), rawPdu...]. Returns length. */
