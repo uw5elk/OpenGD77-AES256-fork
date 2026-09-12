@@ -1213,6 +1213,13 @@ void dmrSmsRxTick(void)
 			 * поспішали (і взагалі блокуючий флеш у вікні ключування -- крихко, та сама
 			 * причина, що й для відкладеного запису теки «Надіслані»). Відкладаємо до
 			 * завершення передачі -- зливає dmrSmsInboxPersistTick() з головного циклу. */
+			/* Якщо попереднє відкладене ще не зляглось -- запишемо його ЗАРАЗ, інакше воно
+			 * просто загубиться (слот один). Той самий запобіжник, що й для «Надісланих». */
+			if (s_pendInbox)
+			{
+				store_add(s_pendInboxFlags, s_pendInboxPeer, s_pendInboxText, s_pendInboxLen);
+				s_pendInbox = 0;
+			}
 			s_pendInbox = 1;
 			s_pendInboxFlags = flags;
 			s_pendInboxPeer = peer;
