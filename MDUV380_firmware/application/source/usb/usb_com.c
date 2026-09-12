@@ -1820,6 +1820,18 @@ static void cpsHandleCommand(void)
 						usbComSendBuf[3 + n++] = (uint8_t)(t[i] >> 24);
 					}
 				}
+				// Діагностика квитанції (8x uint32 LE) -- теж у хвіст, старі парсери цілі.
+				{
+					uint32_t a[8];
+					dmrSmsAckDiag(a);
+					for (int i = 0; i < 8; i++)
+					{
+						usbComSendBuf[3 + n++] = (uint8_t)(a[i]);
+						usbComSendBuf[3 + n++] = (uint8_t)(a[i] >> 8);
+						usbComSendBuf[3 + n++] = (uint8_t)(a[i] >> 16);
+						usbComSendBuf[3 + n++] = (uint8_t)(a[i] >> 24);
+					}
+				}
 				usbComSendBuf[0] = com_requestbuffer[0];
 				usbComSendBuf[1] = (uint8_t)((n >> 8) & 0xFF);
 				usbComSendBuf[2] = (uint8_t)(n & 0xFF);

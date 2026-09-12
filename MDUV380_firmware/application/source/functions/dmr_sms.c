@@ -584,6 +584,28 @@ static uint8_t  s_ackPending;   /* 1 = винні квитанцію */
 static uint32_t s_ackTo;        /* кому (початковий відправник) */
 static uint8_t  s_ackBF;        /* blocks-to-follow -- луна лічильника блоків оригіналу */
 static uint32_t s_ackAtMs;      /* найраніший момент ключування */
+static uint32_t s_ackDeadlineMs;/* після цього квитанція протухла (канал так і не звільнився) */
+
+/* Час останнього ПРИЙНЯТОГО data-burst (будь-якого типу) -- проксі «канал зайнятий».
+ * Заповнюється в dmrSmsRxDiagBurst(), який HR-C6000 кличе на КОЖЕН data-sync burst.
+ * Квитанцію ключуємо лише після паузи: інакше влучаємо у хвіст/термінатор відправника,
+ * він у цей момент ще передає (отже глухий) -- і замість «доставлено» шле все наново. */
+static volatile uint32_t s_lastRxBurstMs;
+#define SMS_ACK_QUIET_MS   60    /* стільки тиші в каналі = передавач замовк (burst кожні ~60 мс) */
+#define SMS_ACK_MAX_WAIT_MS 2500 /* не тягнути квитанцію вічно, якщо канал не звільняється */
+
+/* Лічильники для польової діагностики (USB 0x93, хвіст відповіді). Саме вони мають сказати,
+ * де рветься ланцюг: чи бачили ми взагалі CONFIRMED-заголовок із проханням квитанції,
+ * чи поставили її в чергу, чи реально віддали в ефір. s_ackLastHdr0/1 -- перші два байти
+ * останнього вхідного data-заголовка (тобто що НАСПРАВДІ шле стокова). */
+static volatile uint32_t s_ackSeen;      /* заголовків CONFIRMED + біт A */
+static volatile uint32_t s_ackQueued;    /* разів поставили квитанцію в чергу */
+static volatile uint32_t s_ackSent;      /* разів реально віддали в ефір (dmrDataTxLoad) */
+static volatile uint32_t s_ackStale;     /* разів кинули, бо канал не звільнився */
+static volatile uint8_t  s_ackLastHdr0;  /* p[0] останнього вхідного data-заголовка */
+static volatile uint8_t  s_ackLastHdr1;  /* p[1] -- SAP/блоки */
+static volatile uint8_t  s_ackLastGroup; /* останнє повідомлення було груповим? */
+static volatile uint8_t  s_ackLastForUs; /* останнє повідомлення адресоване нам? */
 
 /* Flush the deferred Sent-folder entry if one is queued and the radio has finished transmitting.
  * Called from the main loop (dmrSmsRxTick). Safe to call every tick; a no-op when idle. */
@@ -600,10 +622,13 @@ static void dmrSmsTxPersistTick(void)
  * CONFIRMED повідомлення з проханням підтвердити). Саме ключування -- у dmrSmsAckTick. */
 static void queueSmsAck(uint32_t to, uint8_t bf)
 {
+	uint32_t now = ticksGetMillis();
 	s_ackTo = to;
 	s_ackBF = (bf != 0) ? bf : 0x08;   /* луна; 0 малоймовірно, але не шлемо порожню */
-	s_ackAtMs = ticksGetMillis() + 70;  /* відповідь ~80 мс по кінці прийому (BBD_0005) */
+	s_ackAtMs = now;                    /* далі чекаємо не таймер, а ТИШУ в каналі */
+	s_ackDeadlineMs = now + SMS_ACK_MAX_WAIT_MS;
 	s_ackPending = 1;
+	s_ackQueued++;
 }
 
 /* Побудувати й відключити квитанцію, коли настав час і канал вільний. Черга =
@@ -611,8 +636,24 @@ static void queueSmsAck(uint32_t to, uint8_t bf)
 static void dmrSmsAckTick(void)
 {
 	if (!s_ackPending) { return; }
-	if ((int32_t)(ticksGetMillis() - s_ackAtMs) < 0) { return; }   /* ще рано */
-	if (dmrDataTxActive() || trxIsTransmitting) { return; }        /* канал зайнятий -- чекаємо */
+
+	uint32_t now = ticksGetMillis();
+	if ((int32_t)(now - s_ackDeadlineMs) >= 0)
+	{
+		/* Канал так і не звільнився (відправник молотить ретрансміти впритул) -- кидаємо,
+		 * інакше квитанція вилетить у зовсім інший момент і тільки заважатиме. */
+		s_ackPending = 0;
+		s_ackStale++;
+		return;
+	}
+	if (dmrDataTxActive() || trxIsTransmitting) { return; }        /* ми самі передаємо */
+	/* Головна умова: відправник має ЗАМОВКНУТИ. Поки в каналі ідуть data-burst-и (хвіст
+	 * повідомлення, термінатор), він передає і нас не почує. */
+	if ((uint32_t)(now - s_lastRxBurstMs) < SMS_ACK_QUIET_MS) { return; }
+	/* На slotState НЕ гейтуємо навмисно: після прийому він тримається в RX-стані до
+	 * END_TICK_TIMEOUT тиші, тож чекання на IDLE могло б з'їсти весь дедлайн і квитанція б
+	 * не пішла ніколи. Детерміноване ключування все одно робить сам dmrDataTxLoad()
+	 * (він кличе HRC6000ForceDMRIdleForTx()). */
 
 	uint32_t dst = s_ackTo;         /* кому: початковий відправник */
 	uint32_t src = trxDMRID;        /* від кого: ми */
@@ -642,6 +683,7 @@ static void dmrSmsAckTick(void)
 	}
 	dmrDataTxLoad(q, (uint8_t)n);
 	s_ackPending = 0;
+	s_ackSent++;
 }
 
 int dmrSmsSend(const char *text, uint32_t dst, int group, uint8_t keyId)
@@ -831,6 +873,7 @@ int dmrSmsRxLastPdu(uint8_t *out, int maxlen)
 void dmrSmsRxDiagBurst(int rxDataType, int crcOk)
 {
 	s_diagData++;
+	s_lastRxBurstMs = ticksGetMillis();   /* канал зайнятий ЗАРАЗ -- гейт тиші для квитанції */
 	s_diagType[rxDataType & 0x0F]++;   /* гістограма типів -- бачити тип блоків навантаження */
 	if (rxDataType == DT_DATA_HEADER) { if (crcOk) s_diagHdrOk++; else s_diagHdrBad++; }
 	else if (rxDataType == DT_RATE12_DATA) { if (crcOk) s_diagBlkOk++; else s_diagBlkBad++; }
@@ -842,6 +885,22 @@ void dmrSmsRxDiagReset(void)
 	s_diagPdu = s_diagMsg = 0;
 	s_diagLastPduLen = 0;
 	for (int i = 0; i < 16; i++) { s_diagType[i] = 0; }
+	s_ackSeen = s_ackQueued = s_ackSent = s_ackStale = 0;
+	s_ackLastHdr0 = s_ackLastHdr1 = s_ackLastGroup = s_ackLastForUs = 0;
+}
+
+/* Діагностика квитанції (USB 0x93, дописано в хвіст відповіді):
+ *   [0]=заголовків CONFIRMED+A, [1]=поставлено в чергу, [2]=віддано в ефір,
+ *   [3]=кинуто (канал не звільнився), [4]=p[0] ост. заголовка, [5]=p[1],
+ *   [6]=ост. було груповим, [7]=ост. адресоване нам.
+ * Читається: якщо [0]=0 -- стокова не просить квитанції (дивись [4]); якщо [0]>0, а [1]=0 --
+ * відсіяв фільтр (груповий/не нам: [6]/[7]); якщо [1]>0, а [2]=0 -- канал не звільнявся. */
+void dmrSmsAckDiag(uint32_t out[8])
+{
+	out[0] = s_ackSeen;   out[1] = s_ackQueued;
+	out[2] = s_ackSent;   out[3] = s_ackStale;
+	out[4] = s_ackLastHdr0; out[5] = s_ackLastHdr1;
+	out[6] = s_ackLastGroup; out[7] = s_ackLastForUs;
 }
 
 /* Гістограма rxDataType (16 значень) усіх прийнятих data-sync бурстів. */
@@ -893,6 +952,10 @@ void dmrSmsRxBurst(int rxDataType, const uint8_t *p)
 			/* CONFIRMED data (DPF=3) з бітом A (0x40) -> відправник чекає link-layer квитанцію.
 			 * Unconfirmed (DPF=2) чи UDT квитанції не потребують. */
 			s_rxAckReq = ((((p[0] & 0x0F) == 0x03) && (p[0] & 0x40)) ? 1 : 0);
+			/* Діагностика: що НАСПРАВДІ прислала стокова (перші два байти заголовка). */
+			s_ackLastHdr0 = p[0];
+			s_ackLastHdr1 = p[1];
+			if (s_rxAckReq) { s_ackSeen++; }
 		}
 		return;
 	}
@@ -1045,6 +1108,8 @@ void dmrSmsRxTick(void)
 	 * саме нам приватно, а відправник просив підтвердити (CONFIRMED+A) -> шлемо Response header.
 	 * Робимо це ДО розшифровки: квитанція -- про доставку кадрів, а не про те, чи ми прочитали
 	 * текст (стокова так само квитує ще до показу). Групові й «моніторні»/чужі не квитуємо. */
+	s_ackLastGroup = group;
+	s_ackLastForUs = (uint8_t)(forUs ? 1 : 0);
 	if (ackReq && forUs && !group)
 	{
 		queueSmsAck(peer, ackBF);

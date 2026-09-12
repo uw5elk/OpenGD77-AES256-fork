@@ -28,7 +28,7 @@ def main():
         return
 
     ser.write(bytes([ord("C"), 0x93])); ser.flush(); time.sleep(0.3)
-    r = ser.read(128)
+    r = ser.read(256)   # 3+28+1 + 64 (типи) + 32 (квитанція) = 128; із запасом
     if len(r) >= 3 + 28 + 1 and r[0] == ord("C"):
         vals = struct.unpack_from("<7I", r, 3)
         tx = r[3 + 28]
@@ -43,6 +43,27 @@ def main():
             shown = [f"{tnames.get(i, f'тип{i}')}={v}" for i, v in enumerate(types) if v]
             print("Типи бурстів: " + ("  ".join(shown) if shown else "(порожньо)"))
             print("  -> навантаження SMS іде тим типом, що не data-hdr/CSBK (напр. rate-3/4).")
+        # Діагностика квитанції (8x uint32), дописана після гістограми.
+        if len(r) >= 3 + 29 + 64 + 32:
+            seen, queued, sent, stale, h0, h1, grp, forus = struct.unpack_from("<8I", r, 3 + 29 + 64)
+            print("Квитанція: бачив=%d вчергу=%d вефір=%d кинуто=%d  "
+                  "ост.заголовок=%02x %02x  груповий=%d нам=%d" %
+                  (seen, queued, sent, stale, h0, h1, grp, forus))
+            dpf, a = h0 & 0x0F, (h0 >> 6) & 1
+            print("  заголовок: DPF=%d (%s), біт A(просить квитанцію)=%d, SAP=%d" % (
+                dpf, {0: "UDT", 1: "Response", 2: "Unconfirmed", 3: "CONFIRMED"}.get(dpf, "?"),
+                a, (h1 >> 4) & 0x0F))
+            if seen == 0:
+                print("  ДІАГНОЗ: відправник НЕ просить квитанції (треба CONFIRMED+A) "
+                      "-- дивись DPF/біт A вище; у CPS увімкни підтверджену доставку.")
+            elif queued == 0:
+                print("  ДІАГНОЗ: просить, але відсіяв фільтр -- груповий(%d)/не нам(%d)." % (grp, forus))
+            elif sent == 0:
+                print("  ДІАГНОЗ: поставлено в чергу, але в ефір не пішло -- канал не звільнявся "
+                      "(кинуто=%d). Відправник молотить ретрансміти впритул." % stale)
+            else:
+                print("  -> квитанція йшла в ефір %d раз(ів); якщо відправник усе одно повторює, "
+                      "справа у формі/таймінгу квитанції." % sent)
     else:
         print("unexpected reply (%d B): %s" % (len(r), r.hex()))
 
