@@ -248,6 +248,9 @@ static uint32_t  s_monStarted;   /* діагностика: скільки ра�
 static uint32_t  s_monSkipped;   /* скільки разів не ключували (зайнято/не цифровий режим) */
 static uint32_t  s_monStartMs;   /* коли почався останній монітор */
 static uint32_t  s_monLastMs;    /* скільки мс тривав останній (діагностика) */
+static uint32_t  s_monLastCmdMs;  /* час останньої команди Monitor (для виміру вікна) */
+static uint32_t  s_monResendMs;   /* інтервал між послідовними Monitor від командира (вікно) */
+static uint32_t  s_monKeyDelayMs; /* через скільки мс після команди реально стартував голос */
 
 
 /* Діагностика шляху квитанції (розрізнити три різні причини хреста на екрані):
@@ -285,6 +288,9 @@ void dmrRctlNoteOwnTxEnd(uint32_t txFinishMs)
 	s_monStarted = 0;
 	s_monSkipped = 0;
 	s_monLastMs = 0;
+	s_monResendMs = 0;
+	s_monKeyDelayMs = 0;
+	s_monLastCmdMs = 0;
 	s_winArmed = 1;
 }
 
@@ -363,7 +369,7 @@ void dmrRctlStockRxBurst(const uint8_t *p12)
 	s_stockPending = 1;
 }
 
-void dmrRctlStockRxDiag(uint32_t out[20])
+void dmrRctlStockRxDiag(uint32_t out[23])
 {
 	out[0] = s_stockSeen;
 	out[1] = s_stockLastSrc;
@@ -385,6 +391,9 @@ void dmrRctlStockRxDiag(uint32_t out[20])
 	out[17] = s_monStarted;
 	out[18] = s_monSkipped;
 	out[19] = s_monLastMs;
+	out[20] = s_monResendMs;
+	out[21] = s_monKeyDelayMs;
+	out[22] = s_monLastCmdMs;
 }
 
 void dmrRctlStockRxDiagReset(void)
@@ -486,6 +495,11 @@ static void dmrRctlStockProcessPending(void)
 				 * квитанція+голос аж на 840 мс -> помилка й повтор. Тож шлемо квитанцію, і
 				 * ключуємо голос ОДРАЗУ, щойно квитанція зійде з ефіру (без зайвого defer).
 				 * monitorKeyVoice сам чекає звільнення TX і форс-ідлом заводить сталий голос. */
+				{
+					uint32_t nowMs = ticksGetMillis();
+					if (s_monLastCmdMs != 0) { s_monResendMs = nowMs - s_monLastCmdMs; }
+					s_monLastCmdMs = nowMs;
+				}
 				sendStockAck(DMR_RCTL_STOCK_MONITOR, requester);
 				s_monReq = requester;
 				s_monKeyTries = 0;
@@ -570,6 +584,7 @@ static void monitorKeyVoice(void)
 	s_monActive = 1;
 	s_monStarted++;
 	s_monStartMs = ticksGetMillis();
+	if (s_monLastCmdMs != 0) { s_monKeyDelayMs = s_monStartMs - s_monLastCmdMs; }
 
 	uint32_t secs = dmrRctlMonitorSecs();
 	ticksTimerStart(&s_monTimer, secs * 1000u);
