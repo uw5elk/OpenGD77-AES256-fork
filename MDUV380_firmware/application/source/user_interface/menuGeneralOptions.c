@@ -40,6 +40,12 @@
 #include "interfaces/gps.h"
 #endif
 
+/* Форк: пункт GPS у "Загальних опціях" ховаємо на раціях без GPS (FORK_NO_GPS_MENU),
+ * як і окремий пункт меню GPS. Уся GPS/APRS-інфраструктура лишається. */
+#if defined(HAS_GPS) && !defined(FORK_NO_GPS_MENU)
+#define FORK_GPS_MENU_ITEM 1
+#endif
+
 static void updateScreen(bool isFirstRun);
 static void handleEvent(uiEvent_t *ev);
 static void applySettings(void);
@@ -74,14 +80,14 @@ enum
 	GENERAL_OPTIONS_APO_WITH_RF,
 #endif
 	GENERAL_OPTIONS_MENU_SATELLITE_MANUAL_AUTO,
-#if defined(HAS_GPS)
+#if defined(FORK_GPS_MENU_ITEM)
 	GENERAL_OPTIONS_GPS,
 #endif
 	GENERAL_CHANNELS_ARE_READ_ONLY,
 	NUM_GENERAL_OPTIONS_MENU_ITEMS
 };
 
-#if defined(HAS_GPS)
+#if defined(FORK_GPS_MENU_ITEM)
 // Used by menuGPS to enable/disable GPS using QuickKey
 const uint8_t MENU_GENERAL_OPTIONS_GPS_ENTRY_NUMBER = GENERAL_OPTIONS_GPS;
 #endif
@@ -295,7 +301,7 @@ static void updateScreen(bool isFirstRun)
 					leftSide = currentLanguage->satellite_short;
 					rightSideConst = (settingsIsOptionBitSet(BIT_SATELLITE_MANUAL_AUTO) ? currentLanguage->Auto : currentLanguage->manual);
 					break;
-#if defined(HAS_GPS)
+#if defined(FORK_GPS_MENU_ITEM)
 				case GENERAL_OPTIONS_GPS:
 					leftSide = currentLanguage->gps;
 
@@ -606,7 +612,7 @@ static void handleEvent(uiEvent_t *ev)
 						settingsSetOptionBit(BIT_SATELLITE_MANUAL_AUTO, true);
 					}
 					break;
-#if defined(HAS_GPS)
+#if defined(FORK_GPS_MENU_ITEM)
 				case GENERAL_OPTIONS_GPS:
 					if ((SETTINGS_GPS_MODE_GET(nonVolatileSettings) != GPS_NOT_DETECTED) && (SETTINGS_GPS_MODE_GET(nonVolatileSettings) < (NUM_GPS_MODES - 1)))
 					{
@@ -744,7 +750,7 @@ static void handleEvent(uiEvent_t *ev)
 						settingsSetOptionBit(BIT_SATELLITE_MANUAL_AUTO, false);
 					}
 					break;
-#if defined(HAS_GPS)
+#if defined(FORK_GPS_MENU_ITEM)
 				case GENERAL_OPTIONS_GPS:
 					if (SETTINGS_GPS_MODE_GET(nonVolatileSettings) > GPS_MODE_OFF)
 					{

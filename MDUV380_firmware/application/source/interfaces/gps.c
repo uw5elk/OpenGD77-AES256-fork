@@ -463,6 +463,7 @@ void HAL_UART_RxHalfCpltCallback(UART_HandleTypeDef *huart)
 
 void gpsOnUsingQuickKey(bool on)
 {
+#if defined(HAS_GPS) && !defined(FORK_NO_GPS_MENU)
 	uiEvent_t e = { .buttons = BUTTON_NONE, .keys = NO_KEYCODE, .rotary = 0, .events = FUNCTION_EVENT, .hasEvent = true, .time = ticksGetMillis() };
 	bool sendEvent = false;
 
@@ -483,6 +484,9 @@ void gpsOnUsingQuickKey(bool on)
 		menuSystemPushNewMenu(MENU_GENERAL);
 		menuSystemCallCurrentMenuTick(&e);
 	}
+#else
+	(void)on;   // Форк: без пункту GPS у меню швидка клавіша GPS ні на що не вказує
+#endif
 
 }
 

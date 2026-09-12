@@ -36,12 +36,53 @@ static void setZoneToUserSelection(void);
 
 static menuStatus_t menuZoneExitCode = MENU_STATUS_SUCCESS;
 
+// Форк: у списку зон приховуємо ПОРОЖНІ зони (позначені "в роботі", але без жодного каналу) --
+// вони лише плутають. Будуємо відображення "екранний індекс -> справжній номер зони", куди
+// потрапляють тільки непорожні зони + завжди віртуальна "Всі канали" (остання). Та сама логіка
+// пропуску, що й при перемиканні зон валкодером (uiChannelMode.c, баг #2), лише тепер і в меню.
+static uint8_t s_zoneMap[CODEPLUG_ALL_ZONES_MAX];
+static int     s_zoneMapCount;
+
+static void buildZoneMap(void)
+{
+	int total = codeplugZonesGetCount();
+	int allChannelsZone = total - 1;   // остання зона -- віртуальна "Всі канали"
+	CodeplugZone_t z;
+
+	s_zoneMapCount = 0;
+	for (int zn = 0; zn < total; zn++)
+	{
+		if (zn == allChannelsZone)
+		{
+			s_zoneMap[s_zoneMapCount++] = (uint8_t)zn;   // "Всі канали" -- завжди показуємо
+			continue;
+		}
+		codeplugZoneGetDataForNumber(zn, &z);
+		if (z.NOT_IN_CODEPLUGDATA_numChannelsInZone > 0)
+		{
+			s_zoneMap[s_zoneMapCount++] = (uint8_t)zn;
+		}
+	}
+	if (s_zoneMapCount == 0) { s_zoneMap[s_zoneMapCount++] = 0; }   // запобіжник (не має статись)
+}
+
+// Екранний індекс, що відповідає збереженій поточній зоні (або 0, якщо та зона порожня/зникла).
+static int zoneMapIndexForZone(int zoneNum)
+{
+	for (int i = 0; i < s_zoneMapCount; i++)
+	{
+		if (s_zoneMap[i] == zoneNum) { return i; }
+	}
+	return 0;
+}
+
 menuStatus_t menuZoneList(uiEvent_t *ev, bool isFirstRun)
 {
 	if (isFirstRun)
 	{
-		menuDataGlobal.numItems = codeplugZonesGetCount();
-		menuDataGlobal.currentItemIndex = nonVolatileSettings.currentZone;
+		buildZoneMap();
+		menuDataGlobal.numItems = s_zoneMapCount;
+		menuDataGlobal.currentItemIndex = zoneMapIndexForZone(nonVolatileSettings.currentZone);
 
 		voicePromptsInit();
 		voicePromptsAppendPrompt(PROMPT_SILENCE);
@@ -90,7 +131,7 @@ static void updateScreen(bool isFirstRun)
 			break;
 		}
 
-		codeplugZoneGetDataForNumber(mNum, &zoneBuf);
+		codeplugZoneGetDataForNumber(s_zoneMap[mNum], &zoneBuf);   // mNum -- екранний індекс -> справжня зона
 		codeplugUtilConvertBufToString(zoneBuf.name, nameBuf, 16);// need to convert to zero terminated string
 
 		menuDisplayEntry(i, mNum, (char *)nameBuf, 0, THEME_ITEM_FG_ZONE_NAME, THEME_ITEM_COLOUR_NONE, THEME_ITEM_BG);
@@ -176,7 +217,8 @@ static void handleEvent(uiEvent_t *ev)
 static void setZoneToUserSelection(void)
 {
 	settingsSet(nonVolatileSettings.overrideTG, 0); // remove any TG override
-	settingsSet(nonVolatileSettings.currentZone, (int16_t) menuDataGlobal.currentItemIndex);
+	// Форк: екранний індекс -> справжній номер зони (порожні пропущено, тож індекси не збігаються).
+	settingsSet(nonVolatileSettings.currentZone, (int16_t) s_zoneMap[menuDataGlobal.currentItemIndex]);
 	settingsSet(nonVolatileSettings.currentIndexInTRxGroupList[SETTINGS_CHANNEL_MODE], 0);// Since we are switching zones the TRx Group index should be reset
 	channelScreenChannelData.rxFreq = 0x00; // Flag to the Channel screen that the channel data is now invalid and needs to be reloaded
 
