@@ -57,8 +57,16 @@ static void buildZoneMap(void)
 			s_zoneMap[s_zoneMapCount++] = (uint8_t)zn;   // "Всі канали" -- завжди показуємо
 			continue;
 		}
-		codeplugZoneGetDataForNumber(zn, &z);
-		if (z.NOT_IN_CODEPLUGDATA_numChannelsInZone > 0)
+		if (!codeplugZoneGetDataForNumber(zn, &z))
+		{
+			continue;   // не вдалось прочитати зону -- точно не показуємо
+		}
+		// "Справжня" зона: має канали І перший канал -- валідний індекс (1..MAX).
+		// Порожні зони мають 0 каналів; "сміттєві" (лишки CPS у таблиці in-use) мають
+		// numChannels>0 з гарантованого сміття, але їхній channels[0] виходить за межі --
+		// саме так відсіюємо і порожні, і сміттєві (артефакти з "dddddddd"/кракозябрами).
+		if ((z.NOT_IN_CODEPLUGDATA_numChannelsInZone > 0) &&
+		    (z.channels[0] >= CODEPLUG_CHANNELS_MIN) && (z.channels[0] <= CODEPLUG_CHANNELS_MAX))
 		{
 			s_zoneMap[s_zoneMapCount++] = (uint8_t)zn;
 		}
