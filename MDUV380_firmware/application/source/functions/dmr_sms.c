@@ -616,6 +616,14 @@ static uint16_t s_ackTargetMs = 80;    /* цільова пауза після �
  * власна безпреамбульна квитанція йому зайшла. Коли преамбули були в нас (rev<=4), тоді
  * стояв хибний код 00 04 -- тож поєднання «преамбули + правильний код» не перевірялось. */
 static uint8_t  s_ackPreambles = 6;
+static uint8_t  s_txAskAck = 1;        /* виставляти біт A на власних повідомленнях */
+
+/* Вхідна квитанція НА НАШЕ повідомлення -> позначка «доставлено» у теці «Надіслані». */
+static volatile uint8_t  s_gotAck DMR_AES_CCM;      /* прийшла квитанція, ще не оброблена */
+static volatile uint32_t s_gotAckFrom DMR_AES_CCM;  /* від кого (кому ми слали) */
+static volatile uint32_t s_ackRcvdCount;            /* діагностика: скільки квитанцій прийняли */
+
+void dmrSmsAckSetAskAck(int on) { s_txAskAck = (on != 0) ? 1 : 0; }
 
 void dmrSmsAckSetTuning(uint8_t repeats, uint16_t delayMs, uint8_t preambles)
 {
@@ -850,7 +858,15 @@ int dmrSmsSend(const char *text, uint32_t dst, int group, uint8_t keyId)
 	 * stock cleartext SMS capture (2026-07-04). */
 	{
 		uint8_t h[10];
-		h[0] = (uint8_t)(g | 0x02); h[1] = (uint8_t)(((encrypt ? 9 : 4) << 4) | (poc & 0x0F));
+		/* Біт A (0x40) = «прошу квитанцію». Це Unconfirmed + Response Requested: приймач шле
+		 * ОДНУ фінальну квитанцію на все повідомлення, БЕЗ поблокового ARQ -- тобто нам не
+		 * потрібні ні DBSN, ні CRC9, ні rate-3/4 кодер. Саме так ми отримуємо «доставлено»,
+		 * не воюючи з CRC9 (його 9 біт не вдалось звести до CRC від жодного шматка блока,
+		 * попри вичерпний перебір поліномів і порядків -- див. STATUS.md).
+		 * Вимикається через USB (dmrSmsAckSetTuning, 4-й байт), якщо якийсь приймач
+		 * спотикається об виставлений A на Unconfirmed. */
+		h[0] = (uint8_t)(g | 0x02 | (s_txAskAck ? 0x40 : 0x00));
+		h[1] = (uint8_t)(((encrypt ? 9 : 4) << 4) | (poc & 0x0F));
 		h[2] = (uint8_t)(dst >> 16); h[3] = (uint8_t)(dst >> 8); h[4] = (uint8_t)dst;
 		h[5] = (uint8_t)(src >> 16); h[6] = (uint8_t)(src >> 8); h[7] = (uint8_t)src;
 		h[8] = (uint8_t)(0x80 | (nblocks & 0x7F)); h[9] = 0x00;
@@ -988,6 +1004,31 @@ void dmrSmsRxDiagReset(void)
 	s_ackLastHdr0 = s_ackLastHdr1 = s_ackLastGroup = s_ackLastForUs = 0;
 	s_ackLastDelayMs = 0;
 	s_rawBlkCount = 0;
+	s_ackRcvdCount = 0;
+}
+
+/* Позначити найсвіжіше НАДІСЛАНЕ повідомлення цьому адресатові як доставлене.
+ * Розкладка запису: [0]=flags [1]=textLen [2..3]=seq(LE) [4..7]=peerId(LE) [8..]=text. */
+static void markDeliveredForPeer(uint32_t peer)
+{
+	store_ensure();
+	int best = -1;
+	uint16_t bestSeq = 0;
+	for (int o = 0; o + SMS_ENTRY_HDR <= (int)s_store.used; o += entry_size(o))
+	{
+		if (!entry_matches(o, 1)) { continue; }              /* тільки «Надіслані» */
+		if (s_store.data[o] & DMR_SMS_FLAG_DELIVERED) { continue; }
+		uint32_t pid = (uint32_t)s_store.data[o + 4] | ((uint32_t)s_store.data[o + 5] << 8) |
+				((uint32_t)s_store.data[o + 6] << 16) | ((uint32_t)s_store.data[o + 7] << 24);
+		if (pid != peer) { continue; }
+		uint16_t sq = entry_seq(o);
+		if ((best < 0) || (sq >= bestSeq)) { best = o; bestSeq = sq; }
+	}
+	if (best >= 0)
+	{
+		s_store.data[best] |= DMR_SMS_FLAG_DELIVERED;
+		store_save();
+	}
 }
 
 /* Дамп сирих блоків: [count, (len, bytes...) x count]. Повертає довжину. */
@@ -1012,7 +1053,7 @@ int dmrSmsRxRawBlocks(uint8_t *out, int maxlen)
  *   [6]=ост. було груповим, [7]=ост. адресоване нам.
  * Читається: якщо [0]=0 -- стокова не просить квитанції (дивись [4]); якщо [0]>0, а [1]=0 --
  * відсіяв фільтр (груповий/не нам: [6]/[7]); якщо [1]>0, а [2]=0 -- канал не звільнявся. */
-void dmrSmsAckDiag(uint32_t out[13])
+void dmrSmsAckDiag(uint32_t out[15])
 {
 	out[0] = s_ackSeen;   out[1] = s_ackQueued;
 	out[2] = s_ackSent;   out[3] = s_ackStale;
@@ -1023,6 +1064,8 @@ void dmrSmsAckDiag(uint32_t out[13])
 	out[10] = s_ackLastDelayMs;    /* виміряна пауза; еталон стокової ~80 мс */
 	out[11] = s_ackTargetMs;       /* цільова пауза (підбірна) */
 	out[12] = s_ackPreambles;      /* CSBK-преамбул перед квитанцією (підбірні) */
+	out[13] = s_ackRcvdCount;      /* квитанцій НА НАШІ повідомлення прийнято */
+	out[14] = s_txAskAck;          /* чи просимо квитанцію (біт A) на власних */
 }
 
 /* Гістограма rxDataType (16 значень) усіх прийнятих data-sync бурстів. */
@@ -1049,6 +1092,16 @@ void dmrSmsRxBurst(int rxDataType, const uint8_t *p)
 {
 	if (rxDataType == DT_DATA_HEADER)
 	{
+		/* Вхідна КВИТАНЦІЯ (Response data header, DPF=1) на НАШЕ повідомлення: адресат = ми.
+		 * Розкладка та сама, що ми й самі шлемо: 01 40 <кому> <від кого> 00 08 <CRC>. */
+		if (((p[0] & 0x0F) == 0x01) && (((uint32_t)p[2] << 16 | (uint32_t)p[3] << 8 | p[4]) == trxDMRID))
+		{
+			s_gotAckFrom = ((uint32_t)p[5] << 16) | ((uint32_t)p[6] << 8) | p[7];
+			s_gotAck = 1;
+			s_ackRcvdCount++;
+			return;
+		}
+
 		if (p[0] == 0x4F && p[1] == 0x10 && (p[2] & 0x3F) == (0x51 & 0x3F))
 		{
 			/* Motorola ENC extended header: ALG/key/MI. It immediately precedes this
@@ -1077,7 +1130,9 @@ void dmrSmsRxBurst(int rxDataType, const uint8_t *p)
 			 * конкретна прошивка шле 0x03 -- краще відповісти, ніж мовчати (зайва квитанція
 			 * нікому не шкодить, а її брак дає ретрансміти). Unconfirmed (DPF=2) і UDT -- ні.
 			 * Реальний байт видно в діагностиці (s_ackLastHdr0). */
-			s_rxAckReq = (((p[0] & 0x0F) == 0x03) ? 1 : 0);
+			/* Квитуємо на ПРОХАННЯ (біт A), байдуже CONFIRMED воно чи Unconfirmed: саме так
+			 * працює наш фрок-фрок обмін -- Unconfirmed + Response Requested. */
+			s_rxAckReq = ((((p[0] & 0x0F) == 0x03) || (p[0] & 0x40)) ? 1 : 0);
 			/* Діагностика: що НАСПРАВДІ прислала стокова (перші два байти заголовка). */
 			s_ackLastHdr0 = p[0];
 			s_ackLastHdr1 = p[1];
@@ -1195,6 +1250,18 @@ void dmrSmsRxTick(void)
 {
 	dmrSmsTxPersistTick();   /* flush any deferred Sent-folder write once the TX has fully un-keyed */
 	dmrSmsAckTick();         /* відключити квитанцію на вхідне CONFIRMED SMS, коли настав час */
+
+	/* Прийшла квитанція на НАШЕ повідомлення -> позначка «доставлено». store_save() пише у
+	 * флеш (блокуюче), тож робимо це лише коли передача завершилась. */
+	if (s_gotAck && !dmrDataTxActive() && !trxIsTransmitting)
+	{
+		uint32_t from = s_gotAckFrom;
+		s_gotAck = 0;
+		markDeliveredForPeer(from);
+		/* Без нового мовного рядка (його довелось би заводити в усіх мовах): факт доставки
+		 * видно позначкою в списку «Надіслані», а тут лише короткий сигнал. */
+		soundSetMelody(MELODY_ACK_BEEP);
+	}
 
 	if (!s_rxReady) { return; }
 

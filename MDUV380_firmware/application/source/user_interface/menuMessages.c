@@ -344,7 +344,11 @@ static void listUpdate(void)
 			char txt[DMR_SMS_TEXT_MAX + 1];
 			int n = (m->textLen < (int)sizeof txt - 1) ? m->textLen : (int)sizeof txt - 1;
 			memcpy(txt, m->text, n); txt[n] = 0;
-			char mark = (m->flags & DMR_SMS_FLAG_UNREAD) ? '*' : ' ';
+			// Вхідні: "*" = непрочитане. Надіслані: "+" = адресат підтвердив доставку
+			// (прийшла квитанція). Позиція одна на обидва випадки -- теки різні, не плутається.
+			char mark = (m->flags & DMR_SMS_FLAG_OUTGOING)
+					? ((m->flags & DMR_SMS_FLAG_DELIVERED) ? '+' : ' ')
+					: ((m->flags & DMR_SMS_FLAG_UNREAD) ? '*' : ' ');
 			// ">" = перехоплене монітором, адресоване НЕ нам. Позначка стоїть перед номером
 			// відправника, бо саме його оператор бачить першим і може прийняти за адресата.
 			const char *foreign = (m->flags & DMR_SMS_FLAG_FOREIGN) ? ">" : "";
