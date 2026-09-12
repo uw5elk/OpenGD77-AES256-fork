@@ -97,6 +97,7 @@ static uiNotificationData_t notificationData =
 };
 
 static void displayMessage(void);
+static void displaySmsFullScreen(void);
 
 void uiNotificationShow(uiNotificationType_t type, uiNotificationID_t id, uint32_t msTimeout, const char *message, bool immediateRender)
 {
@@ -128,6 +129,7 @@ void uiNotificationShow(uiNotificationType_t type, uiNotificationID_t id, uint32
 			break;
 
 		case NOTIFICATION_TYPE_MESSAGE:
+		case NOTIFICATION_TYPE_SMS:
 			if (message)
 			{
 				snprintf(&notificationData.message[0], sizeof(notificationData.message), "%s", message);
@@ -281,6 +283,10 @@ void uiNotificationRefresh(void)
 				displayMessage();
 				break;
 
+			case NOTIFICATION_TYPE_SMS:
+				displaySmsFullScreen();
+				break;
+
 			case NOTIFICATION_TYPE_BEARING:
 			{
 				char buffer[SCREEN_LINE_BUFFER_SIZE];
@@ -375,7 +381,20 @@ void uiNotificationRefresh(void)
 
 bool uiNotificationHasTimedOut(void)
 {
+	/* Банер вхідного SMS сам НЕ зникає: повідомлення могло прийти, коли рації не було в
+	 * руках, і зникнувши за 4 с воно лишалось непоміченим. Прибирає його лише оператор
+	 * червоною кнопкою (див. applicationMain.c). */
+	if (notificationData.visible && (notificationData.type == NOTIFICATION_TYPE_SMS))
+	{
+		return false;
+	}
 	return (notificationData.visible && ticksTimerHasExpired(&notificationData.hideTimer));
+}
+
+/* Чи показано саме банер SMS -- щоб головний цикл знав, що RED має його закрити. */
+bool uiNotificationIsSms(void)
+{
+	return (notificationData.visible && (notificationData.type == NOTIFICATION_TYPE_SMS));
 }
 
 bool uiNotificationIsVisible(void)
@@ -397,6 +416,66 @@ void uiNotificationHide(bool immediateRender)
 uiNotificationID_t uiNotificationGetId(void)
 {
 	return notificationData.id;
+}
+
+/* Форк: вхідне SMS на ВЕСЬ екран, з переносом по словах, тримається до RED.
+ * Чому не звичайний банер: той малює 3-4 рядки по 14 символів у рамці й гасне за 4 с --
+ * для повідомлення до 144 символів цього замало, а якщо рація лежала в розвантажці, воно
+ * зникало непоміченим. Тут використовуємо всю площу й чекаємо на оператора. */
+static void displaySmsFullScreen(void)
+{
+	const int16_t charW = 8;                      /* FONT_SIZE_2: ~8 px на символ */
+	const int16_t lineH = FONT_SIZE_2_HEIGHT;
+	int16_t perLine = (int16_t)((DISPLAY_SIZE_X - 6) / charW);
+	int16_t maxLines = (int16_t)((DISPLAY_SIZE_Y - 4 - lineH) / lineH);
+	char line[32];
+
+	if (perLine > (int16_t)(sizeof line - 1)) { perLine = (int16_t)(sizeof line - 1); }
+
+	/* Фон на весь екран + рамка -- банер має читатись і поверх будь-якого екрана. */
+	displayThemeApply(THEME_ITEM_FG_NOTIFICATION, THEME_ITEM_BG_NOTIFICATION);
+	/* isInverted=true -> заливка КОЛЬОРОМ ФОНУ (displayFillRect: isInverted ? bg : fg).
+	 * З false екран залився б кольором ТЕКСТУ, і напис став би невидимим. */
+	displayFillRect(0, 0, DISPLAY_SIZE_X, DISPLAY_SIZE_Y, true);
+	displayThemeApply(THEME_ITEM_FG_DECORATION, THEME_ITEM_BG_NOTIFICATION);
+	/* У displayDrawRect полярність ОБЕРНЕНА до displayFillRect (лінія малюється через
+	 * !isInverted), тож видима рамка -- це true. */
+	displayDrawRect(0, 0, DISPLAY_SIZE_X, DISPLAY_SIZE_Y, true);
+	displayThemeApply(THEME_ITEM_FG_NOTIFICATION, THEME_ITEM_BG_NOTIFICATION);
+
+	const char *p = notificationData.message;
+	int16_t y = 2;
+	int16_t used = 0;
+
+	while ((*p != 0) && (used < maxLines))
+	{
+		while (*p == ' ') { p++; }               /* не починати рядок із пробілу */
+		if (*p == 0) { break; }
+
+		int16_t n = 0;
+		int16_t lastSpace = -1;
+		while ((p[n] != 0) && (p[n] != '\n') && (n < perLine))
+		{
+			if (p[n] == ' ') { lastSpace = n; }
+			n++;
+		}
+		/* Перенос по словах: рвемо на останньому пробілі, якщо рядок обірвався посеред слова. */
+		if ((p[n] != 0) && (p[n] != '\n') && (lastSpace > 0)) { n = lastSpace; }
+
+		memcpy(line, p, (size_t)n);
+		line[n] = 0;
+		displayPrintCore(3, y, line, FONT_SIZE_2, TEXT_ALIGN_LEFT, false);
+		y += lineH;
+		used++;
+
+		p += n;
+		if (*p == '\n') { p++; }
+	}
+
+	/* Підказка внизу -- інакше оператор не знає, чим це закрити. */
+	displayThemeApply(THEME_ITEM_FG_DECORATION, THEME_ITEM_BG_NOTIFICATION);
+	displayPrintCentered((DISPLAY_SIZE_Y - lineH - 1), "RED", FONT_SIZE_1);
+	displayThemeApply(THEME_ITEM_FG_NOTIFICATION, THEME_ITEM_BG_NOTIFICATION);
 }
 
 static void displayMessage(void)

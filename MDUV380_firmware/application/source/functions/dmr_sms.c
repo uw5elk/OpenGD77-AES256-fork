@@ -1326,7 +1326,8 @@ void dmrSmsRxTick(void)
 	 * різнитися вже в ту секунду, коли банер вискочив, а не лише в списку. */
 	char note[DMR_SMS_TEXT_MAX + 12];
 	snprintf(note, sizeof note, forUs ? "SMS: %s" : "SMS>: %s", text);
-	uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 4000, note, true);
+	/* На весь екран і до RED: повідомлення могло прийти, коли рація лежала в розвантажці. */
+	uiNotificationShow(NOTIFICATION_TYPE_SMS, NOTIFICATION_ID_SMS, 60000, note, true);
 	soundSetMelody(MELODY_SMS_RECEIVED_BEEP);
 }
 

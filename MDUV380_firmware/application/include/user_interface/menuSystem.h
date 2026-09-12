@@ -103,6 +103,7 @@ typedef enum
 	NOTIFICATION_TYPE_VOLUME,
 #endif
 	NOTIFICATION_TYPE_MESSAGE,
+	NOTIFICATION_TYPE_SMS,      /* форк: вхідне SMS -- на весь екран і ДО натискання RED */
 	NOTIFICATION_TYPE_BEARING,
 	NOTIFICATION_TYPE_MAX
 } uiNotificationType_t;
@@ -116,6 +117,7 @@ typedef enum
 #endif
 	NOTIFICATION_ID_POWER,
 	NOTIFICATION_ID_MESSAGE,
+	NOTIFICATION_ID_SMS,        /* форк: окремий id, щоб банер SMS не змішувався з рештою */
 	NOTIFICATION_ID_BEARING,
 	NOTIFICATION_ID_TX_INHIBIT,
 	NOTIFICATION_ID_USER /* Could use _USER, _USER + 1, + 2, etc... */
@@ -277,6 +279,7 @@ void uiChannelModeHeartBeatActivityForGD77S(uiEvent_t *ev);
 
 
 void uiNotificationShow(uiNotificationType_t type, uiNotificationID_t id, uint32_t msTimeout, const char *message, bool immediateRender);
+bool uiNotificationIsSms(void);   /* форк: показано банер вхідного SMS (закривається RED) */
 void uiNotificationBearingShow(uiNotificationBearingInfo_t *bearing, uint32_t msTimeout, bool immediateRender);
 void uiNotificationRefresh(void);
 bool uiNotificationHasTimedOut(void);

@@ -1427,6 +1427,17 @@ void applicationMainTask(void)
 		ev.time = ticksGetMillis();
 
 
+		// Форк: банер вхідного SMS показано на весь екран і сам він не гасне -- закриває його
+		// оператор червоною кнопкою. Клавішу тут же "з'їдаємо", щоб те саме натискання не
+		// пішло далі в меню (інакше RED заразом вийшов би з поточного екрана).
+		if (uiNotificationIsSms() && KEYCHECK_SHORTUP(ev.keys, KEY_RED))
+		{
+			uiNotificationHide(true);
+			ev.keys.key = 0;
+			ev.keys.event = KEY_MOD_UP;
+			ev.hasEvent = false;
+		}
+
 		// Clear the Quickkey slot on SK2 + longdown 0..9 KEY
 		if (KEYCHECK_LONGDOWN_NUMBER(ev.keys) && BUTTONCHECK_DOWN(&ev, BUTTON_SK2))
 		{

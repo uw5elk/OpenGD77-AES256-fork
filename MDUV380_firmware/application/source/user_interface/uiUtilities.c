@@ -2450,13 +2450,18 @@ void uiUtilityRenderHeader(bool isVFODualWatchScanning, bool isVFOSweepScanning,
 		int unread = dmrSmsUnreadCount();
 		if (unread > 0)
 		{
-			int16_t ex = DISPLAY_SIZE_X - 24;
+			// Лічильник більше НЕ впирається в 9: раніше стояло (unread > 9) ? 9 : unread,
+			// тож 10 і 40 непрочитаних виглядали однаково. Тепер показуємо справжнє число
+			// (до 99), а конверт зсуваємо ліворуч рівно на ширину цифр, щоб не вилізти
+			// за край екрана.
+			char nb[4];
+			snprintf(nb, sizeof nb, "%d", (unread > 99) ? 99 : unread);
+			int16_t numW = (int16_t)(strlen(nb) * 6);
+			int16_t ex = (int16_t)(DISPLAY_SIZE_X - (13 + 2 + numW) - 2);
 			int16_t ey = DISPLAY_Y_POS_BAR + 6;
 			displayDrawRect(ex, ey, 13, 9, true);              // envelope body
 			displayDrawLine(ex, ey, ex + 6, ey + 4, true);     // flap (left)
 			displayDrawLine(ex + 12, ey, ex + 6, ey + 4, true);// flap (right)
-			char nb[4];
-			snprintf(nb, sizeof nb, "%d", (unread > 9) ? 9 : unread);
 			displayPrintCore(ex + 15, ey, nb, FONT_SIZE_1, TEXT_ALIGN_LEFT, false);
 		}
 	}
