@@ -142,6 +142,34 @@ int main(void)
 		CHECK(okq, "усі бургсти квитанції валідні й однакові");
 	}
 
+	/* Квитанції Enable/Disable -- байти з реального захвату (кільце форка 2026-09-12,
+	 * форк 2550313 керує стоковою 2550333; RCTL_COMPAT.md §6). */
+	{
+		const uint32_t FORK = 2550313, STOCKID = 2550333;
+		uint8_t b[12];
+		dmr_rctl_stock_cmd_t c; uint32_t rq, rp;
+
+		dmr_rctl_stock_ack_for(DMR_RCTL_STOCK_ENABLE, FORK, STOCKID, b);
+		CHECK(eqhex(b, "a4 10 00 fe 26 ea 29 26 ea 3d 49 2b"), "квитанція Enable байт-у-байт (захват)");
+		CHECK(dmr_rctl_stock_parse_ack_for(b, &c, &rq, &rp) && c == DMR_RCTL_STOCK_ENABLE &&
+		      rq == FORK && rp == STOCKID, "розбір квитанції Enable");
+
+		dmr_rctl_stock_ack_for(DMR_RCTL_STOCK_DISABLE, FORK, STOCKID, b);
+		CHECK(eqhex(b, "a4 10 00 ff 26 ea 29 26 ea 3d f1 4a"), "квитанція Disable байт-у-байт (захват)");
+		CHECK(dmr_rctl_stock_parse_ack_for(b, &c, &rq, &rp) && c == DMR_RCTL_STOCK_DISABLE &&
+		      rq == FORK && rp == STOCKID, "розбір квитанції Disable");
+
+		/* старий вузький parse_ack приймає лише Check, не Enable/Disable */
+		CHECK(dmr_rctl_stock_parse_ack(b, NULL, NULL) == 0, "вузький parse_ack — лише Check");
+
+		/* квитанція Enable/Disable НЕ приймається за команду */
+		CHECK(dmr_rctl_stock_parse(b, NULL, NULL, NULL) == 0, "квитанція Disable не — команда");
+
+		/* битий CRC відкидається й тут */
+		dmr_rctl_stock_ack_for(DMR_RCTL_STOCK_ENABLE, FORK, STOCKID, b); b[11] ^= 0x33;
+		CHECK(dmr_rctl_stock_parse_ack_for(b, &c, &rq, &rp) == 0, "битий CRC квитанції Enable відкинуто");
+	}
+
 	printf(fails ? "\nПРОВАЛЕНО: %d\n" : "\nУсі тести пройдено\n", fails);
 	return fails ? 1 : 0;
 }

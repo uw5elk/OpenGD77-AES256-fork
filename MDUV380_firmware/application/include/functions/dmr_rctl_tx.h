@@ -50,6 +50,8 @@ void dmrRctlStockRxDiagReset(void);
  * (тобто радіостанції, що відповіла) та віком відповіді в мс. Використовується екраном
  * "Remote control" (menuRCTLRemote.c, Фаза 1б, 2026-09-03). */
 int dmrRctlLastCheckAck(uint32_t *outFromId, uint32_t *outAgeMs);
+/* Яка команда останньої квитанції (dmr_rctl_stock_cmd_t): Check/Enable/Disable, або -1. */
+int dmrRctlLastAckCmd(void);
 
 /* Монотонний лічильник ПРИЙНЯТИХ CHECK_ACK з моменту завантаження (від будь-якого
  * видавця, зростає на 1 при кожному). Потрібен екрану "Remote control", щоб відрізнити
@@ -83,6 +85,7 @@ static inline void dmrRctlNoteOwnTxEnd(uint32_t txFinishMs) { (void)txFinishMs; 
 static inline void dmrRctlNoteRxDataInt(int a, int b, int c, int d) { (void)a; (void)b; (void)c; (void)d; }
 static inline void dmrRctlStockRxDiagReset(void) { }
 static inline int  dmrRctlLastCheckAck(uint32_t *outFromId, uint32_t *outAgeMs) { (void)outFromId; (void)outAgeMs; return 0; }
+static inline int  dmrRctlLastAckCmd(void) { return -1; }
 static inline uint32_t dmrRctlAckGeneration(void) { return 0; }
 static inline void dmrRctlRxBurst(int rxDataType, const uint8_t *payload12) { (void)rxDataType; (void)payload12; }
 static inline void dmrRctlRxReset(void) { }

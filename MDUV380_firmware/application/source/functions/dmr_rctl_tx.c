@@ -119,6 +119,7 @@ int dmrRctlStockSend(int cmd, uint32_t targetId)
 static uint32_t s_lastAckFromId;
 static uint32_t s_lastAckMillis;
 static uint8_t  s_haveAck;
+static uint8_t  s_lastAckCmd;   /* ака команда квитанції: Check/Enable/Disable */
 static uint32_t s_ackGen;   /* зростає на 1 при кожному прийнятому CHECK_ACK (dmrRctlTick()) */
 
 int dmrRctlLastCheckAck(uint32_t *outFromId, uint32_t *outAgeMs)
@@ -127,6 +128,11 @@ int dmrRctlLastCheckAck(uint32_t *outFromId, uint32_t *outAgeMs)
 	if (outFromId) { *outFromId = s_lastAckFromId; }
 	if (outAgeMs)  { *outAgeMs = (uint32_t)(ticksGetMillis() - s_lastAckMillis); }
 	return 1;
+}
+
+int dmrRctlLastAckCmd(void)
+{
+	return s_haveAck ? (int)s_lastAckCmd : -1;
 }
 
 uint32_t dmrRctlAckGeneration(void)
@@ -228,6 +234,7 @@ static volatile uint32_t s_stockDst;
  * поколінь -- у tick, як і для команд. */
 static volatile uint8_t  s_stockAckPending;
 static volatile uint32_t s_stockAckFrom;
+static volatile uint8_t  s_stockAckCmd;   /* яку команду підтверджує квитанція */
 
 /* Діагностика шляху квитанції (розрізнити три різні причини хреста на екрані):
  *  s_csbkSeen -- скільки CSBK-бургстів узагалі дійшло сюди (0 => не чуємо ефір
@@ -312,7 +319,8 @@ void dmrRctlStockRxBurst(const uint8_t *p12)
 	 * Формат знято з ефіру, див. RCTL_COMPAT.md §5a. */
 	{
 		uint32_t requester = 0, responder = 0;
-		if (dmr_rctl_stock_parse_ack(p12, &requester, &responder))
+		dmr_rctl_stock_cmd_t ackCmd;
+		if (dmr_rctl_stock_parse_ack_for(p12, &ackCmd, &requester, &responder))
 		{
 			s_ackSeen++;
 			/* Реагуємо лише на відповідь САМЕ на наш запит -- чужі квитанції в ефірі
@@ -321,6 +329,7 @@ void dmrRctlStockRxBurst(const uint8_t *p12)
 			{
 				s_ackForUs++;
 				s_stockAckFrom = responder;
+				s_stockAckCmd = (uint8_t)ackCmd;
 				s_stockAckPending = 1;
 			}
 			return;
@@ -387,6 +396,7 @@ static void dmrRctlStockProcessPending(void)
 	{
 		s_stockAckPending = 0;
 		s_lastAckFromId = s_stockAckFrom;
+		s_lastAckCmd = s_stockAckCmd;
 		s_lastAckMillis = ticksGetMillis();
 		s_haveAck = 1;
 		s_ackGen++;
@@ -522,6 +532,7 @@ void dmrRctlTick(void)
 		case DMR_RCTL_CMD_CHECK_ACK:
 		{
 			s_lastAckFromId = msg.issuerId;
+			s_lastAckCmd = (uint8_t)DMR_RCTL_STOCK_CHECK;
 			s_lastAckMillis = ticksGetMillis();
 			s_haveAck = 1;
 			s_ackGen++;

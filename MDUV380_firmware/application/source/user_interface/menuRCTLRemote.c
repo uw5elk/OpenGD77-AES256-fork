@@ -157,16 +157,21 @@ menuStatus_t menuRCTLRemote(uiEvent_t *ev, bool isFirstRun)
 		if (dmrRctlAckGeneration() != s_rc.ackGenAtSend)
 		{
 			uint32_t from = 0, ageMs = 0;
-			if (dmrRctlLastCheckAck(&from, &ageMs))
+			// Квитанція має бути САМЕ на нашу команду: Enable-запит не має
+			// закриватись випадковою Check-квитанцією з іншого обміну. Інакше чекаємо
+			// далі (покоління вже зросло, тож оновлюємо його, щоб не крутитись).
+			int ackCmd = dmrRctlLastAckCmd();
+			if ((ackCmd == (int)s_rc.cmd) && dmrRctlLastCheckAck(&from, &ageMs))
 			{
 				s_rc.gotAck = 1;
 				s_rc.ackFrom = from;
 				s_rc.ackAgeSecs = ageMs / 1000U;
+				ticksTimerStart(&s_rc.holdTimer, RCTL_RESULT_HOLD_MS);
+				s_rc.view = RCTL_RESULT;
+				updateResult();
+				return exitCode;
 			}
-			ticksTimerStart(&s_rc.holdTimer, RCTL_RESULT_HOLD_MS);
-			s_rc.view = RCTL_RESULT;
-			updateResult();
-			return exitCode;
+			s_rc.ackGenAtSend = dmrRctlAckGeneration();   // чужа квитанція -- чекаємо свою далі
 		}
 		if (ev->hasEvent && (ev->events & KEY_EVENT))
 		{
@@ -290,10 +295,14 @@ static void doSend(void)
 	s_rc.waitedAck = 0;
 	s_rc.gotAck = 0;
 
-	// Radio Check -- єдина команда, на яку ціль відповідає квитанцією (формат знято з
-	// ефіру, RCTL_COMPAT.md §5a). Запам'ятовуємо ПОКОЛІННЯ ACK до очікування, щоб стара
-	// відповідь не зійшла за нову, і чекаємо на екрані "Перевірка...".
-	if ((s_rc.sendResult == 0) && (s_rc.cmd == DMR_RCTL_STOCK_CHECK))
+	// Квитанцію шле ціль на Radio Check, Enable й Disable (формат знято з ефіру,
+	// RCTL_COMPAT.md §5a/§6: та сама команда зі старшим бітом керуючого байта). Monitor
+	// квитанції не має. Запам'ятовуємо ПОКОЛІННЯ ACK до очікування, щоб стара
+	// відповідь не зійшла за нову.
+	if ((s_rc.sendResult == 0) &&
+	    ((s_rc.cmd == DMR_RCTL_STOCK_CHECK) ||
+	     (s_rc.cmd == DMR_RCTL_STOCK_ENABLE) ||
+	     (s_rc.cmd == DMR_RCTL_STOCK_DISABLE)))
 	{
 		s_rc.waitedAck = 1;
 		s_rc.ackGenAtSend = dmrRctlAckGeneration();

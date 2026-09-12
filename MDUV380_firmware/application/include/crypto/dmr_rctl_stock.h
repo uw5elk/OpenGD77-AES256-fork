@@ -72,16 +72,30 @@ int dmr_rctl_stock_parse(const uint8_t in12[12], dmr_rctl_stock_cmd_t *cmd, uint
 #define DMR_RCTL_STOCK_ACK_ARG      0x80
 #define DMR_RCTL_STOCK_ACK_REPEATS  3
 
+/* Правило узагальнено на ВСІ команди й підтверджено байтами з ефіру (2026-09-12,
+ * кільце захвату самого форка, RCTL_COMPAT.md §6): квитанція = та сама команда зі
+ * вставленим старшим бітом керуючого байта:
+ *     Check   0x00 -> 0x80     a4 10 00 80 <хто питав:3> <хто відповів:3> <crc:2>
+ *     Enable  0x7E -> 0xFE     a4 10 00 fe ...
+ *     Disable 0x7F -> 0xFF     a4 10 00 ff ...
+ * Байт b0 й адреси лишаються такими самими, як у команді. */
+#define DMR_RCTL_STOCK_ACK_BIT      0x80
+
 /* Зібрати один 12-байтний CSBK квитанції. */
+void dmr_rctl_stock_ack_for(dmr_rctl_stock_cmd_t cmd, uint32_t requester, uint32_t responder, uint8_t out12[12]);
+/* Сумісність: квитанція саме на Radio Check. */
 void dmr_rctl_stock_ack(uint32_t requester, uint32_t responder, uint8_t out12[12]);
 
 /* Черга бургстів квитанції у форматі dmrDataTxLoad() (повтори підряд, без преамбул —
  * так шле стокова). q має вмістити >= DMR_RCTL_STOCK_ACK_REPEATS*13 байт.
  * Повертає кількість бургстів. */
+int dmr_rctl_stock_build_ack_tx_for(dmr_rctl_stock_cmd_t cmd, uint32_t requester, uint32_t responder, uint8_t *q);
 int dmr_rctl_stock_build_ack_tx(uint32_t requester, uint32_t responder, uint8_t *q);
 
 /* Розібрати вхідний CSBK як квитанцію (потрібно командирському боку, щоб показати
  * «онлайн»). Повертає 1 і заповнює requester/responder, якщо CRC вірний. */
+int dmr_rctl_stock_parse_ack_for(const uint8_t in12[12], dmr_rctl_stock_cmd_t *cmd,
+                                 uint32_t *requester, uint32_t *responder);
 int dmr_rctl_stock_parse_ack(const uint8_t in12[12], uint32_t *requester, uint32_t *responder);
 
 /* Чи має ЦЯ рація виконати команду cmd, адресовану на dst, якщо наш DMR ID = ourId, а

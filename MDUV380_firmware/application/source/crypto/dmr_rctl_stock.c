@@ -78,38 +78,67 @@ int dmr_rctl_stock_build_tx(dmr_rctl_stock_cmd_t cmd, uint32_t src, uint32_t dst
  * Той самий опкод/FID, що в команді Check; відрізняє її лише керуючий байт 0x80
  * (старший біт = «це відповідь»). Адреси віддзеркалюються з команди БЕЗ перестановки:
  * поле в позиції src несе того, хто питав, поле в позиції dst -- того, хто відповідає. */
-void dmr_rctl_stock_ack(uint32_t requester, uint32_t responder, uint8_t out12[12])
+void dmr_rctl_stock_ack_for(dmr_rctl_stock_cmd_t cmd, uint32_t requester, uint32_t responder, uint8_t out12[12])
 {
-	out12[0] = CMD_B0[DMR_RCTL_STOCK_CHECK];   /* 0xA4 -- як у команді Check */
+	if ((int)cmd < 0 || (int)cmd >= DMR_RCTL_STOCK_NUM_CMDS) { memset(out12, 0, 12); return; }
+	out12[0] = CMD_B0[cmd];                    /* той самий опкод, що в команді */
 	out12[1] = STOCK_FID;
 	out12[2] = 0x00;
-	out12[3] = DMR_RCTL_STOCK_ACK_ARG;         /* 0x80 */
+	out12[3] = (uint8_t)(CMD_ARG[cmd] | DMR_RCTL_STOCK_ACK_BIT);
 	out12[4] = (uint8_t)(requester >> 16); out12[5] = (uint8_t)(requester >> 8); out12[6] = (uint8_t)requester;
 	out12[7] = (uint8_t)(responder >> 16); out12[8] = (uint8_t)(responder >> 8); out12[9] = (uint8_t)responder;
 	csbk_crc(out12);
 }
 
-int dmr_rctl_stock_build_ack_tx(uint32_t requester, uint32_t responder, uint8_t *q)
+void dmr_rctl_stock_ack(uint32_t requester, uint32_t responder, uint8_t out12[12])
 {
+	dmr_rctl_stock_ack_for(DMR_RCTL_STOCK_CHECK, requester, responder, out12);
+}
+
+int dmr_rctl_stock_build_ack_tx_for(dmr_rctl_stock_cmd_t cmd, uint32_t requester, uint32_t responder, uint8_t *q)
+{
+	if ((int)cmd < 0 || (int)cmd >= DMR_RCTL_STOCK_NUM_CMDS) { return 0; }
 	for (int i = 0; i < DMR_RCTL_STOCK_ACK_REPEATS; i++)
 	{
 		q[i * 13] = DMR_RCTL_STOCK_BURST_CSBK;
-		dmr_rctl_stock_ack(requester, responder, q + i * 13 + 1);
+		dmr_rctl_stock_ack_for(cmd, requester, responder, q + i * 13 + 1);
 	}
 	return DMR_RCTL_STOCK_ACK_REPEATS;
 }
 
-int dmr_rctl_stock_parse_ack(const uint8_t in12[12], uint32_t *requester, uint32_t *responder)
+int dmr_rctl_stock_build_ack_tx(uint32_t requester, uint32_t responder, uint8_t *q)
 {
-	if (in12[0] != CMD_B0[DMR_RCTL_STOCK_CHECK] || in12[1] != STOCK_FID) { return 0; }
-	if (in12[2] != 0x00 || in12[3] != DMR_RCTL_STOCK_ACK_ARG) { return 0; }
+	return dmr_rctl_stock_build_ack_tx_for(DMR_RCTL_STOCK_CHECK, requester, responder, q);
+}
+
+int dmr_rctl_stock_parse_ack_for(const uint8_t in12[12], dmr_rctl_stock_cmd_t *cmd,
+                                 uint32_t *requester, uint32_t *responder)
+{
+	if (in12[1] != STOCK_FID || in12[2] != 0x00) { return 0; }
+	if ((in12[3] & DMR_RCTL_STOCK_ACK_BIT) == 0) { return 0; }   /* без старшого біта — це команда */
 
 	uint16_t want = (uint16_t)((in12[10] << 8) | in12[11]);
 	if ((uint16_t)(crc16d(in12, 10) ^ 0xA5A5) != want) { return 0; }
 
-	if (requester) { *requester = ((uint32_t)in12[4] << 16) | ((uint32_t)in12[5] << 8) | in12[6]; }
-	if (responder) { *responder = ((uint32_t)in12[7] << 16) | ((uint32_t)in12[8] << 8) | in12[9]; }
-	return 1;
+	uint8_t arg = (uint8_t)(in12[3] & (uint8_t)~DMR_RCTL_STOCK_ACK_BIT);
+	for (int c = 0; c < DMR_RCTL_STOCK_NUM_CMDS; c++)
+	{
+		if (in12[0] == CMD_B0[c] && arg == CMD_ARG[c])
+		{
+			if (cmd) { *cmd = (dmr_rctl_stock_cmd_t)c; }
+			if (requester) { *requester = ((uint32_t)in12[4] << 16) | ((uint32_t)in12[5] << 8) | in12[6]; }
+			if (responder) { *responder = ((uint32_t)in12[7] << 16) | ((uint32_t)in12[8] << 8) | in12[9]; }
+			return 1;
+		}
+	}
+	return 0;
+}
+
+int dmr_rctl_stock_parse_ack(const uint8_t in12[12], uint32_t *requester, uint32_t *responder)
+{
+	dmr_rctl_stock_cmd_t c;
+	if (!dmr_rctl_stock_parse_ack_for(in12, &c, requester, responder)) { return 0; }
+	return (c == DMR_RCTL_STOCK_CHECK) ? 1 : 0;
 }
 
 int dmr_rctl_stock_parse(const uint8_t in12[12], dmr_rctl_stock_cmd_t *cmd, uint32_t *src, uint32_t *dst)
