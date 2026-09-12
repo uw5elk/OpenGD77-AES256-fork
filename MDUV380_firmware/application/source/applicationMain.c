@@ -1168,6 +1168,11 @@ void applicationMainTask(void)
 
 			if ((buttons & BUTTON_PTT) != 0)
 			{
+				// Форк: якщо саме йде прихована передача мікрофона (RCTL Monitor як ціль),
+				// PTT власного оператора має її НЕГАЙНО обірвати — його передача головніша,
+				// і це аварійний вихід, якщо монітор увімкнули помилково.
+				dmrRctlMonitorCancel();
+
 				int currentMenu = menuSystemGetCurrentMenuNumber();
 
 				if ((trxGetMode() != RADIO_MODE_NONE) &&

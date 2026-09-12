@@ -65,6 +65,11 @@ uint8_t dmrRctlConfigAllowRaw(void);
 /* Записати нову маску дозволів у блок "RCTL". Повертає 1 при успіху. */
 int dmrRctlConfigSetAllow(uint8_t mask);
 
+/* Тривалість відповіді форка-цілі на Monitor (сек). Ніколи 0: якщо не виставлено --
+ * повертає типове (30 с). Запис -- dmrRctlConfigSetMonitorSecs (меню / ПК). */
+uint8_t dmrRctlMonitorSecs(void);
+int dmrRctlConfigSetMonitorSecs(uint8_t secs);
+
 /* Записати поточні лічильники anti-replay у флеш (блок "RCTS", окремий від "RCTL").
  * Викликати ПІСЛЯ того, як dmr_rctl_gate_check() прийняв команду, і ДО того, як
  * команду виконано -- інакше знеструмлення між дією і записом лишає вікно на один

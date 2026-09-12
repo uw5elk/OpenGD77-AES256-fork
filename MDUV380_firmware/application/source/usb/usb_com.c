@@ -1892,15 +1892,15 @@ static void cpsHandleCommand(void)
 			break;
 		case 0x9B: // DIAG: лічильники прийому СТОКОВИХ команд (форк як ціль).
 			   //  [2] біт0=1 -> скинути лічильники; біт1=1 -> зняти блокування кабелем (recovery).
-			   //  Reply: [cmd, len_hi, len_lo, 17x uint32 LE: seen,lastSrc,Check,Monitor,Enable,Disable,
-			   //         inhibited,csbkSeen,ackSeen,ackForUs,winAny,winData,winFirstMs,winFirstInfo,txEndMs,intTotal,winFirstAnyMs]
+			   //  Reply: [cmd, len_hi, len_lo, 19x uint32 LE: seen,lastSrc,Check,Monitor,Enable,Disable,
+			   //         inhibited,csbkSeen,ackSeen,ackForUs,winAny,winData,winFirstMs,winFirstInfo,txEndMs,intTotal,winFirstAnyMs,monStarted,monSkipped]
 			{
 				if (com_requestbuffer[2] & 0x01) { dmrRctlStockRxDiagReset(); }
 				if (com_requestbuffer[2] & 0x02) { dmrRctlSetInhibited(0); } // кабельне розблокування
-				uint32_t d[17];
+				uint32_t d[19];
 				dmrRctlStockRxDiag(d);
 				int n = 0;
-				for (int i = 0; i < 17; i++)
+				for (int i = 0; i < 19; i++)
 				{
 					usbComSendBuf[3 + n++] = (uint8_t)(d[i]);
 					usbComSendBuf[3 + n++] = (uint8_t)(d[i] >> 8);

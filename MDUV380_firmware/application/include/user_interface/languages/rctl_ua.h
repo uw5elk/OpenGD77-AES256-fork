@@ -29,6 +29,8 @@
 #define RCFG_ITEM_MONITOR        "Моніторинг"
 #define RCFG_ITEM_STUN           "Вимкнення"
 #define RCFG_ITEM_REVIVE         "Ввімкнення"
+/* Пункт тривалості моніторингу (сек). Значення коротке ("30с"), тож підпис вміщається. */
+#define RCFG_ITEM_MONSECS        "Час моніт."
 
 /* ---- menuRCTLRemote.c: "Від. керування" (запит Radio Check іншій рації) ---- */
 #define RCTL_TITLE               "Від. керування"

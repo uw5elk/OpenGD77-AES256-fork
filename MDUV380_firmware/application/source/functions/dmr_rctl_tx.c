@@ -13,6 +13,7 @@
 #include "functions/dmr_data.h"
 #include "functions/dmr_rctl_cfg.h"
 #include "functions/trx.h"
+#include "hardware/HR-C6000.h"   // PC_CALL_FLAG, HRC6000* (коварт-монітор)
 #include "functions/ticks.h"
 #include "functions/codeplug.h"
 #include "functions/settings.h"
@@ -236,6 +237,16 @@ static volatile uint8_t  s_stockAckPending;
 static volatile uint32_t s_stockAckFrom;
 static volatile uint8_t  s_stockAckCmd;   /* яку команду підтверджує квитанція */
 
+/* Коварт-монітор (форк як ціль) -- стан; логіка нижче, біля dmrRctlTick(). */
+static volatile uint8_t  s_monPending;
+static volatile uint32_t s_monPendingReq;
+static uint8_t   s_monActive;
+static uint32_t  s_monSavedTgOrPc;
+static ticksTimer_t s_monTimer = { 0, 0 };
+static uint32_t  s_monStarted;   /* діагностика: скільки разів ключували мік */
+static uint32_t  s_monSkipped;   /* скільки разів не ключували (зайнято/не цифровий режим) */
+
+
 /* Діагностика шляху квитанції (розрізнити три різні причини хреста на екрані):
  *  s_csbkSeen -- скільки CSBK-бургстів узагалі дійшло сюди (0 => не чуємо ефір
  *                в потрібний момент -- питання повороту TX->RX або каналу);
@@ -268,6 +279,8 @@ void dmrRctlNoteOwnTxEnd(uint32_t txFinishMs)
 	s_winFirstMs = 0;
 	s_winFirstInfo = 0;
 	s_winFirstAnyMs = 0;
+	s_monStarted = 0;
+	s_monSkipped = 0;
 	s_winArmed = 1;
 }
 
@@ -346,7 +359,7 @@ void dmrRctlStockRxBurst(const uint8_t *p12)
 	s_stockPending = 1;
 }
 
-void dmrRctlStockRxDiag(uint32_t out[17])
+void dmrRctlStockRxDiag(uint32_t out[19])
 {
 	out[0] = s_stockSeen;
 	out[1] = s_stockLastSrc;
@@ -365,6 +378,8 @@ void dmrRctlStockRxDiag(uint32_t out[17])
 	out[14] = s_winTxEndMs;
 	out[15] = s_intTotal;
 	out[16] = s_winFirstAnyMs;
+	out[17] = s_monStarted;
+	out[18] = s_monSkipped;
 }
 
 void dmrRctlStockRxDiagReset(void)
@@ -445,9 +460,89 @@ static void dmrRctlStockProcessPending(void)
 			case DMR_RCTL_STOCK_ENABLE:
 				dmrRctlSetInhibited(0);   /* розблокувати */
 				break;
-			default:
-				break;                    /* Monitor(мік) -- наступний інкремент */
+			case DMR_RCTL_STOCK_MONITOR:
+				/* Коварт-монітор: відкрити мік і вийти приватним голосовим викликом на requester.
+				 * Саме ключування — у monitorTick() (ця гілка може бути вже в tick, але тримаємо
+				 * єдине місце ключування). Працює й коли рація заблокована (stun): це саме
+				 * сценарій «втрачена/захоплена рація». */
+				s_monPendingReq = requester;
+				s_monPending = 1;
+				break;
 		}
+	}
+}
+
+/* ===================== КОВАРТ-МОНІТОР (форк як ціль) =========================
+ *
+ * За дозволеним Monitor форк відкриває мікрофон і шле приватний голосовий виклик
+ * тому, хто запитав -- точно як стокова (захвач 2026-09-05: Voice-LC приватний
+ * виклик dst=запитувач). КОВАРТНО: без червоного світлодіода, без TX-екрана,
+ * без біпів -- ми НЕ йдемо через UI_TX_SCREEN і НЕ світимо LED. Голосовий TX сам
+ * кодує мікрофон через AMBE, коли trxTransmissionEnabled=1 (HRC6000 tick), тож ключування
+ * таке саме, як PTT, але без візуальних ознак. Шифрується ключем каналу, як звичайний голос.
+ *
+ * Безпека: керується гейтом дозволів (ALLOW_MONITOR) -- відповідаємо лише авторизованому
+ * командиру. Аварійне зняття: будь-яке PTT від власного оператора обриває монітор
+ * (dmrRctlMonitorCancel з applicationMain). Авто-зняття через dmrRctlMonitorSecs(). */
+int dmrRctlMonitorActive(void)
+{
+	return s_monActive ? 1 : 0;
+}
+
+static void monitorStop(void)
+{
+	if (!s_monActive) { return; }
+	s_monActive = 0;
+
+	trxDisableTransmission();          // LED_RED off (був вимкнений) + trxActivateRx() -> назад у прийом
+	trxTransmissionEnabled = false;
+	trxTalkGroupOrPcId = s_monSavedTgOrPc;   // відновити контакт/TG оператора
+
+	if (trxGetMode() == RADIO_MODE_DIGITAL)
+	{
+		HRC6000ResetTimeSlotDetection();
+		HRC6000ClearActiveDMRID();
+	}
+}
+
+void dmrRctlMonitorCancel(void)
+{
+	monitorStop();
+}
+
+static void monitorStart(uint32_t requester)
+{
+	/* Не перебиваємо чужу передачу (голос/дані/вже монітор) і працюємо лише в цифровому. */
+	if (s_monActive || trxTransmissionEnabled || dmrDataTxActive() || (trxGetMode() != RADIO_MODE_DIGITAL))
+	{
+		s_monSkipped++;
+		return;
+	}
+
+	s_monSavedTgOrPc = trxTalkGroupOrPcId;
+	/* Приватний виклик тому, хто запитав (FLCO 0x03) -- як у стокової. */
+	trxTalkGroupOrPcId = ((uint32_t)PC_CALL_FLAG << 24) | (requester & 0x00FFFFFFu);
+
+	HRC6000ClearIsWakingState();
+	trxSetTX();                        // trxTransmissionEnabled=1; HRC6000 tick почне кодувати мік
+	s_monActive = 1;
+	s_monStarted++;
+
+	uint32_t secs = dmrRctlMonitorSecs();
+	ticksTimerStart(&s_monTimer, secs * 1000u);
+}
+
+/* Обробка з tick (головний цикл): арм/авто-зняття. */
+static void monitorTick(void)
+{
+	if (s_monPending)
+	{
+		s_monPending = 0;
+		monitorStart(s_monPendingReq);
+	}
+	if (s_monActive && ticksTimerHasExpired(&s_monTimer))
+	{
+		monitorStop();
 	}
 }
 
@@ -456,6 +551,7 @@ static void dmrRctlStockProcessPending(void)
 void dmrRctlTick(void)
 {
 	dmrRctlStockProcessPending();   /* стокові команди -- незалежно від власного PDU нижче */
+	monitorTick();                  /* коварт-монітор: ключування й авто-зняття */
 
 	if (!s_rxReady) { return; }
 

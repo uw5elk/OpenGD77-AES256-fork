@@ -46,6 +46,7 @@
 #define RCFG_ITEM_MONITOR   "Monitor"
 #define RCFG_ITEM_STUN      "Disable"
 #define RCFG_ITEM_REVIVE    "Enable"
+#define RCFG_ITEM_MONSECS   "Mon. time"
 #endif
 
 #if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
@@ -53,16 +54,33 @@
 // «Доступ» (головний перемикач) прибрано 2026-09-05 на прохання користувача: він плутав
 // (5-й перемикач, що перекриває решту 4). Тепер RCTL «увімкнено» = дозволена хоч одна
 // команда; enabled у флеші виводиться з маски при збереженні (див. нижче).
-enum { RCFG_CHECK = 0, RCFG_MONITOR, RCFG_STUN, RCFG_REVIVE, RCFG_NUM_ITEMS };
+enum { RCFG_CHECK = 0, RCFG_MONITOR, RCFG_STUN, RCFG_REVIVE, RCFG_MONSECS, RCFG_NUM_ITEMS };
 
 // Персистентно між тіками, в CCM -- той самий idiom, що й menuAESKeys.c/menuMessages.c
 // (CCM НЕ обнуляється при старті, тож усе ініціалізується на isFirstRun перед читанням;
 // AMBE-кодек чутливий до зсуву .bss в основній RAM, тому нового статику там не додаємо).
 static struct
 {
-	uint8_t allow;     // робоча копія маски дозволів
-	bool    dirty;     // відрізняється від того, що зараз на флеші
+	uint8_t allow;      // робоча копія маски дозволів
+	uint8_t monSecs;    // робоча копія тривалості моніторингу (сек)
+	bool    dirty;      // відрізняється від того, що зараз на флеші
 } s_rcfg DMR_AES_CCM;
+
+/* Кроки тривалості моніторингу (сек): L/R циклічно перемикає. */
+static const uint8_t MONSECS_STEPS[] = { 10, 20, 30, 60, 120 };
+#define MONSECS_STEPS_N ((int)(sizeof MONSECS_STEPS / sizeof MONSECS_STEPS[0]))
+
+static uint8_t monSecsNext(uint8_t cur, int dir)
+{
+	int idx = 0, best = 0x7fff;
+	for (int i = 0; i < MONSECS_STEPS_N; i++)   // знайти найближчий крок до поточного
+	{
+		int d = (int)MONSECS_STEPS[i] - (int)cur; if (d < 0) { d = -d; }
+		if (d < best) { best = d; idx = i; }
+	}
+	idx = (idx + dir + MONSECS_STEPS_N) % MONSECS_STEPS_N;
+	return MONSECS_STEPS[idx];
+}
 
 static void updateScreen(void);
 
@@ -86,6 +104,7 @@ menuStatus_t menuRCTLConfig(uiEvent_t *ev, bool isFirstRun)
 		// dmrRctlAllowMask() повертає 0 при вимкненому доступі, тож для РЕДАГУВАННЯ маску
 		// читаємо незалежно (raw): інакше галочки не показувались би правильно.
 		s_rcfg.allow = dmrRctlConfigAllowRaw();
+		s_rcfg.monSecs = dmrRctlMonitorSecs();
 		s_rcfg.dirty = false;
 		menuDataGlobal.currentItemIndex = 0;
 		menuDataGlobal.numItems = RCFG_NUM_ITEMS;
@@ -111,7 +130,15 @@ menuStatus_t menuRCTLConfig(uiEvent_t *ev, bool isFirstRun)
 		}
 		if (KEYCHECK_PRESS(ev->keys, KEY_LEFT) || KEYCHECK_PRESS(ev->keys, KEY_RIGHT))
 		{
-			s_rcfg.allow ^= itemBit(menuDataGlobal.currentItemIndex);
+			if (menuDataGlobal.currentItemIndex == RCFG_MONSECS)
+			{
+				s_rcfg.monSecs = monSecsNext(s_rcfg.monSecs,
+						KEYCHECK_PRESS(ev->keys, KEY_RIGHT) ? +1 : -1);
+			}
+			else
+			{
+				s_rcfg.allow ^= itemBit(menuDataGlobal.currentItemIndex);
+			}
 			s_rcfg.dirty = true;
 			updateScreen();
 			return exitCode;
@@ -124,6 +151,7 @@ menuStatus_t menuRCTLConfig(uiEvent_t *ev, bool isFirstRun)
 				// та сама, спільна для всього регіону операція, що й перед записом
 				// AES-ключів/тем. Безпечно викликати й повторно.
 				dmrAesEnsureCustomDataRegion();
+				dmrRctlConfigSetMonitorSecs(s_rcfg.monSecs);
 				dmrRctlConfigSetAllow(s_rcfg.allow);
 				// enabled більше не окремий пункт: RCTL активний, якщо дозволена хоч одна
 				// команда. Пишемо останнім -> обидва поля у флеші узгоджені.
@@ -145,7 +173,7 @@ menuStatus_t menuRCTLConfig(uiEvent_t *ev, bool isFirstRun)
 static void updateScreen(void)
 {
 	static const char *names[RCFG_NUM_ITEMS] = {
-		RCFG_ITEM_CHECK, RCFG_ITEM_MONITOR, RCFG_ITEM_STUN, RCFG_ITEM_REVIVE
+		RCFG_ITEM_CHECK, RCFG_ITEM_MONITOR, RCFG_ITEM_STUN, RCFG_ITEM_REVIVE, RCFG_ITEM_MONSECS
 	};
 	char buf[SCREEN_LINE_BUFFER_SIZE];
 
@@ -159,10 +187,17 @@ static void updateScreen(void)
 		if (mNum == MENU_OFFSET_BEFORE_FIRST_ENTRY) { continue; }
 		if (mNum == MENU_OFFSET_AFTER_LAST_ENTRY)   { break; }
 
-		uint8_t bit = itemBit(mNum);
-		bool on = ((s_rcfg.allow & bit) != 0);
-
-		snprintf(buf, sizeof buf, "%s:%s", names[mNum], (on ? currentLanguage->on : currentLanguage->off));
+		if (mNum == RCFG_MONSECS)
+		{
+			// Пункт тривалості: значення в секундах, а не On/Off.
+			snprintf(buf, sizeof buf, "%s:%us", names[mNum], (unsigned)s_rcfg.monSecs);
+		}
+		else
+		{
+			uint8_t bit = itemBit(mNum);
+			bool on = ((s_rcfg.allow & bit) != 0);
+			snprintf(buf, sizeof buf, "%s:%s", names[mNum], (on ? currentLanguage->on : currentLanguage->off));
+		}
 		menuDisplayEntry(i, mNum, buf, (int32_t)(strlen(names[mNum]) + 1),
 				THEME_ITEM_FG_MENU_ITEM, THEME_ITEM_FG_OPTIONS_VALUE, THEME_ITEM_BG);
 	}

@@ -16,7 +16,7 @@ typedef struct
 	uint8_t  version;       /* 3 -- 2026-09-05: додано allow (див. нижче). 2 -- без allow */
 	uint8_t  enabled;       /* головний перемикач: 0 = не приймати команди НІ ВІД КОГО */
 	uint8_t  allow;         /* бітова маска DMR_RCTL_ALLOW_*: які саме команди дозволені */
-	uint8_t  reserved;      /* про запас, має бути 0 */
+	uint8_t  monitorSecs;   /* версія 4: тривалість відповіді на Monitor (сек); 0 = типова */
 } dmrRctlOnFlashCfg_t;
 
 /* Розмір блока НЕ змінився (8 байт): allow зайняв один із двох reserved-байтів. Тому старий
@@ -25,7 +25,11 @@ typedef struct
  * Міграція з версії 2: там існувала лише радіоперевірка, тож allow = ALLOW_CHECK. Не
  * ALLOW_ALL: інакше оновлення прошивки мовчки роздало б рації дозволи на команди, яких
  * власник ніколи не вмикав. */
-#define RCTL_CFG_VERSION  3
+#define RCTL_CFG_VERSION  4
+
+/* Типова тривалість відповіді на Monitor, якщо ще не виставлена (сек). */
+#define RCTL_MONITOR_SECS_DEFAULT  30u
+#define RCTL_MONITOR_SECS_MAX      120u
 
 /* На відміну від MSGC-структури в dmr_sms.c цей блок навмисно НЕ кладемо в CCM RAM
  * (DMR_AES_CCM з dmr_aes.h) — він у рази менший за MSGC (з його 10 текстовими
@@ -127,9 +131,16 @@ static void cfg_load(void)
 			/* Блок версії 2: поля allow там не було, а вміла прошивка лише радіоперевірку.
 			 * Даємо рівно її -- не ALLOW_ALL, щоб оновлення не роздало дозволів мовчки. */
 			s_cfg.allow = DMR_RCTL_ALLOW_CHECK;
-			s_cfg.reserved = 0;
+			s_cfg.monitorSecs = 0;
 			s_cfg.version = RCTL_CFG_VERSION;
 		}
+		if (s_cfg.version < 4)
+		{
+			/* Блок версії 3: reserved-байт був 0 -> типова тривалість. */
+			s_cfg.monitorSecs = 0;
+			s_cfg.version = RCTL_CFG_VERSION;
+		}
+		if (s_cfg.monitorSecs > RCTL_MONITOR_SECS_MAX) { s_cfg.monitorSecs = RCTL_MONITOR_SECS_MAX; }
 		s_cfg.allow &= (uint8_t)DMR_RCTL_ALLOW_ALL;   /* чужі біти ігноруємо */
 		return;
 	}
@@ -284,6 +295,34 @@ int dmrRctlConfigSetAllow(uint8_t mask)
 	}
 	s_cfg.version = RCTL_CFG_VERSION;
 	s_cfg.allow = (uint8_t)(mask & DMR_RCTL_ALLOW_ALL);
+
+	int ok = codeplugSetOpenGD77CustomData(CODEPLUG_CUSTOM_DATA_TYPE_RCTL_CONFIG, (uint8_t *)&s_cfg, (int)sizeof s_cfg) ? 1 : 0;
+	dmrRctlConfigReload();
+	return ok;
+}
+
+uint8_t dmrRctlMonitorSecs(void)
+{
+	cfg_ensure();
+	uint8_t v = s_cfg.monitorSecs;
+	if (v == 0) { return (uint8_t)RCTL_MONITOR_SECS_DEFAULT; }
+	if (v > RCTL_MONITOR_SECS_MAX) { return (uint8_t)RCTL_MONITOR_SECS_MAX; }
+	return v;
+}
+
+int dmrRctlConfigSetMonitorSecs(uint8_t secs)
+{
+	cfg_ensure();
+	if (secs > RCTL_MONITOR_SECS_MAX) { secs = (uint8_t)RCTL_MONITOR_SECS_MAX; }
+
+	if (memcmp(s_cfg.magic, "RCTL", 4) != 0)
+	{
+		memset(&s_cfg, 0, sizeof s_cfg);
+		memcpy(s_cfg.magic, "RCTL", 4);
+		s_cfg.allow = 0;
+	}
+	s_cfg.version = RCTL_CFG_VERSION;
+	s_cfg.monitorSecs = secs;
 
 	int ok = codeplugSetOpenGD77CustomData(CODEPLUG_CUSTOM_DATA_TYPE_RCTL_CONFIG, (uint8_t *)&s_cfg, (int)sizeof s_cfg) ? 1 : 0;
 	dmrRctlConfigReload();

@@ -117,8 +117,8 @@ int main(void)
     /* Формат ВЕРСІЇ 3 (2026-09-05): другий reserved-байт став маскою дозволів allow,
      * розмір блока лишився 8 Б. Тест і далі слугує документацією формату для CPS-сторони
      * (tools/rctl_config.py): magic(4) + version(1) + enabled(1) + allow(1) + reserved(1). */
-    CHECK(memcmp(rb, "RCTL", 4) == 0 && rb[4] == 3 && rb[5] == 1 && rb[7] == 0,
-          "T7: записаний блок відповідає формату v3 magic+version+enabled+allow+reserved");
+    CHECK(memcmp(rb, "RCTL", 4) == 0 && rb[4] == 4 && rb[5] == 1 && rb[7] == 0,
+          "T7: записаний блок відповідає формату v4 magic+version+enabled+allow+monitorSecs (тут 0=типова)");
 
     CHECK(dmrRctlConfigSetEnabled(0) == 1, "T7: повторний запис enabled=0 вдався (оновлення того самого блоку)");
     CHECK(dmrRctlConfigEnabled() == 0, "T7: після другого запису -- знову вимкнено");
@@ -233,6 +233,17 @@ int main(void)
     dmrRctlConfigSetAllow(DMR_RCTL_ALLOW_ALL);
     CHECK(dmrRctlCommandAllowed(DMR_RCTL_CMD_CHECK_REQ) == 1, "T16: при повній масці перевірка дозволена");
     CHECK(dmrRctlCommandAllowed(99) == 0, "T16: невідома команда заборонена навіть при повній масці");
+
+    /* ================= T17: тривалість моніторингу (версія 4) ================= */
+    mock_codeplug_clear();
+    CHECK(dmrRctlMonitorSecs() == 30, "T17: без блока -> типова 30 с");
+    CHECK(dmrRctlConfigSetMonitorSecs(60) == 1, "T17: запис 60 с вдався");
+    CHECK(dmrRctlMonitorSecs() == 60, "T17: після запису -> 60 с (без reload)");
+    CHECK(dmrRctlConfigSetMonitorSecs(200) == 1, "T17: запис понад межу вдався");
+    CHECK(dmrRctlMonitorSecs() == 120, "T17: понад межу -> обрізано до 120 с");
+    dmrRctlConfigSetAllow(DMR_RCTL_ALLOW_MONITOR);
+    CHECK(dmrRctlMonitorSecs() == 120, "T17: запис дозволів не скинув тривалість");
+    CHECK((dmrRctlConfigAllowRaw() & DMR_RCTL_ALLOW_MONITOR) != 0, "T17: запис тривалості не скинув дозволи");
 
     if (fails)
     {
