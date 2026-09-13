@@ -94,7 +94,15 @@ def read_build_info():
     path = resource_path("build_info.txt")
     if os.path.isfile(path):
         try:
-            return open(path, encoding="utf-8").read().strip()
+            info = open(path, encoding="utf-8").read().strip()
+            # Назву форка у вікні не показуємо -- лишаємо тільки коміт і дату. Чистимо ТУТ,
+            # а не лише в CI: у вже зібраних .exe лежить старий build_info.txt із префіксом,
+            # і без цієї обрізки він показувався б і далі.
+            for prefix in ("OpenGD77-AES256-fork,", "OpenGD77-AES256-fork"):
+                if info.startswith(prefix):
+                    info = info[len(prefix):].lstrip(" ,")
+                    break
+            return info
         except OSError:
             pass
     return "збірка з джерела (без build_info.txt)"

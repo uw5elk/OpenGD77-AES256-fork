@@ -172,7 +172,7 @@ jobs:
           print('libusb-1.0.dll <-', cands[0])
           "
 
-          echo "OpenGD77-AES256-fork, коміт $(git rev-parse --short HEAD), зібрано $(date -u +%Y-%m-%d)" > build_info.txt
+          echo "коміт $(git rev-parse --short HEAD), зібрано $(date -u +%Y-%m-%d)" > build_info.txt
           cat build_info.txt
       - name: Зібрати .exe (PyInstaller, onefile)
         shell: bash
