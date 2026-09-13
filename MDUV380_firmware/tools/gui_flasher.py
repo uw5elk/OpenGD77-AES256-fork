@@ -221,8 +221,13 @@ class FlasherApp(tk.Tk):
         info = ttk.Label(self, text=self.build_info, foreground="#555555")
         info.pack(anchor="w", padx=12)
 
+        author = ttk.Label(self, text="Автор: UW5ELK", foreground="#555555")
+        author.pack(anchor="w", padx=12)
+
         # --- Крок 1: донор кодека ---
-        donor_frame = ttk.LabelFrame(self, text="1. Донор кодека AMBE (файл MD9600 V5)")
+        # Нумерацію кроків прибрано разом із секцією «2. Прошивка»: самотнє «1.»
+        # виглядало б так, наче крок загубився.
+        donor_frame = ttk.LabelFrame(self, text="Донор кодека AMBE (файл MD9600 V5)")
         donor_frame.pack(fill="x", **pad)
 
         self.donor_label = ttk.Label(donor_frame, text="", wraplength=500, justify="left")
@@ -232,14 +237,23 @@ class FlasherApp(tk.Tk):
                    command=self._pick_donor).pack(anchor="w", padx=8, pady=(0, 8))
 
         # --- Крок 2: прошивка ---
-        fw_frame = ttk.LabelFrame(self, text="2. Прошивка")
-        fw_frame.pack(fill="x", **pad)
+        # Коли прошивка вбудована в .exe (штатний випадок для флоту), цієї секції НЕМАЄ
+        # зовсім: ні назви файлу, ні кнопки вибору. Оператору нема чого обирати -- шиється
+        # рівно та прошивка, що приїхала разом із програмою, і зайвий вибір лише дає шанс
+        # залити не те. Секція не пакується взагалі (а не ховається), тож порожнього місця
+        # після неї не лишається.
+        # Запасний шлях: якщо вбудованої прошивки немає (запуск із джерел) -- секція
+        # з'являється, інакше шити було б нічим.
+        self.firmware_label = ttk.Label(self, text="", wraplength=500, justify="left")
+        if not self.firmware_path:
+            fw_frame = ttk.LabelFrame(self, text="Прошивка")
+            fw_frame.pack(fill="x", **pad)
 
-        self.firmware_label = ttk.Label(fw_frame, text="", wraplength=500, justify="left")
-        self.firmware_label.pack(anchor="w", padx=8, pady=(6, 2))
+            self.firmware_label = ttk.Label(fw_frame, text="", wraplength=500, justify="left")
+            self.firmware_label.pack(anchor="w", padx=8, pady=(6, 2))
 
-        ttk.Button(fw_frame, text="Обрати інший файл прошивки...",
-                   command=self._pick_firmware).pack(anchor="w", padx=8, pady=(0, 8))
+            ttk.Button(fw_frame, text="Обрати файл прошивки...",
+                       command=self._pick_firmware).pack(anchor="w", padx=8, pady=(0, 8))
 
         # --- Крок 3: прошити ---
         action_frame = ttk.Frame(self)

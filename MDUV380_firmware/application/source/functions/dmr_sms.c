@@ -1326,6 +1326,10 @@ void dmrSmsRxTick(void)
 	 * різнитися вже в ту секунду, коли банер вискочив, а не лише в списку. */
 	char note[DMR_SMS_TEXT_MAX + 12];
 	snprintf(note, sizeof note, forUs ? "SMS: %s" : "SMS>: %s", text);
+	/* Будимо екран: без цього банер малювався б у темряву й повідомлення так само лишалось
+	 * непоміченим -- рація зазвичай лежить із погашеною підсвіткою. displayLightTrigger
+	 * шанує налаштування підсвітки користувача (режим/яскравість), ми лише запускаємо її. */
+	displayLightTrigger(false);
 	/* На весь екран і до RED: повідомлення могло прийти, коли рація лежала в розвантажці. */
 	uiNotificationShow(NOTIFICATION_TYPE_SMS, NOTIFICATION_ID_SMS, 60000, note, true);
 	soundSetMelody(MELODY_SMS_RECEIVED_BEEP);

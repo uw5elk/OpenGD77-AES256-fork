@@ -433,24 +433,35 @@ uiNotificationID_t uiNotificationGetId(void)
  * зникало непоміченим. Тут використовуємо всю площу й чекаємо на оператора. */
 static void displaySmsFullScreen(void)
 {
-	const int16_t charW = 8;                      /* FONT_SIZE_2: ~8 px на символ */
-	const int16_t lineH = FONT_SIZE_2_HEIGHT;
+	/* ВЕЛИКИЙ шрифт: font_8x16 (FONT_SIZE_3) -- 8 px завширшки, 16 завввишки. Ширина
+	 * символу та сама, що в FONT_SIZE_2, тож у рядок так само влазить 19 символів, а от
+	 * рядків стає вдвічі менше. Тому підказку "RED" прибрано (оператор і так знає, а
+	 * місце вона з'їдала цілим рядком), а лічильник непрочитаних лишили дрібним. */
+	const int16_t charW = 8;
+	const int16_t lineH = FONT_SIZE_3_HEIGHT;      /* 16 */
+	const int16_t cntH  = FONT_SIZE_2_HEIGHT;      /* 8 -- рядок "ще N непрочит." */
 	int16_t perLine = (int16_t)((DISPLAY_SIZE_X - 6) / charW);
-	/* Два нижні рядки зарезервовано: «ще N непрочит.» і підказка RED. Навіть так лишається
-	 * 13 рядків -- повне 144-символьне SMS влазить із запасом. */
-	int16_t maxLines = (int16_t)((DISPLAY_SIZE_Y - 4 - (2 * lineH)) / lineH);
 	char line[32];
+	int more = 0;
+
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+	more = dmrSmsUnreadCount() - 1;                /* показане теж рахується непрочитаним */
+	if (more < 0) { more = 0; }
+#endif
+
+	/* Рядок лічильника з'їдає місце лише тоді, коли він справді є. */
+	int16_t reserved = (int16_t)((more > 0) ? (cntH + 2) : 0);
+	int16_t maxLines = (int16_t)((DISPLAY_SIZE_Y - 4 - reserved) / lineH);
 
 	if (perLine > (int16_t)(sizeof line - 1)) { perLine = (int16_t)(sizeof line - 1); }
+	if (maxLines < 1) { maxLines = 1; }
 
-	/* Фон на весь екран + рамка -- банер має читатись і поверх будь-якого екрана. */
+	/* Фон на весь екран + рамка. isInverted=true -> заливка КОЛЬОРОМ ФОНУ
+	 * (displayFillRect: isInverted ? bg : fg); у displayDrawRect полярність обернена
+	 * (лінія через !isInverted), тож видима рамка -- теж true. */
 	displayThemeApply(THEME_ITEM_FG_NOTIFICATION, THEME_ITEM_BG_NOTIFICATION);
-	/* isInverted=true -> заливка КОЛЬОРОМ ФОНУ (displayFillRect: isInverted ? bg : fg).
-	 * З false екран залився б кольором ТЕКСТУ, і напис став би невидимим. */
 	displayFillRect(0, 0, DISPLAY_SIZE_X, DISPLAY_SIZE_Y, true);
 	displayThemeApply(THEME_ITEM_FG_DECORATION, THEME_ITEM_BG_NOTIFICATION);
-	/* У displayDrawRect полярність ОБЕРНЕНА до displayFillRect (лінія малюється через
-	 * !isInverted), тож видима рамка -- це true. */
 	displayDrawRect(0, 0, DISPLAY_SIZE_X, DISPLAY_SIZE_Y, true);
 	displayThemeApply(THEME_ITEM_FG_NOTIFICATION, THEME_ITEM_BG_NOTIFICATION);
 
@@ -475,34 +486,38 @@ static void displaySmsFullScreen(void)
 
 		memcpy(line, p, (size_t)n);
 		line[n] = 0;
-		displayPrintCore(3, y, line, FONT_SIZE_2, TEXT_ALIGN_LEFT, false);
-		y += lineH;
-		used++;
 
 		p += n;
 		if (*p == '\n') { p++; }
+		used++;
+
+		/* Не влізло все -- ставимо трикрапку в кінці останнього рядка, щоб оператор бачив,
+		 * що текст обрізано, і відкрив «Вхідні». Без цього обрізання виглядає як повний текст. */
+		if ((used == maxLines) && (*p != 0) && (n > 0))
+		{
+			/* Саме ТРИ крапки: одна читалась би як звичайна крапка в кінці речення. */
+			int16_t cut = (int16_t)((n <= (perLine - 3)) ? n : (perLine - 3));
+			if (cut < 0) { cut = 0; }
+			line[cut] = '.'; line[cut + 1] = '.'; line[cut + 2] = '.';
+			line[cut + 3] = 0;
+		}
+
+		displayPrintCore(3, y, line, FONT_SIZE_3, TEXT_ALIGN_LEFT, false);
+		y += lineH;
 	}
 
 	/* Скільки ще НЕпрочитаних, крім показаного -- окремим кольором (колір попередження),
-	 * щоб не злилось із текстом самого повідомлення. Показуємо лише коли є що показувати:
-	 * банер завжди несе ОСТАННЄ повідомлення, тож решта черги інакше була б невидима. */
+	 * щоб не злилось із текстом самого повідомлення. */
 #if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+	if (more > 0)
 	{
-		int more = dmrSmsUnreadCount() - 1;   /* показане теж рахується непрочитаним */
-		if (more > 0)
-		{
-			char cnt[24];
-			snprintf(cnt, sizeof cnt, MSGS_MORE_UNREAD_FMT, more);
-			displayThemeApply(THEME_ITEM_FG_WARNING_NOTIFICATION, THEME_ITEM_BG_NOTIFICATION);
-			displayPrintCentered((int16_t)(DISPLAY_SIZE_Y - (2 * lineH) - 1), cnt, FONT_SIZE_2);
-		}
+		char cnt[24];
+		snprintf(cnt, sizeof cnt, MSGS_MORE_UNREAD_FMT, more);
+		displayThemeApply(THEME_ITEM_FG_WARNING_NOTIFICATION, THEME_ITEM_BG_NOTIFICATION);
+		displayPrintCentered((int16_t)(DISPLAY_SIZE_Y - cntH - 2), cnt, FONT_SIZE_2);
+		displayThemeApply(THEME_ITEM_FG_NOTIFICATION, THEME_ITEM_BG_NOTIFICATION);
 	}
 #endif
-
-	/* Підказка внизу -- інакше оператор не знає, чим це закрити. */
-	displayThemeApply(THEME_ITEM_FG_DECORATION, THEME_ITEM_BG_NOTIFICATION);
-	displayPrintCentered((DISPLAY_SIZE_Y - lineH - 1), "RED", FONT_SIZE_1);
-	displayThemeApply(THEME_ITEM_FG_NOTIFICATION, THEME_ITEM_BG_NOTIFICATION);
 }
 
 static void displayMessage(void)
