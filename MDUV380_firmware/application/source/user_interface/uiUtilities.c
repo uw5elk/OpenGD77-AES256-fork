@@ -2488,7 +2488,28 @@ void uiUtilityRedrawHeaderOnly(bool isVFODualWatchScanning, bool isVFOSweepScann
 	uiUtilityRenderHeader(isVFODualWatchScanning, isVFOSweepScanning, forceBatteryDisplay);
 	// uiUtilityRenderHeader малює й блок S-метра, а він лежить нижче за рядки шапки --
 	// тож при увімкненій опції треба виштовхнути на LCD і його рядки теж.
-	displayRenderRows(0, uiUtilityRSSIRenderEndRow(2));
+	//
+	// Форк (2026-09-18, баг #6): раніше тут ЗАВЖДИ був прямий displayRenderRows() -- в обхід
+	// displayRender()/uiNotificationIsVisible(). Тому шапка (у т.ч. блок S-метра) могла
+	// фізично проскочити на LCD поверх повноекранного сповіщення -- найпомітніше було з
+	// попапом ПОТУЖНОСТІ: обробник зміни потужності в uiChannelMode.c кличе цю функцію
+	// одразу після increasePowerLevel()/decreasePowerLevel(), тобто в той самий момент, коли
+	// щойно показано попап. Той самий механізм, що вже захищає гучність/шумоподавлювач і
+	// звичайний RSSI-таймер (menuRSSIScreen.c; періодичний тік у uiVFOMode.c/uiChannelMode.c,
+	// гілка uiUtilityDrawRSSIBarGraph()) -- displayRender() сам перевіряє
+	// uiNotificationIsVisible() і замість фізичного пуша перемальовує картку сповіщення.
+	// Виправлення тут, в одному місці, захищає ВСІ виклики uiUtilityRedrawHeaderOnly()
+	// одразу: і з обробника потужності (uiChannelMode.c), і з гілки Dual Watch періодичного
+	// RSSI-тіку (uiVFOMode.c), і з гілки QSO caller-даних у uiChannelModeUpdateScreen()/
+	// uiVFOModeUpdateScreen() -- без окремого нового механізму.
+	if (uiNotificationIsVisible())
+	{
+		displayRender();
+	}
+	else
+	{
+		displayRenderRows(0, uiUtilityRSSIRenderEndRow(2));
+	}
 }
 
 static void drawHeaderBar(int *barWidth, int16_t barHeight)
