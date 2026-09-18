@@ -816,25 +816,31 @@ class AesKeyManagerWindow(tk.Toplevel):
 
 
 class RctlConfigWindow(tk.Toplevel):
-    """Увімк/вимк "приймати команди віддаленого керування" (RCTL --
+    """Дозволи «приймати команди віддаленого керування» (RCTL --
     functions/dmr_rctl_cfg.c). Пише блок "RCTL" у custom-data (CHIRP-стиль:
     прошивка лише читає, сама не пише).
 
-    Модель довіри (2026-09-03, за зразком Motorola/Hytera): БІНАРНА -- увімкнено
-    означає "приймати команди від БУДЬ-КОГО з правильним AES-ключем каналу" (тим
-    самим, що й голос/SMS), вимкнено -- не приймати ні від кого. Жодного окремого
-    списку довірених ID тут немає -- сам канальний ключ і є межею довіри.
+    Модель довіри (2026-09-03, за зразком Motorola/Hytera): жодного окремого списку
+    довірених ID -- сам канальний AES-ключ (той самий, що голос/SMS) є межею довіри.
 
-    ВАЖЛИВО: це вікно НЕ вміє надіслати саму команду Radio Check в ефір -- команда
-    йде рація-рації по DMR, а не через USB/CPS. Тут лише перемикається "приймати
-    чи ні" (fail closed: enabled=0 за замовчуванням, доки не увімкнено явно). Сам
-    запит з рації -- окремий, ще не написаний пункт меню (PLANS.md §3)."""
+    2026-09-18: окремого перемикача «enabled» більше немає. Єдина точка правди --
+    які САМЕ команди дозволені (по чекбоксу на тип: Ввімкнення/Перевірка/Моніторинг/
+    Вимкнення). enabled похідний: позначено хоч одну -> RCTL увімкнено; жодної ->
+    вимкнено. build_payload() виставляє байт enabled сам, тож поля у флеші не можуть
+    розійтися (раніше саме це давало «у прошивальнику Off, у меню все On»).
+
+    Окремо -- чекбокс видимості пункту «Доступ RCTL» в меню Опцій рації (це вигляд,
+    не дозволи: гейт дозволів діє незалежно від того, чи видно пункт).
+
+    ВАЖЛИВО: це вікно НЕ надсилає саму команду Radio Check в ефір -- команда йде
+    рація-рації по DMR, а не через USB/CPS. Тут лише налаштовуються дозволи (fail
+    closed: порожня маска = вимкнено, доки не позначено явно)."""
 
     def __init__(self, parent):
         super().__init__(parent)
         self.title("TYT MD-UV390UKR -- Віддалене керування (RCTL)")
-        self.geometry("480x360")
-        self.minsize(440, 320)
+        self.geometry("480x500")
+        self.minsize(440, 460)
 
         self.queue = queue.Queue()
         self.busy = False
@@ -847,17 +853,33 @@ class RctlConfigWindow(tk.Toplevel):
 
         note = ttk.Label(
             self,
-            text=("Увімкнено = приймати команди RCTL (напр. Radio Check) від "
-                  "БУДЬ-КОГО, хто знає ключ шифрування каналу -- як у Motorola/"
-                  "Hytera. Вимкнено = не приймати ні від кого. Рація має бути "
-                  "УВІМКНЕНА У ЗВИЧАЙНОМУ РЕЖИМІ (не в DFU)."),
+            text=("Познач, які САМЕ команди ця рація прийматиме від БУДЬ-КОГО, хто знає "
+                  "ключ шифрування каналу (як у Motorola/Hytera -- окремого списку ID "
+                  "немає). Жодної позначки = RCTL вимкнено (рація не приймає нічого). "
+                  "Окремого перемикача «увімкнено» більше немає: увімкнено = дозволена "
+                  "хоч одна команда. Рація має бути УВІМКНЕНА У ЗВИЧАЙНОМУ РЕЖИМІ (не в DFU)."),
             wraplength=440, justify="left", foreground="#8a5300",
         )
         note.pack(anchor="w", **pad)
 
-        self.enabled_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(self, text="Приймати команди RCTL на цій рації (enabled)",
-                        variable=self.enabled_var).pack(anchor="w", padx=12, pady=(4, 0))
+        # 2026-09-18: замість одного «enabled» -- по чекбоксу на КОЖЕН тип команди, тими ж
+        # назвами, що й у меню рації «Доступ RCTL». enabled = (позначено хоч одну) -- пише
+        # rctl_config.build_payload() сам. Порядок за вимогою: Ввімкнення, Перевірка,
+        # Моніторинг, Вимкнення.
+        cmd_frame = ttk.LabelFrame(self, text="Дозволені команди")
+        cmd_frame.pack(fill="x", padx=12, pady=(4, 0))
+        self.cmd_vars = {}
+        RCTL_CMDS = [
+            ("revive",  "Ввімкнення", rctl.ALLOW_REVIVE),
+            ("check",   "Перевірка",  rctl.ALLOW_CHECK),
+            ("monitor", "Моніторинг", rctl.ALLOW_MONITOR),
+            ("stun",    "Вимкнення",  rctl.ALLOW_STUN),
+        ]
+        self._rctl_cmd_bits = {key: bit for key, _lbl, bit in RCTL_CMDS}
+        for key, label, _bit in RCTL_CMDS:
+            v = tk.BooleanVar(value=False)
+            self.cmd_vars[key] = v
+            ttk.Checkbutton(cmd_frame, text=label, variable=v).pack(anchor="w", padx=8, pady=1)
 
         self.menu_visible_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(self, text="Показувати пункт «Доступ RCTL» в меню Опцій на рації",
@@ -907,8 +929,20 @@ class RctlConfigWindow(tk.Toplevel):
         self.after(50, self._poll_queue)
 
     def _apply_state(self, state):
-        self.enabled_var.set(state["enabled"])
+        # Показуємо ЕФЕКТИВНУ маску (state["allow"]): на legacy-рації, де enabled=0 при
+        # ненульовій сирій масці, галочки будуть зняті -- і запис нормалізує до чесного
+        # вимкненого стану, не воскрешаючи прихований дозвіл.
+        allow = state.get("allow", 0)
+        for key, bit in self._rctl_cmd_bits.items():
+            self.cmd_vars[key].set(bool(allow & bit))
         self.menu_visible_var.set(not state.get("menu_hidden", False))
+
+    def _selected_mask(self):
+        mask = 0
+        for key, bit in self._rctl_cmd_bits.items():
+            if self.cmd_vars[key].get():
+                mask |= bit
+        return mask
 
     # --- дії користувача -----------------------------------------------------------
 
@@ -920,14 +954,14 @@ class RctlConfigWindow(tk.Toplevel):
     def _on_write(self):
         if self.busy:
             return
-        enabled = self.enabled_var.get()
+        mask = self._selected_mask()
         menu_hidden = not self.menu_visible_var.get()
-        if enabled:
+        if mask:
             if not messagebox.askokcancel(
                 "Увімкнути RCTL?",
-                "Ця рація прийматиме команди віддаленого керування від БУДЬ-КОГО, "
-                "хто знає ключ шифрування каналу -- без окремого списку довірених "
-                "ID (як у Motorola/Hytera). Продовжити?",
+                "Ця рація прийматиме позначені команди віддаленого керування від "
+                "БУДЬ-КОГО, хто знає ключ шифрування каналу -- без окремого списку "
+                "довірених ID (як у Motorola/Hytera). Продовжити?",
             ):
                 return
         if menu_hidden:
@@ -938,7 +972,7 @@ class RctlConfigWindow(tk.Toplevel):
                 "можна лише звідси, з прошивальника. Продовжити?",
             ):
                 return
-        self._run_worker(lambda: self._write_worker(enabled, menu_hidden), "Записую...")
+        self._run_worker(lambda: self._write_worker(mask, menu_hidden), "Записую...")
 
     # --- фонові операції -----------------------------------------------------------
 
@@ -961,27 +995,31 @@ class RctlConfigWindow(tk.Toplevel):
                 "menu_hidden": False, "monitor_secs": 0,
             }
             self.queue.put(("state", state))
-            print("Стан: enabled={}, пункт меню={}".format(
-                state["enabled"], "схований" if state.get("menu_hidden") else "видимий"))
+            names = [n for n, b in rctl.ALLOW_NAMES if state.get("allow", 0) & b] or ["-"]
+            print("Стан: RCTL={}, дозволи=[{}], пункт меню={}".format(
+                "увімкнено" if state.get("allow") else "вимкнено",
+                ",".join(names),
+                "схований" if state.get("menu_hidden") else "видимий"))
 
-    def _write_worker(self, enabled, menu_hidden):
+    def _write_worker(self, mask, menu_hidden):
         with self._connect() as ser:
-            # allow/monitor_secs -- зберігаємо те, що вже є на рації (це вікно керує
-            # лише enabled і видимістю пункту меню; окремих контролів для дозволів/
-            # тривалості Monitor тут немає -- rctl_config.py --allow, за потреби).
+            # monitor_secs -- зберігаємо те, що вже є на рації (тривалістю Monitor це вікно
+            # не керує: rctl_config.py, за потреби). enabled НЕ пишемо окремо -- він похідний
+            # від маски (build_payload виставляє його сам). Маска -- єдина точка правди.
             current = cd.read_block(ser, rctl.TYPE_RCTL_CONFIG, rctl.PAYLOAD_LEN)
             cur = rctl.parse_payload(current) if current else None
-            allow = cur["allow"] if cur else rctl.ALLOW_CHECK
             monitor_secs = cur["monitor_secs"] if cur else 0
 
-            payload = rctl.build_payload(enabled, allow, monitor_secs, menu_hidden)
+            payload = rctl.build_payload(mask, monitor_secs, menu_hidden)
             ok, msg = cd.write_block(ser, rctl.TYPE_RCTL_CONFIG, payload)
             if not ok:
                 raise RuntimeError(msg)
             rb = cd.read_block(ser, rctl.TYPE_RCTL_CONFIG, rctl.PAYLOAD_LEN)
             verify_ok = (rb == payload)
-            print("Записано ({}), enabled={}, пункт меню={}. Звірка читанням: {}.".format(
-                msg, enabled, "схований" if menu_hidden else "видимий",
+            names = [n for n, b in rctl.ALLOW_NAMES if mask & b] or ["-"]
+            print("Записано ({}), RCTL={}, дозволи=[{}], пункт меню={}. Звірка читанням: {}.".format(
+                msg, "увімкнено" if mask else "вимкнено", ",".join(names),
+                "схований" if menu_hidden else "видимий",
                 "OK" if verify_ok else "НЕЗБІГ"))
 
     def _run_worker(self, fn, status_text):

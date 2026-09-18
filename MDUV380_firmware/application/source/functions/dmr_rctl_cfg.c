@@ -163,6 +163,14 @@ static void cfg_load(void)
 		 * (DMR_RCTL_UI_*). Кожен читач сам маскує потрібну собі половину:
 		 * dmrRctlAllowMask()/dmrRctlConfigAllowRaw() -> ALLOW_ALL, dmrRctlConfigUiFlags() ->
 		 * DMR_RCTL_UI_ALL. */
+		/* МІГРАЦІЯ (2026-09-18): enabled тепер похідний від маски (enabled = mask != 0),
+		 * але тут, ПРИ ЗАВАНТАЖЕННІ, ми його НАВМИСНО НЕ нормалізуємо -- лишаємо як у флеші.
+		 * Причина: у полі може бути рація, де enabled СВІДОМО вимкнули старим прошивальником
+		 * при ненульовій масці (enabled=0, allow!=0). Якби ми тут виставили enabled=(mask!=0),
+		 * така рація почала б приймати команди одразу після оновлення прошивки -- чого бути
+		 * не повинно. Гаряча гілка (dmrRctlAllowMask) і далі гейтить на enabled, тож
+		 * "вимкнена" рація мовчить, доки не відбудеться СВІДОМИЙ запис маски (меню/ПК), який
+		 * і нормалізує обидва поля. Тобто нормалізація -- лише на запис, ніколи на читання. */
 		return;
 	}
 	memset(&s_cfg, 0, sizeof s_cfg);   /* відсутній/побитий блок -> fail closed: enabled=0 (ніхто) */
@@ -351,6 +359,15 @@ int dmrRctlConfigSetAllow(uint8_t mask)
 	/* дозволи живуть у нижній половині allow -- верхню (DMR_RCTL_UI_*, вигляд меню) не чіпаємо. */
 	s_cfg.allow = (uint8_t)((s_cfg.allow & DMR_RCTL_UI_ALL) | (mask & DMR_RCTL_ALLOW_ALL));
 
+	/* enabled БІЛЬШЕ НЕ окремий елемент керування (2026-09-18): єдина точка правди --
+	 * маска дозволених команд. enabled виводиться з неї й пишеться АВТОМАТИЧНО тут, при
+	 * КОЖНОМУ записі маски (з меню рації або з ПК). Так поля у флеші не можуть розійтися:
+	 * до цього прошивальник міг лишити enabled=0 при ненульовій масці -- і меню рації
+	 * показувало "все On", а команди не приймались. Гаряча гілка (dmrRctlAllowMask ->
+	 * dmrRctlCommandAllowed) незмінна: і далі спершу enabled, потім біт маски. Але тепер
+	 * enabled ЗАВЖДИ узгоджений із маскою одразу після будь-якого запису. */
+	s_cfg.enabled = ((s_cfg.allow & DMR_RCTL_ALLOW_ALL) != 0) ? 1 : 0;
+
 	int ok = codeplugSetOpenGD77CustomData(CODEPLUG_CUSTOM_DATA_TYPE_RCTL_CONFIG, (uint8_t *)&s_cfg, (int)sizeof s_cfg) ? 1 : 0;
 	dmrRctlConfigReload();
 	return ok;
@@ -384,27 +401,10 @@ int dmrRctlConfigSetMonitorSecs(uint8_t secs)
 	return ok;
 }
 
-int dmrRctlConfigSetEnabled(int enabled)
-{
-	cfg_ensure();
-
-	/* Якщо блоку ще не було (або він побитий) -- cfg_load() вже обнулив s_cfg,
-	 * тож magic/version підставляємо тут, так само як dmrAesSetTxKeyId() робить
-	 * для блоку "AESK" у crypto/dmr_aes_hook.c. */
-	if (memcmp(s_cfg.magic, "RCTL", 4) != 0)
-	{
-		memset(&s_cfg, 0, sizeof s_cfg);
-		memcpy(s_cfg.magic, "RCTL", 4);
-		s_cfg.version = RCTL_CFG_VERSION;
-		/* Свіжий блок: жодного дозволу. Вмикати кожен треба свідомо. */
-		s_cfg.allow = 0;
-	}
-	s_cfg.version = RCTL_CFG_VERSION;
-	s_cfg.enabled = enabled ? 1 : 0;
-
-	int ok = codeplugSetOpenGD77CustomData(CODEPLUG_CUSTOM_DATA_TYPE_RCTL_CONFIG, (uint8_t *)&s_cfg, (int)sizeof s_cfg) ? 1 : 0;
-	dmrRctlConfigReload();   /* негайний ефект: наступний dmrRctlGate()/dmrRctlConfigEnabled() перечитає з флешу */
-	return ok;
-}
+/* dmrRctlConfigSetEnabled() ПРИБРАНО 2026-09-18. enabled більше не окремий елемент
+ * керування -- він похідний від маски дозволів і пишеться автоматично в
+ * dmrRctlConfigSetAllow() (enabled = mask != 0). Єдина точка правди -- маска. Щоб
+ * увімкнути/вимкнути RCTL, дозволяй/забороняй конкретні команди (SetAllow); порожня маска
+ * = вимкнено. Так поля у флеші не можуть розійтися. */
 
 #endif /* ENABLE_DMR_DATA && ENABLE_AES */

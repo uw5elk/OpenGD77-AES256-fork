@@ -58,7 +58,7 @@ int mock_codeplug_write_count(void)
 
 /* Той самий підпис, що й справжній codeplugSetOpenGD77CustomData() в codeplug.c --
  * реалізація для тестів пише в той самий "флеш"-буфер, що read-функція нижче читає,
- * тож round-trip (set -> reload -> get) із dmrRctlConfigSetEnabled() перевіряється
+ * тож round-trip (set -> reload -> get) із dmrRctlConfigSetAllow() перевіряється
  * по-справжньому, а не лише мокається на true. */
 bool codeplugSetOpenGD77CustomData(CodeplugCustomDataType_t dataType, uint8_t *dataBuf, int len)
 {

@@ -1947,15 +1947,19 @@ static void cpsHandleCommand(void)
 				return; // bypass the trailing generic '-' reply
 			}
 		case 0x9C: // RCTL config (дозволи) через USB -- відновлення після прошивки без меню.
-			   //  [2]=0x00 -> лише прочитати; [2]=0x01 -> записати ([3]=enabled 0/1, [4]=allow-маска).
-			   //  Вмикання лишається СВІДОМОЮ дією оператора (не авто-замовчування) -- fail-closed
-			   //  збережено. Reply: [cmd, len_hi, len_lo, enabled, allowRaw]
+			   //  [2]=0x00 -> лише прочитати; [2]=0x01 -> записати ([3]=ІГНОРУЄТЬСЯ, [4]=allow-маска).
+			   //  2026-09-18: enabled більше не окремий елемент -- він похідний від маски
+			   //  (enabled = mask != 0), тож байт [3] (старий "enabled") тут ІГНОРУЄТЬСЯ, а
+			   //  enabled виставляє сам dmrRctlConfigSetAllow(). Порожня маска [4]=0 = вимкнено;
+			   //  fail-closed збережено (за замовчуванням блоку немає -> нічого не приймаємо).
+			   //  Старий rctl_capture.py сумісний: --rctl-off шле (0,0) -> mask=0 -> enabled=0;
+			   //  --rctl-on <mask> шле (1,mask) -> enabled=(mask!=0). Reply незмінний:
+			   //  [cmd, len_hi, len_lo, enabled, allowRaw].
 			{
 				if (com_requestbuffer[2] == 0x01)
 				{
 					dmrAesEnsureCustomDataRegion();   // магія регіону custom-data (як для AES/тем)
-					dmrRctlConfigSetAllow(com_requestbuffer[4]);
-					dmrRctlConfigSetEnabled(com_requestbuffer[3] ? 1 : 0);
+					dmrRctlConfigSetAllow(com_requestbuffer[4]);   // enabled виставиться автоматично з маски
 				}
 				usbComSendBuf[0] = com_requestbuffer[0];
 				usbComSendBuf[1] = 0;

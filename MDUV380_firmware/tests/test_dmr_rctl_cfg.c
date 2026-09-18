@@ -102,13 +102,15 @@ int main(void)
     CHECK(dmrRctlConfigEnabled() == 0, "after reload: disabled state visible");
     CHECK(dmr_rctl_gate_check(dmrRctlGate(), 0x333333u, 1) == 0, "after reload: previously-tracked issuer now rejected too");
 
-    /* 7) dmrRctlConfigSetEnabled() -- новий шлях запису ПРЯМО З РАЦІЇ (menuRCTLConfig.c),
-     *    а не лише з ПК/CHIRP. Перевіряємо round-trip через справжній мок-флеш (не лише
-     *    повернене значення), і що ефект видно одразу (setter сам викликає reload). */
+    /* 7) dmrRctlConfigSetAllow() -- запис ПРЯМО З РАЦІЇ (menuRCTLConfig.c) чи з ПК.
+     *    2026-09-18: enabled БІЛЬШЕ НЕ окремий сеттер -- він похідний від маски й
+     *    виставляється тим самим записом. Перевіряємо round-trip через справжній мок-флеш і
+     *    що ефект видно одразу (setter сам викликає reload). Дозволяємо радіоперевірку ->
+     *    маска != 0 -> enabled стає 1 АВТОМАТИЧНО. */
     mock_codeplug_clear();
     CHECK(dmrRctlConfigEnabled() == 0, "T7: до запису -- вимкнено (блоку ще немає)");
-    CHECK(dmrRctlConfigSetEnabled(1) == 1, "T7: запис enabled=1 з \"рації\" вдався");
-    CHECK(dmrRctlConfigEnabled() == 1, "T7: одразу після запису -- увімкнено (без ручного reload)");
+    CHECK(dmrRctlConfigSetAllow(DMR_RCTL_ALLOW_CHECK) == 1, "T7: запис маски (радіоперевірка) з \"рації\" вдався");
+    CHECK(dmrRctlConfigEnabled() == 1, "T7: маска != 0 -> enabled став 1 АВТОМАТИЧНО (без окремого запису)");
     CHECK(dmr_rctl_gate_check(dmrRctlGate(), 0x444444u, 1) == 1, "T7: після запису -- gate приймає нового видавця");
     CHECK(mock_codeplug_write_count() == 1, "T7: рівно один фізичний запис у флеш");
 
@@ -120,12 +122,14 @@ int main(void)
      * прошивка, ані custom_data.py на ПК цього не дозволяють). Тест і далі слугує
      * документацією формату для CPS-сторони (tools/rctl_config.py):
      * magic(4) + version(1) + enabled(1) + allow(1, ловер-нібл=дозволи/аппер-нібл=вигляд) +
-     * monitorSecs(1). */
-    CHECK(memcmp(rb, "RCTL", 4) == 0 && rb[4] == 5 && rb[5] == 1 && rb[7] == 0,
-          "T7: записаний блок відповідає формату v5 magic+version+enabled+allow+monitorSecs (тут 0=типова)");
+     * monitorSecs(1). enabled(rb[5]) тут ПОХІДНИЙ: маска CHECK != 0 -> 1; allow(rb[6]) == CHECK. */
+    CHECK(memcmp(rb, "RCTL", 4) == 0 && rb[4] == 5 && rb[5] == 1 &&
+          rb[6] == DMR_RCTL_ALLOW_CHECK && rb[7] == 0,
+          "T7: блок формату v5, enabled похідний від маски (rb[5]=1, rb[6]=CHECK)");
 
-    CHECK(dmrRctlConfigSetEnabled(0) == 1, "T7: повторний запис enabled=0 вдався (оновлення того самого блоку)");
-    CHECK(dmrRctlConfigEnabled() == 0, "T7: після другого запису -- знову вимкнено");
+    /* Порожня маска -> enabled стає 0 тим самим записом (єдина точка правди -- маска). */
+    CHECK(dmrRctlConfigSetAllow(0) == 1, "T7: запис порожньої маски вдався (оновлення того самого блоку)");
+    CHECK(dmrRctlConfigEnabled() == 0, "T7: маска == 0 -> enabled став 0 АВТОМАТИЧНО");
     CHECK(dmr_rctl_gate_check(dmrRctlGate(), 0x444444u, 2) == 0, "T7: вимкнено -- той самий видавець більше не проходить");
     CHECK(mock_codeplug_write_count() == 2, "T7: другий виклик -- ще один фізичний запис (оновлення блоку, не новий)");
 
@@ -200,25 +204,29 @@ int main(void)
      * ВІДКРИТОМУ каналі теж, а вирішує цільова рація -- окремим дозволом на кожну команду.
      * На відкритому каналі це єдина межа: підтвердити відправника там нічим. */
 
-    /* T12: свіжий блок -> не дозволено НІЧОГО, навіть при увімкненому доступі */
+    /* T12: свіжий блок -> не дозволено НІЧОГО, RCTL вимкнено. 2026-09-18: окремого
+     * "увімкнути доступ" немає -- enabled похідний від маски, а порожня маска = вимкнено. */
     mock_codeplug_clear();
     dmrRctlConfigReload();
-    CHECK(dmrRctlConfigSetEnabled(1) == 1, "T12: доступ увімкнено");
     CHECK(dmrRctlAllowMask() == 0, "T12: свіжий блок -- маска порожня");
+    CHECK(dmrRctlConfigEnabled() == 0, "T12: порожня маска -> RCTL вимкнено");
     CHECK(dmrRctlCommandAllowed(DMR_RCTL_CMD_CHECK_REQ) == 0, "T12: радіоперевірка ЗАБОРОНЕНА за замовчуванням");
 
-    /* T13: вмикаємо лише радіоперевірку -- решта лишається забороненою */
+    /* T13: вмикаємо лише радіоперевірку -- enabled стає 1 сам, решта лишається забороненою */
     CHECK(dmrRctlConfigSetAllow(DMR_RCTL_ALLOW_CHECK) == 1, "T13: маску записано");
+    CHECK(dmrRctlConfigEnabled() == 1, "T13: непорожня маска -> RCTL увімкнено АВТОМАТИЧНО");
     CHECK(dmrRctlCommandAllowed(DMR_RCTL_CMD_CHECK_REQ) == 1, "T13: радіоперевірка дозволена");
     CHECK(dmrRctlCommandAllowed(DMR_RCTL_CMD_STUN) == 0, "T13: блокування НЕ дозволене");
     CHECK(dmrRctlCommandAllowed(DMR_RCTL_CMD_MONITOR_START) == 0, "T13: прослуховування НЕ дозволене");
     CHECK(dmrRctlCommandAllowed(DMR_RCTL_CMD_REVIVE) == 0, "T13: розблокування НЕ дозволене");
 
-    /* T14: головний перемикач перекриває все, але виставлені біти НЕ губляться */
-    CHECK(dmrRctlConfigSetEnabled(0) == 1, "T14: доступ вимкнено");
-    CHECK(dmrRctlCommandAllowed(DMR_RCTL_CMD_CHECK_REQ) == 0, "T14: вимкнений доступ забороняє навіть дозволену команду");
-    CHECK(dmrRctlAllowMask() == 0, "T14: робоча маска порожня, поки доступ вимкнено");
-    CHECK(dmrRctlConfigAllowRaw() == DMR_RCTL_ALLOW_CHECK, "T14: але сира маска збережена (меню не втратить налаштування)");
+    /* T14: очищення маски = вимкнення RCTL (єдиний спосіб; окремого перемикача немає).
+     * Обидва поля стають узгодженими: enabled=0, raw=0. */
+    CHECK(dmrRctlConfigSetAllow(0) == 1, "T14: маску очищено");
+    CHECK(dmrRctlConfigEnabled() == 0, "T14: порожня маска -> RCTL вимкнено");
+    CHECK(dmrRctlCommandAllowed(DMR_RCTL_CMD_CHECK_REQ) == 0, "T14: після очищення -- команда заборонена");
+    CHECK(dmrRctlAllowMask() == 0, "T14: робоча маска порожня");
+    CHECK(dmrRctlConfigAllowRaw() == 0, "T14: сира маска теж 0 (очистили свідомо, а не сховали перемикачем)");
 
     /* T15: старий блок версії 2 -> лише радіоперевірка, а не всі права.
      * Оновлення прошивки не має мовчки роздавати дозволи, яких власник не вмикав. */
@@ -233,8 +241,7 @@ int main(void)
     /* T16: невідомий код команди -> заборонено (fail closed) */
     mock_codeplug_clear();
     dmrRctlConfigReload();
-    dmrRctlConfigSetEnabled(1);
-    dmrRctlConfigSetAllow(DMR_RCTL_ALLOW_ALL);
+    dmrRctlConfigSetAllow(DMR_RCTL_ALLOW_ALL);   /* enabled стане 1 сам (маска != 0) */
     CHECK(dmrRctlCommandAllowed(DMR_RCTL_CMD_CHECK_REQ) == 1, "T16: при повній масці перевірка дозволена");
     CHECK(dmrRctlCommandAllowed(99) == 0, "T16: невідома команда заборонена навіть при повній масці");
 
@@ -288,6 +295,51 @@ int main(void)
     CHECK(dmrRctlCommandAllowed(DMR_RCTL_CMD_CHECK_REQ) == 1,
           "T18: дозволи зі старого блоку пережили запис uiFlags");
     CHECK(dmrRctlMonitorSecs() == 45, "T18: monitorSecs зі старого блоку теж пережив запис uiFlags");
+
+    /* 19) УЗГОДЖЕНІСТЬ enabled <-> маска (2026-09-18). enabled похідний: mask==0 => enabled==0,
+     *     mask!=0 => enabled==1, і це записано у ФЛЕШ тим самим записом (rb[5]), а не лише в
+     *     кеші. Саме розходження цих двох полів і давало "у прошивальнику Off, у меню все On". */
+    mock_codeplug_clear();
+    uint8_t rb19[8];
+    struct { uint8_t mask; uint8_t exp; } cons[] = {
+        { 0,                    0 },
+        { DMR_RCTL_ALLOW_CHECK, 1 },
+        { DMR_RCTL_ALLOW_ALL,   1 },
+        { DMR_RCTL_ALLOW_STUN,  1 },
+        { 0,                    0 },
+    };
+    for (unsigned k = 0; k < sizeof cons / sizeof cons[0]; k++)
+    {
+        CHECK(dmrRctlConfigSetAllow(cons[k].mask) == 1, "T19: запис маски вдався");
+        CHECK((dmrRctlConfigEnabled() != 0) == (cons[k].exp != 0),
+              "T19: enabled у кеші == (маска != 0)");
+        CHECK(codeplugGetOpenGD77CustomDataBounded(CODEPLUG_CUSTOM_DATA_TYPE_RCTL_CONFIG, rb19, (int)sizeof rb19),
+              "T19: блок читається");
+        CHECK(rb19[5] == cons[k].exp, "T19: enabled у ФЛЕШІ == (маска != 0), поля не розходяться");
+        CHECK((rb19[6] & DMR_RCTL_ALLOW_ALL) == cons[k].mask, "T19: маска у флеші збережена точно");
+    }
+
+    /* 20) МІГРАЦІЯ вже прошитої в полі рації: enabled СВІДОМО вимкнули старим прошивальником
+     *     при НЕНУЛЬОВІЙ масці (enabled=0, allow=CHECK). Після оновлення прошивки рація НЕ
+     *     має почати приймати команди -- нормалізація лише на ЗАПИС, ніколи на читання. */
+    mock_codeplug_clear();
+    uint8_t leg[8];
+    leg[0] = 'R'; leg[1] = 'C'; leg[2] = 'T'; leg[3] = 'L';
+    leg[4] = 5; leg[5] = 0 /* enabled=0 */; leg[6] = DMR_RCTL_ALLOW_CHECK /* маска != 0 */; leg[7] = 0;
+    mock_codeplug_set_block(CODEPLUG_CUSTOM_DATA_TYPE_RCTL_CONFIG, leg, (int)sizeof leg);
+    dmrRctlConfigReload();
+    CHECK(dmrRctlConfigEnabled() == 0, "T20: при завантаженні enabled НЕ нормалізується (лишається 0)");
+    CHECK(dmrRctlCommandAllowed(DMR_RCTL_CMD_CHECK_REQ) == 0,
+          "T20: гаряча гілка й далі відхиляє -- вимкнена рація мовчить після оновлення");
+    CHECK(dmrRctlAllowMask() == 0, "T20: ефективна маска порожня (enabled=0 перекриває raw)");
+    CHECK(dmrRctlConfigAllowRaw() == DMR_RCTL_ALLOW_CHECK, "T20: raw-маска у спокої збережена як була");
+    CHECK(mock_codeplug_write_count() == 0, "T20: саме читання НЕ пише у флеш (жодної тихої нормалізації)");
+    /* Перший же СВІДОМИЙ запис нормалізує. Меню/прошивальник пишуть ЕФЕКТИВНУ маску (=0 тут),
+     * тобто прихований CHECK НЕ воскресає -- рація лишається чесно вимкненою, але поля стають
+     * узгодженими (enabled=0, raw=0). */
+    CHECK(dmrRctlConfigSetAllow(dmrRctlAllowMask()) == 1, "T20: запис ефективної маски (=0) вдався");
+    CHECK(dmrRctlConfigEnabled() == 0, "T20: після нормалізації enabled=0");
+    CHECK(dmrRctlConfigAllowRaw() == 0, "T20: raw теж 0 -- поля узгоджені, прихований дозвіл НЕ воскрес");
 
     if (fails)
     {

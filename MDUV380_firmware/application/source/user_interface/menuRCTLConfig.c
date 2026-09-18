@@ -101,9 +101,13 @@ menuStatus_t menuRCTLConfig(uiEvent_t *ev, bool isFirstRun)
 {
 	if (isFirstRun)
 	{
-		// dmrRctlAllowMask() повертає 0 при вимкненому доступі, тож для РЕДАГУВАННЯ маску
-		// читаємо незалежно (raw): інакше галочки не показувались би правильно.
-		s_rcfg.allow = dmrRctlConfigAllowRaw();
+		// 2026-09-18: показуємо ЕФЕКТИВНЕ значення кожного типу (enabled && біт), а не raw.
+		// dmrRctlAllowMask() і повертає ефективну маску: 0, якщо enabled=0. Так рація, де в
+		// полі СВІДОМО вимкнули приймання старим прошивальником (enabled=0 при ненульовій
+		// масці), показує все Off і редагується з чистого стану -- а не "оживає" з правами,
+		// про які оператор не знав. На нормальній (enabled=1) рації ефективна маска == raw,
+		// тож вигляд не змінюється.
+		s_rcfg.allow = dmrRctlAllowMask();
 		s_rcfg.monSecs = dmrRctlMonitorSecs();
 		s_rcfg.dirty = false;
 		menuDataGlobal.currentItemIndex = 0;
@@ -152,10 +156,10 @@ menuStatus_t menuRCTLConfig(uiEvent_t *ev, bool isFirstRun)
 				// AES-ключів/тем. Безпечно викликати й повторно.
 				dmrAesEnsureCustomDataRegion();
 				dmrRctlConfigSetMonitorSecs(s_rcfg.monSecs);
+				// enabled більше не окремий пункт: dmrRctlConfigSetAllow() САМ виставляє
+				// enabled = (маска != 0) тим самим записом, тож обидва поля у флеші завжди
+				// узгоджені після будь-якого збереження. Маска -- єдина точка правди.
 				dmrRctlConfigSetAllow(s_rcfg.allow);
-				// enabled більше не окремий пункт: RCTL активний, якщо дозволена хоч одна
-				// команда. Пишемо останнім -> обидва поля у флеші узгоджені.
-				dmrRctlConfigSetEnabled(s_rcfg.allow != 0 ? 1 : 0);
 				s_rcfg.dirty = false;
 			}
 			menuSystemPopPreviousMenu();
