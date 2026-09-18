@@ -114,11 +114,15 @@ int main(void)
 
     uint8_t rb[8];
     CHECK(codeplugGetOpenGD77CustomDataBounded(CODEPLUG_CUSTOM_DATA_TYPE_RCTL_CONFIG, rb, (int)sizeof rb), "T7: блок читається назад");
-    /* Формат ВЕРСІЇ 3 (2026-09-05): другий reserved-байт став маскою дозволів allow,
-     * розмір блока лишився 8 Б. Тест і далі слугує документацією формату для CPS-сторони
-     * (tools/rctl_config.py): magic(4) + version(1) + enabled(1) + allow(1) + reserved(1). */
-    CHECK(memcmp(rb, "RCTL", 4) == 0 && rb[4] == 4 && rb[5] == 1 && rb[7] == 0,
-          "T7: записаний блок відповідає формату v4 magic+version+enabled+allow+monitorSecs (тут 0=типова)");
+    /* Формат ВЕРСІЇ 5 (2026-09-18): розмір блока НЕ зріс (лишився 8 Б) -- uiFlags (вигляд
+     * пункту меню) живе у верхній половині байта allow, а не як окреме поле (див. коментар
+     * над RCTL_CFG_VERSION у dmr_rctl_cfg.c: подовжити вже існуючий блок не можна, ані
+     * прошивка, ані custom_data.py на ПК цього не дозволяють). Тест і далі слугує
+     * документацією формату для CPS-сторони (tools/rctl_config.py):
+     * magic(4) + version(1) + enabled(1) + allow(1, ловер-нібл=дозволи/аппер-нібл=вигляд) +
+     * monitorSecs(1). */
+    CHECK(memcmp(rb, "RCTL", 4) == 0 && rb[4] == 5 && rb[5] == 1 && rb[7] == 0,
+          "T7: записаний блок відповідає формату v5 magic+version+enabled+allow+monitorSecs (тут 0=типова)");
 
     CHECK(dmrRctlConfigSetEnabled(0) == 1, "T7: повторний запис enabled=0 вдався (оновлення того самого блоку)");
     CHECK(dmrRctlConfigEnabled() == 0, "T7: після другого запису -- знову вимкнено");
@@ -244,6 +248,46 @@ int main(void)
     dmrRctlConfigSetAllow(DMR_RCTL_ALLOW_MONITOR);
     CHECK(dmrRctlMonitorSecs() == 120, "T17: запис дозволів не скинув тривалість");
     CHECK((dmrRctlConfigAllowRaw() & DMR_RCTL_ALLOW_MONITOR) != 0, "T17: запис тривалості не скинув дозволи");
+
+    /* 18) Вигляд пункту меню «Доступ RCTL» (uiFlags, версія 5) -- пакується у верхню
+     *     половину байта allow, БЕЗ зміни довжини блока (звідси й головний ризик: якщо
+     *     колись знову зробити його окремим полем, будь-який запис на рації, де блок
+     *     RCTL уже існує, почне мовчки провалюватись -- саме такий баг тут і ловимо). */
+    mock_codeplug_clear();
+    CHECK(dmrRctlMenuHidden() == 0, "T18: без блока -> пункт меню видимий (типово)");
+
+    CHECK(dmrRctlConfigSetAllow(DMR_RCTL_ALLOW_CHECK) == 1, "T18: записано дозволи (створює блок)");
+    CHECK(dmrRctlConfigSetUiFlags(DMR_RCTL_UI_HIDE_ACCESS_MENU) == 1,
+          "T18: сховати пункт меню -- запис В ІСНУЮЧИЙ блок вдався (довжина не змінилась)");
+    CHECK(dmrRctlMenuHidden() == 1, "T18: пункт меню тепер схований");
+    CHECK(dmrRctlCommandAllowed(DMR_RCTL_CMD_CHECK_REQ) == 1,
+          "T18: приховання меню НЕ чіпає раніше виставлені дозволи (allow lower nibble цілий)");
+
+    CHECK(dmrRctlConfigSetAllow(DMR_RCTL_ALLOW_ALL) == 1, "T18: зміна дозволів після приховання меню");
+    CHECK(dmrRctlMenuHidden() == 1, "T18: ...не повертає пункт меню назад (allow upper nibble цілий)");
+
+    CHECK(dmrRctlConfigSetUiFlags(0) == 1, "T18: показати пункт меню знову");
+    CHECK(dmrRctlMenuHidden() == 0, "T18: пункт меню знову видимий");
+    CHECK(dmrRctlConfigAllowRaw() == DMR_RCTL_ALLOW_ALL,
+          "T18: показ меню НЕ чіпає дозволи, виставлені раніше");
+
+    /* Блок, який колись записала СТАРА прошивка/CPS-утиліта (версія < 5, верхня половина
+     * allow завжди нульова, бо SetAllow завжди маскував через ALLOW_ALL) -- має читатись
+     * як "пункт видимий" без жодної міграції даних, і мати змогу записати uiFlags у той
+     * самий, уже існуючий 8-байтовий блок. */
+    mock_codeplug_clear();
+    uint8_t old[8];
+    old[0] = 'R'; old[1] = 'C'; old[2] = 'T'; old[3] = 'L';
+    old[4] = 4; old[5] = 1; old[6] = DMR_RCTL_ALLOW_CHECK; old[7] = 45;
+    mock_codeplug_set_block(CODEPLUG_CUSTOM_DATA_TYPE_RCTL_CONFIG, old, (int)sizeof old);
+    dmrRctlConfigReload();
+    CHECK(dmrRctlMenuHidden() == 0, "T18: старий блок v4 -> пункт меню видимий без міграції");
+    CHECK(dmrRctlConfigSetUiFlags(DMR_RCTL_UI_HIDE_ACCESS_MENU) == 1,
+          "T18: старий 8-байтовий блок -> запис uiFlags вдався (довжина не змінилась)");
+    CHECK(dmrRctlMenuHidden() == 1, "T18: тепер схований");
+    CHECK(dmrRctlCommandAllowed(DMR_RCTL_CMD_CHECK_REQ) == 1,
+          "T18: дозволи зі старого блоку пережили запис uiFlags");
+    CHECK(dmrRctlMonitorSecs() == 45, "T18: monitorSecs зі старого блоку теж пережив запис uiFlags");
 
     if (fails)
     {

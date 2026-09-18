@@ -15,17 +15,27 @@ typedef struct
 	char     magic[4];      /* "RCTL" */
 	uint8_t  version;       /* 3 -- 2026-09-05: додано allow (див. нижче). 2 -- без allow */
 	uint8_t  enabled;       /* головний перемикач: 0 = не приймати команди НІ ВІД КОГО */
-	uint8_t  allow;         /* бітова маска DMR_RCTL_ALLOW_*: які саме команди дозволені */
+	uint8_t  allow;         /* біти 0-3: DMR_RCTL_ALLOW_* (дозволені команди).
+	                          * біти 4-7: DMR_RCTL_UI_* (версія 5, вигляд на рації) --
+	                          * НЕ окреме поле, а саме верхня половина ЦЬОГО байта. */
 	uint8_t  monitorSecs;   /* версія 4: тривалість відповіді на Monitor (сек); 0 = типова */
 } dmrRctlOnFlashCfg_t;
 
-/* Розмір блока НЕ змінився (8 байт): allow зайняв один із двох reserved-байтів. Тому старий
- * блок версії 2 читається тим самим кодом, і CPS-утиліті достатньо дописати один байт.
+/* Розмір блока НЕ змінюємо -- 8 байт, ані байтом більше. codeplugSetOpenGD77CustomData()
+ * (і дзеркальний custom_data.py на ПК) ЗАБОРОНЯЄ міняти довжину вже існуючого блоку
+ * (return false, "not permitted to change block size") -- на рації, де RCTL уже хоч раз
+ * вмикали, блок "RCTL" довжиною 8 байт уже лежить у флеші, і будь-який запис довшого
+ * блоку просто мовчки провалиться (ok=0), а фіча не запрацює на жодній вже налаштованій
+ * рації. Тому версія 5 (вигляд меню) НЕ додає uiFlags окремим полем, а займає верхню
+ * половину байта allow (біти 4-7), яка на кожному блоці, коли-небудь записаному старим
+ * кодом, і так завжди дорівнювала нулю (dmrRctlConfigSetAllow() завжди маскував allow
+ * через DMR_RCTL_ALLOW_ALL=0x0F) -- тобто старий блок автоматично читається як "пункт
+ * меню видимий", без потреби у зміні розміру чи спеціальній міграції даних.
  *
  * Міграція з версії 2: там існувала лише радіоперевірка, тож allow = ALLOW_CHECK. Не
  * ALLOW_ALL: інакше оновлення прошивки мовчки роздало б рації дозволи на команди, яких
  * власник ніколи не вмикав. */
-#define RCTL_CFG_VERSION  4
+#define RCTL_CFG_VERSION  5
 
 /* Типова тривалість відповіді на Monitor, якщо ще не виставлена (сек). */
 #define RCTL_MONITOR_SECS_DEFAULT  30u
@@ -140,8 +150,19 @@ static void cfg_load(void)
 			s_cfg.monitorSecs = 0;
 			s_cfg.version = RCTL_CFG_VERSION;
 		}
+		if (s_cfg.version < 5)
+		{
+			/* Блок версії <5 писав allow, завжди маскуючи його через ALLOW_ALL (0x0F) --
+			 * тобто верхня половина байта (де тепер живуть DMR_RCTL_UI_*) уже нульова,
+			 * що дослівно й означає «пункт меню видимий». Даних міняти не треба, лише
+			 * позначку версії -- розмір блоку не змінився. */
+			s_cfg.version = RCTL_CFG_VERSION;
+		}
 		if (s_cfg.monitorSecs > RCTL_MONITOR_SECS_MAX) { s_cfg.monitorSecs = RCTL_MONITOR_SECS_MAX; }
-		s_cfg.allow &= (uint8_t)DMR_RCTL_ALLOW_ALL;   /* чужі біти ігноруємо */
+		/* НЕ маскуємо тут s_cfg.allow через ALLOW_ALL -- це стерло б верхню половину
+		 * (DMR_RCTL_UI_*). Кожен читач сам маскує потрібну собі половину:
+		 * dmrRctlAllowMask()/dmrRctlConfigAllowRaw() -> ALLOW_ALL, dmrRctlConfigUiFlags() ->
+		 * DMR_RCTL_UI_ALL. */
 		return;
 	}
 	memset(&s_cfg, 0, sizeof s_cfg);   /* відсутній/побитий блок -> fail closed: enabled=0 (ніхто) */
@@ -284,6 +305,39 @@ int dmrRctlCommandAllowed(uint8_t cmd)
 	return ((dmrRctlAllowMask() & bit) != 0);
 }
 
+/* Чи ховати пункт «Доступ RCTL» у меню рації. Ставиться з ПК (кнопка «Віддалене
+ * керування» у прошивальнику): у флоті буває треба, щоб боєць не міг сам собі вимкнути
+ * приймання команд. Це саме ВИГЛЯД: гейт дозволів працює незалежно від видимості пункту. */
+int dmrRctlMenuHidden(void)
+{
+	cfg_ensure();
+	return ((s_cfg.allow & DMR_RCTL_UI_HIDE_ACCESS_MENU) != 0) ? 1 : 0;
+}
+
+uint8_t dmrRctlConfigUiFlags(void)
+{
+	cfg_ensure();
+	return (uint8_t)(s_cfg.allow & DMR_RCTL_UI_ALL);
+}
+
+int dmrRctlConfigSetUiFlags(uint8_t flags)
+{
+	cfg_ensure();
+
+	if (memcmp(s_cfg.magic, "RCTL", 4) != 0)
+	{
+		memset(&s_cfg, 0, sizeof s_cfg);
+		memcpy(s_cfg.magic, "RCTL", 4);
+	}
+	s_cfg.version = RCTL_CFG_VERSION;
+	/* uiFlags живе у верхній половині allow -- нижню (реальні дозволи команд) не чіпаємо. */
+	s_cfg.allow = (uint8_t)((s_cfg.allow & DMR_RCTL_ALLOW_ALL) | (flags & DMR_RCTL_UI_ALL));
+
+	int ok = codeplugSetOpenGD77CustomData(CODEPLUG_CUSTOM_DATA_TYPE_RCTL_CONFIG, (uint8_t *)&s_cfg, (int)sizeof s_cfg) ? 1 : 0;
+	dmrRctlConfigReload();
+	return ok;
+}
+
 int dmrRctlConfigSetAllow(uint8_t mask)
 {
 	cfg_ensure();
@@ -294,7 +348,8 @@ int dmrRctlConfigSetAllow(uint8_t mask)
 		memcpy(s_cfg.magic, "RCTL", 4);
 	}
 	s_cfg.version = RCTL_CFG_VERSION;
-	s_cfg.allow = (uint8_t)(mask & DMR_RCTL_ALLOW_ALL);
+	/* дозволи живуть у нижній половині allow -- верхню (DMR_RCTL_UI_*, вигляд меню) не чіпаємо. */
+	s_cfg.allow = (uint8_t)((s_cfg.allow & DMR_RCTL_UI_ALL) | (mask & DMR_RCTL_ALLOW_ALL));
 
 	int ok = codeplugSetOpenGD77CustomData(CODEPLUG_CUSTOM_DATA_TYPE_RCTL_CONFIG, (uint8_t *)&s_cfg, (int)sizeof s_cfg) ? 1 : 0;
 	dmrRctlConfigReload();

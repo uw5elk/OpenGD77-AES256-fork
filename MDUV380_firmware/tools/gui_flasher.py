@@ -859,6 +859,17 @@ class RctlConfigWindow(tk.Toplevel):
         ttk.Checkbutton(self, text="Приймати команди RCTL на цій рації (enabled)",
                         variable=self.enabled_var).pack(anchor="w", padx=12, pady=(4, 0))
 
+        self.menu_visible_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(self, text="Показувати пункт «Доступ RCTL» в меню Опцій на рації",
+                        variable=self.menu_visible_var).pack(anchor="w", padx=12, pady=(4, 0))
+        ttk.Label(
+            self,
+            text=("Лише вигляд: сховати пункт можна, щоб боєць не міг сам собі вимкнути "
+                  "приймання команд у полі. Дозволи (checkbox вище) працюють незалежно "
+                  "від видимості пункту."),
+            wraplength=440, justify="left", foreground="#666666",
+        ).pack(anchor="w", padx=12, pady=(0, 0))
+
         btn_row = ttk.Frame(self)
         btn_row.pack(fill="x", **pad)
         ttk.Button(btn_row, text="Прочитати поточний стан", command=self._on_read).pack(side="left")
@@ -897,6 +908,7 @@ class RctlConfigWindow(tk.Toplevel):
 
     def _apply_state(self, state):
         self.enabled_var.set(state["enabled"])
+        self.menu_visible_var.set(not state.get("menu_hidden", False))
 
     # --- дії користувача -----------------------------------------------------------
 
@@ -909,6 +921,7 @@ class RctlConfigWindow(tk.Toplevel):
         if self.busy:
             return
         enabled = self.enabled_var.get()
+        menu_hidden = not self.menu_visible_var.get()
         if enabled:
             if not messagebox.askokcancel(
                 "Увімкнути RCTL?",
@@ -917,7 +930,15 @@ class RctlConfigWindow(tk.Toplevel):
                 "ID (як у Motorola/Hytera). Продовжити?",
             ):
                 return
-        self._run_worker(lambda: self._write_worker(enabled), "Записую...")
+        if menu_hidden:
+            if not messagebox.askokcancel(
+                "Сховати пункт меню?",
+                "Пункт «Доступ RCTL» зникне з меню Опцій на рації -- боєць не зможе сам "
+                "собі увімкнути/вимкнути приймання команд у полі. Повернути видимість "
+                "можна лише звідси, з прошивальника. Продовжити?",
+            ):
+                return
+        self._run_worker(lambda: self._write_worker(enabled, menu_hidden), "Записую...")
 
     # --- фонові операції -----------------------------------------------------------
 
@@ -935,20 +956,33 @@ class RctlConfigWindow(tk.Toplevel):
     def _read_worker(self):
         with self._connect() as ser:
             payload = cd.read_block(ser, rctl.TYPE_RCTL_CONFIG, rctl.PAYLOAD_LEN)
-            state = rctl.parse_payload(payload) if payload else {"version": rctl.VERSION, "enabled": False}
+            state = rctl.parse_payload(payload) if payload else {
+                "version": rctl.VERSION, "enabled": False, "allow": 0,
+                "menu_hidden": False, "monitor_secs": 0,
+            }
             self.queue.put(("state", state))
-            print("Стан: enabled={}".format(state["enabled"]))
+            print("Стан: enabled={}, пункт меню={}".format(
+                state["enabled"], "схований" if state.get("menu_hidden") else "видимий"))
 
-    def _write_worker(self, enabled):
+    def _write_worker(self, enabled, menu_hidden):
         with self._connect() as ser:
-            payload = rctl.build_payload(enabled)
+            # allow/monitor_secs -- зберігаємо те, що вже є на рації (це вікно керує
+            # лише enabled і видимістю пункту меню; окремих контролів для дозволів/
+            # тривалості Monitor тут немає -- rctl_config.py --allow, за потреби).
+            current = cd.read_block(ser, rctl.TYPE_RCTL_CONFIG, rctl.PAYLOAD_LEN)
+            cur = rctl.parse_payload(current) if current else None
+            allow = cur["allow"] if cur else rctl.ALLOW_CHECK
+            monitor_secs = cur["monitor_secs"] if cur else 0
+
+            payload = rctl.build_payload(enabled, allow, monitor_secs, menu_hidden)
             ok, msg = cd.write_block(ser, rctl.TYPE_RCTL_CONFIG, payload)
             if not ok:
                 raise RuntimeError(msg)
             rb = cd.read_block(ser, rctl.TYPE_RCTL_CONFIG, rctl.PAYLOAD_LEN)
             verify_ok = (rb == payload)
-            print("Записано ({}), enabled={}. Звірка читанням: {}.".format(
-                msg, enabled, "OK" if verify_ok else "НЕЗБІГ"))
+            print("Записано ({}), enabled={}, пункт меню={}. Звірка читанням: {}.".format(
+                msg, enabled, "схований" if menu_hidden else "видимий",
+                "OK" if verify_ok else "НЕЗБІГ"))
 
     def _run_worker(self, fn, status_text):
         self.busy = True

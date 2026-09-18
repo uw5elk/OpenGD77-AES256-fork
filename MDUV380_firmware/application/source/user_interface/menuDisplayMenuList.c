@@ -30,6 +30,16 @@
 #include "user_interface/uiLocalisation.h"
 #include "user_interface/uiUtilities.h"
 
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+#include "functions/dmr_rctl_cfg.h"
+/* Копія списку Опцій без схованих пунктів. Поля menuItemNewData_t оголошені const, тож
+ * пишемо в дзеркальний тип тієї самої розкладки (два int) і віддаємо його як const --
+ * так ми не пишемо крізь const і не тягнемо const_cast-подібних трюків.
+ * Розмір з запасом: сама таблиця const і її довжина відома лише в menuSystem.c. */
+typedef struct { int stringOffset; int menuNum; } menuItemWritable_t;
+static menuItemWritable_t s_filteredItems[32];
+#endif
+
 static void updateScreen(bool isFirstRun);
 static void handleEvent(uiEvent_t *ev);
 
@@ -44,6 +54,29 @@ menuStatus_t menuDisplayMenuList(uiEvent_t *ev, bool isFirstRun)
 
 		menuDataGlobal.currentMenuList = (menuItemNewData_t *)menuDataGlobal.data[currentMenuNumber]->items;
 		menuDataGlobal.numItems = menuDataGlobal.data[currentMenuNumber]->numItems;
+
+#if defined(ENABLE_AES) && defined(ENABLE_DMR_DATA)
+		/* Форк: пункт «Доступ RCTL» можна сховати з ПК (прошивальник -> «Віддалене
+		 * керування»), щоб у полі боєць не вимкнув собі приймання команд. Таблиця меню --
+		 * const і рахується на етапі компіляції, тож фільтруємо як порожні зони: робимо
+		 * копію без цього пункту й показуємо її. Гейт дозволів від видимості НЕ залежить. */
+		if ((currentMenuNumber == MENU_OPTIONS) && dmrRctlMenuHidden())
+		{
+			int n = 0;
+			for (int i = 0; i < menuDataGlobal.numItems; i++)
+			{
+				if (menuDataGlobal.currentMenuList[i].menuNum == MENU_RCTL_CONFIG) { continue; }
+				if (n < (int)(sizeof s_filteredItems / sizeof s_filteredItems[0]))
+				{
+					s_filteredItems[n].stringOffset = menuDataGlobal.currentMenuList[i].stringOffset;
+					s_filteredItems[n].menuNum      = menuDataGlobal.currentMenuList[i].menuNum;
+					n++;
+				}
+			}
+			menuDataGlobal.currentMenuList = (menuItemNewData_t *)s_filteredItems;
+			menuDataGlobal.numItems = n;
+		}
+#endif
 
 		if ((currentMenuNumber != MENU_MAIN_MENU) && (menuDataGlobal.controlData.stackPosition >= 1))
 		{
