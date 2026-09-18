@@ -107,6 +107,7 @@ static uiNotificationData_t notificationData =
 
 static void displayMessage(void);
 static void displaySmsFullScreen(void);
+static void displayLevelCard(const char *title, const char *valueText, int16_t pct);
 
 void uiNotificationShow(uiNotificationType_t type, uiNotificationID_t id, uint32_t msTimeout, const char *message, bool immediateRender)
 {
@@ -189,35 +190,11 @@ void uiNotificationRefresh(void)
 			case NOTIFICATION_TYPE_VOLUME:
 #endif
 			{
-				// Форк: повноекранне вікно регулювання гучності / шумоподавлення.
-				// Замість маленької коробки по центру -- на весь екран: заголовок,
-				// велике число у відсотках і акуратна смуга-індикатор. Читабельніше
-				// в русі й у польових умовах (баг #5).
-				char buffer[SCREEN_LINE_BUFFER_SIZE];
-				const int16_t barX = 14;
-				const int16_t barW = (DISPLAY_SIZE_X - (2 * barX));
-				const int16_t barY = 92;
-				const int16_t barH = 18;
+				// Форк: повноекранне вікно регулювання гучності / шумоподавлення (баг #5).
+				// Саму картку малює спільна displayLevelCard() -- та сама, що й потужність.
+				char valueText[SCREEN_LINE_BUFFER_SIZE];
 				int16_t pct;
-				int16_t fillW;
 				const char *title;
-
-				// Форк: кольори за темою. НІЧ -- яскраво-жовтий на темному (максимальна
-				// читабельність у русі/полі). ДЕНЬ -- темно-синій на білому (на прохання
-				// fleet: жовтий на світлому тлі денної теми не читався б).
-				uint16_t colBg, colFg, colDec;
-				if (DAYTIME_CURRENT == NIGHT)
-				{
-					colBg  = PLATFORM_COLOUR_FORMAT_SWAP_BYTES(RGB888_TO_PLATFORM_COLOUR_FORMAT(0x0C0C14));
-					colFg  = PLATFORM_COLOUR_FORMAT_SWAP_BYTES(RGB888_TO_PLATFORM_COLOUR_FORMAT(0xFFE000));
-					colDec = PLATFORM_COLOUR_FORMAT_SWAP_BYTES(RGB888_TO_PLATFORM_COLOUR_FORMAT(0x786914));
-				}
-				else
-				{
-					colBg  = PLATFORM_COLOUR_FORMAT_SWAP_BYTES(RGB888_TO_PLATFORM_COLOUR_FORMAT(0xFFFFFF));  // біле тло
-					colFg  = PLATFORM_COLOUR_FORMAT_SWAP_BYTES(RGB888_TO_PLATFORM_COLOUR_FORMAT(0x0A2A6B));  // темно-синій текст/смуга
-					colDec = PLATFORM_COLOUR_FORMAT_SWAP_BYTES(RGB888_TO_PLATFORM_COLOUR_FORMAT(0x6E86C0));  // світліший синій -- рамка
-				}
 
 #if defined(HAS_SOFT_VOLUME)
 				if (notificationData.type == NOTIFICATION_TYPE_VOLUME)
@@ -235,56 +212,26 @@ void uiNotificationRefresh(void)
 					title = currentLanguage->squelch;
 				}
 
-				if (pct < 0)
-				{
-					pct = 0;
-				}
-				else if (pct > 100)
-				{
-					pct = 100;
-				}
-
-				// Фон на весь екран
-				displaySetForegroundAndBackgroundColours(colFg, colBg);
-				displayFillRect(0, 0, DISPLAY_SIZE_X, DISPLAY_SIZE_Y, true);
-
-				// Рамка
-				displaySetForegroundAndBackgroundColours(colDec, colBg);
-				displayDrawRect(1, 1, (DISPLAY_SIZE_X - 2), (DISPLAY_SIZE_Y - 2), false);
-
-				// Заголовок
-				displaySetForegroundAndBackgroundColours(colFg, colBg);
-				strncpy(buffer, title, (SCREEN_LINE_BUFFER_SIZE - 1));
-				buffer[SCREEN_LINE_BUFFER_SIZE - 1] = 0;
-				displayPrintCentered(16, buffer, FONT_SIZE_3);
-
-				// Велике число у відсотках
-				snprintf(buffer, SCREEN_LINE_BUFFER_SIZE, "%d%%", pct);
-				displayPrintCentered(44, buffer, FONT_SIZE_4);
-
-				// Смуга-індикатор
-				displaySetForegroundAndBackgroundColours(colDec, colBg);
-				displayDrawRect(barX, barY, barW, barH, false);
-
-				fillW = (int16_t)(((barW - 4) * pct) / 100);
-				if (fillW > 0)
-				{
-					displaySetForegroundAndBackgroundColours(colFg, colBg);
-					displayFillRect((barX + 2), (barY + 2), fillW, (barH - 4), false);
-				}
+				pct = CLAMP(pct, 0, 100);
+				snprintf(valueText, SCREEN_LINE_BUFFER_SIZE, "%d%%", pct);
+				displayLevelCard(title, valueText, pct);
 			}
 			break;
 
 			case NOTIFICATION_TYPE_POWER:
 			{
-				char buffer[SCREEN_LINE_BUFFER_SIZE];
+				// Форк: та сама повноекранна картка, що й гучність/шумоподавлення (раніше
+				// була вузька рамка по центру, що перекривала S-метр і обрізалась праворуч
+				// -- виглядала інакше й гірше читалась у польових умовах). Формат великого
+				// значення лишився той самий -- "500mW"/"1W"/"5W" з getPowerLevel()+Unit().
+				// Смуга -- позиція рівня потужності серед УСІХ можливих (0..MAX_POWER_SETTING_NUM),
+				// а не відсоток від безперервного діапазону, як у гучності/шумоподавлення.
+				char valueText[SCREEN_LINE_BUFFER_SIZE];
 				uint8_t powerLevel = trxGetPowerLevel();
+				int16_t pct = (int16_t)(((int32_t)powerLevel * 100) / MAX_POWER_SETTING_NUM);
 
-				displayThemeApply(THEME_ITEM_FG_DECORATION, THEME_ITEM_BG_NOTIFICATION);
-				displayDrawRoundRectWithDropShadow((DISPLAY_SIZE_X / 4), YBOX, (DISPLAY_SIZE_X / 2), INNERBOX_H, 3, true);
-				sprintf(buffer, "%s%s", getPowerLevel(powerLevel), getPowerLevelUnit(powerLevel));
-				displayThemeApply(THEME_ITEM_FG_NOTIFICATION, THEME_ITEM_BG_NOTIFICATION);
-				displayPrintCentered(YTEXT, buffer, FONT_SIZE_3);
+				snprintf(valueText, SCREEN_LINE_BUFFER_SIZE, "%s%s", getPowerLevel(powerLevel), getPowerLevelUnit(powerLevel));
+				displayLevelCard(currentLanguage->power, valueText, pct);
 			}
 			break;
 
@@ -425,6 +372,77 @@ void uiNotificationHide(bool immediateRender)
 uiNotificationID_t uiNotificationGetId(void)
 {
 	return notificationData.id;
+}
+
+/* Форк: спільна повноекранна картка "заголовок + велике значення + смуга-індикатор".
+ * Спершу писана для гучності/шумоподавлення (баг #5, 2026-09-11), тепер перевикористана й
+ * для потужності (2026-09-18): та сама картка виглядає й поводиться однаково для всіх
+ * трьох -- лише подача (значення для показу й позиція смуги) різна для кожного типу,
+ * рахує її сам виклик у uiNotificationRefresh(). Керування (валкодер/таймаут) тут не
+ * чіпаємо -- воно й так живе поза відмальовкою, у коді, що змінює currentChannelData->sql /
+ * lastVolume / trxSetPowerFromLevel() і викликає uiNotificationShow().
+ *
+ * valueText -- вже ГОТОВИЙ рядок для великого числа по центру ("42%" для гучності/
+ * шумоподавлення, "500mW"/"1W"/"5W" для потужності -- формат не змінюємо, лише переносимо
+ * малювання). pct (0-100) -- де саме заповнена смуга; для потужності це позиція серед
+ * дискретних рівнів (mW/W), а не відсоток від безперервного діапазону. */
+static void displayLevelCard(const char *title, const char *valueText, int16_t pct)
+{
+	char buffer[SCREEN_LINE_BUFFER_SIZE];
+	const int16_t barX = 14;
+	const int16_t barW = (DISPLAY_SIZE_X - (2 * barX));
+	const int16_t barY = 92;
+	const int16_t barH = 18;
+	int16_t fillW;
+
+	pct = CLAMP(pct, 0, 100);
+
+	// Форк: кольори за темою. НІЧ -- яскраво-жовтий на темному (максимальна
+	// читабельність у русі/полі). ДЕНЬ -- темно-синій на білому (на прохання
+	// fleet: жовтий на світлому тлі денної теми не читався б).
+	uint16_t colBg, colFg, colDec;
+	if (DAYTIME_CURRENT == NIGHT)
+	{
+		colBg  = PLATFORM_COLOUR_FORMAT_SWAP_BYTES(RGB888_TO_PLATFORM_COLOUR_FORMAT(0x0C0C14));
+		colFg  = PLATFORM_COLOUR_FORMAT_SWAP_BYTES(RGB888_TO_PLATFORM_COLOUR_FORMAT(0xFFE000));
+		colDec = PLATFORM_COLOUR_FORMAT_SWAP_BYTES(RGB888_TO_PLATFORM_COLOUR_FORMAT(0x786914));
+	}
+	else
+	{
+		colBg  = PLATFORM_COLOUR_FORMAT_SWAP_BYTES(RGB888_TO_PLATFORM_COLOUR_FORMAT(0xFFFFFF));  // біле тло
+		colFg  = PLATFORM_COLOUR_FORMAT_SWAP_BYTES(RGB888_TO_PLATFORM_COLOUR_FORMAT(0x0A2A6B));  // темно-синій текст/смуга
+		colDec = PLATFORM_COLOUR_FORMAT_SWAP_BYTES(RGB888_TO_PLATFORM_COLOUR_FORMAT(0x6E86C0));  // світліший синій -- рамка
+	}
+
+	// Фон на весь екран
+	displaySetForegroundAndBackgroundColours(colFg, colBg);
+	displayFillRect(0, 0, DISPLAY_SIZE_X, DISPLAY_SIZE_Y, true);
+
+	// Рамка
+	displaySetForegroundAndBackgroundColours(colDec, colBg);
+	displayDrawRect(1, 1, (DISPLAY_SIZE_X - 2), (DISPLAY_SIZE_Y - 2), false);
+
+	// Заголовок
+	displaySetForegroundAndBackgroundColours(colFg, colBg);
+	strncpy(buffer, title, (SCREEN_LINE_BUFFER_SIZE - 1));
+	buffer[SCREEN_LINE_BUFFER_SIZE - 1] = 0;
+	displayPrintCentered(16, buffer, FONT_SIZE_3);
+
+	// Велике значення по центру (готовий рядок -- "42%" або "500mW" тощо)
+	strncpy(buffer, valueText, (SCREEN_LINE_BUFFER_SIZE - 1));
+	buffer[SCREEN_LINE_BUFFER_SIZE - 1] = 0;
+	displayPrintCentered(44, buffer, FONT_SIZE_4);
+
+	// Смуга-індикатор
+	displaySetForegroundAndBackgroundColours(colDec, colBg);
+	displayDrawRect(barX, barY, barW, barH, false);
+
+	fillW = (int16_t)(((barW - 4) * pct) / 100);
+	if (fillW > 0)
+	{
+		displaySetForegroundAndBackgroundColours(colFg, colBg);
+		displayFillRect((barX + 2), (barY + 2), fillW, (barH - 4), false);
+	}
 }
 
 /* Форк: вхідне SMS на ВЕСЬ екран, з переносом по словах, тримається до RED.

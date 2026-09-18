@@ -341,6 +341,7 @@ const stringsTable_t englishLanguage =
 #endif
 #if defined(LANGUAGE_BUILD_UKRAINIAN)
 .gps_absent                              = "No GPS", // MaxLen: 16
+.power                                    = "Power", // MaxLen: 16 (заголовок картки потужності, 2026-09-18)
 #endif
 };
 /********************************************************************

@@ -342,6 +342,7 @@ const stringsTable_t ukrainianLanguage =
 #endif
 #if defined(LANGUAGE_BUILD_UKRAINIAN)
 .gps_absent                              = "GPS відсутній", // MaxLen: 16
+.power                                    = "Потужність", // MaxLen: 16 (заголовок картки потужності, 2026-09-18)
 #endif
 };
 /********************************************************************

@@ -361,6 +361,12 @@ typedef struct
    // ОСТАННІМ і лише під українським прапорцем, щоб розкладка stringsTable_t для решти
    // збірок лишилась байт-в-байт тією ж -- її читає ще й мовний файл, що пише CPS.
    const char gps_absent[LANGUAGE_TEXTS_LENGTH];
+   // Заголовок повноекранної картки ПОТУЖНОСТІ (2026-09-18, той самий стиль, що й
+   // Гучність/Шумоподавлення -- displayLevelCard() у uiNotification.c). Додано в тому
+   // самому українському блоці й з тієї самої причини, що й gps_absent вище: лише
+   // ОСТАННІМ полем, щоб розкладка stringsTable_t для збірок без LANGUAGE_BUILD_UKRAINIAN
+   // лишилась байт-в-байт тією ж.
+   const char power[LANGUAGE_TEXTS_LENGTH];
 #endif
 } stringsTable_t;
 
