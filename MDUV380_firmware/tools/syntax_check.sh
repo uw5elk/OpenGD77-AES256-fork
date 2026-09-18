@@ -29,9 +29,19 @@
 # формати printf тощо -- тобто рівно той клас багів, що ламав CI.
 # Остаточне слово завжди за збіркою arm-none-eabi-gcc у GitHub Actions.
 #
-# Прапорці збірки нижче навмисно збігаються з роботою "build (українська,
-# ENABLE_AES=1 ENABLE_DMR_DATA=1)" у .github/workflows/build.yml -- саме та
-# конфігурація, яку ми прошиваємо, і саме та, що падала.
+# Набори прапорців нижче навмисно збігаються з УСІМА трьома робочими job'ами збірки
+# в .github/workflows/build.yml (build ENABLE_AES=0, build ENABLE_AES=1, build-ukrainian).
+#
+# ЩЕ ОДНА ПРИЧИНА ІСНУВАННЯ (2026-09-18): раніше тут був ОДИН жорстко заданий набір
+# defines -- саме конфігурація build-ukrainian (LANGUAGE_BUILD_UKRAINIAN завжди
+# ввімкнено). Коміт 90097cc (попап потужності) додав у uiNotification.c безумовне
+# звертання до currentLanguage->power -- поля, що існує в stringsTable_t лише під
+# LANGUAGE_BUILD_UKRAINIAN. Ця перевірка його не спіймала: вона й сама завжди
+# компілювала з тим самим прапорцем, тож job'и build(ENABLE_AES=0) і
+# build(ENABLE_AES=1) впали в CI, а syntax_check.sh локально був зелений. Тепер
+# перевірка проганяє КОЖЕН файл через ВСІ конфігурації матриці -- саме той клас
+# розбіжності "поле існує лише в одній конфігурації" тепер ловиться тут, за секунди,
+# без ARM-тулчейну.
 
 set -u
 
@@ -59,12 +69,20 @@ INCS=(
 	-IUSB_DEVICE/App -IUSB_DEVICE/Target -Iapplication/include
 )
 
-DEFS=(
+# Спільні для всіх трьох конфігурацій прапорці.
+DEFS_COMMON=(
 	-DUSE_HAL_DRIVER -DSTM32F405xx
 	-DPLATFORM_MDUV380 -DPLATFORM_VARIANT_UV380_PLUS_10W -DNDEBUG
-	-DENABLE_AES -DENABLE_DMR_DATA -DLANGUAGE_BUILD_UKRAINIAN
 	-DGITVERSION=syntaxcheck
 )
+
+# Три набори -- рівно ті самі прапорці, що й три job'и збірки в build.yml. Порядок
+# значення не має, але імена (перший стовпець у CONFIGS нижче) йдуть у звіт.
+DEFS_AES0=("${DEFS_COMMON[@]}")                                            # build (ENABLE_AES=0)
+DEFS_AES1=("${DEFS_COMMON[@]}" -DENABLE_AES)                               # build (ENABLE_AES=1)
+DEFS_UA=("${DEFS_COMMON[@]}" -DENABLE_AES -DENABLE_DMR_DATA -DLANGUAGE_BUILD_UKRAINIAN)  # build-ukrainian
+
+CONFIGS=(AES0 AES1 UA)
 
 # Щоб побачити попередження ВЛАСНОГО коду, запускай: SHOW_WARNINGS=1 ...
 # Три класи помилок, які МАЮТЬ валити перевірку.
@@ -97,21 +115,25 @@ fi
 failed=0
 total=0
 
-for f in "${FILES[@]}"; do
-	total=$((total + 1))
-	out="$("$CC" -fsyntax-only -std=gnu11 "${WARN_FLAGS[@]}" "${INCS[@]}" "${DEFS[@]}" "$f" 2>&1)"
-	if printf '%s' "$out" | grep -q 'error:'; then
-		failed=$((failed + 1))
-		echo "=== ПОМИЛКА: $f"
-		printf '%s\n' "$out" | grep -A 2 'error:' | head -20
-	elif [ -n "$out" ] && [ "${SHOW_WARNINGS:-0}" = "1" ]; then
-		echo "--- попередження: $f"
-		printf '%s\n' "$out" | head -20
-	fi
+for cfg in "${CONFIGS[@]}"; do
+	declare -n cfg_defs="DEFS_${cfg}"
+	for f in "${FILES[@]}"; do
+		total=$((total + 1))
+		out="$("$CC" -fsyntax-only -std=gnu11 "${WARN_FLAGS[@]}" "${INCS[@]}" "${cfg_defs[@]}" "$f" 2>&1)"
+		if printf '%s' "$out" | grep -q 'error:'; then
+			failed=$((failed + 1))
+			echo "=== ПОМИЛКА [$cfg]: $f"
+			printf '%s\n' "$out" | grep -A 2 'error:' | head -20
+		elif [ -n "$out" ] && [ "${SHOW_WARNINGS:-0}" = "1" ]; then
+			echo "--- попередження [$cfg]: $f"
+			printf '%s\n' "$out" | head -20
+		fi
+	done
+	unset -n cfg_defs
 done
 
 echo
-echo "Перевірено файлів: $total, з помилками: $failed"
+echo "Перевірено файлів: $total (× ${#CONFIGS[@]} конфігурації: ${CONFIGS[*]}), з помилками: $failed"
 
 if [ "$failed" -ne 0 ]; then
 	echo "СИНТАКСИЧНА ПЕРЕВІРКА НЕ ПРОЙДЕНА -- ці помилки зламають і збірку CI."

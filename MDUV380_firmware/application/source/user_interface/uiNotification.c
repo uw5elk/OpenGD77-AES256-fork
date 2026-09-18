@@ -229,9 +229,22 @@ void uiNotificationRefresh(void)
 				char valueText[SCREEN_LINE_BUFFER_SIZE];
 				uint8_t powerLevel = trxGetPowerLevel();
 				int16_t pct = (int16_t)(((int32_t)powerLevel * 100) / MAX_POWER_SETTING_NUM);
+				// Форк, виправлення 2026-09-18: currentLanguage->power існує лише в
+				// українському блоці stringsTable_t (uiLanguage.h, під
+				// LANGUAGE_BUILD_UKRAINIAN) -- розкладку структури там навмисно не
+				// чіпаємо, щоб не зрушити її для збірок без цього прапорця. Тому й
+				// звертання до поля тут МАЄ бути умовним; безумовне звертання ламало
+				// збірки build(ENABLE_AES=0) і build(ENABLE_AES=1) у CI (їх немає в
+				// stringsTable_t для тих конфігурацій), а syntax_check.sh цього не
+				// ловив, бо сам завжди компілює з -DLANGUAGE_BUILD_UKRAINIAN.
+#if defined(LANGUAGE_BUILD_UKRAINIAN)
+				const char *powerTitle = currentLanguage->power;
+#else
+				const char *powerTitle = "Power";
+#endif
 
 				snprintf(valueText, SCREEN_LINE_BUFFER_SIZE, "%s%s", getPowerLevel(powerLevel), getPowerLevelUnit(powerLevel));
-				displayLevelCard(currentLanguage->power, valueText, pct);
+				displayLevelCard(powerTitle, valueText, pct);
 			}
 			break;
 
