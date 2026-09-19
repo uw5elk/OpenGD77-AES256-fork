@@ -73,7 +73,38 @@
 #if defined(PLATFORM_MD9600) || defined(PLATFORM_GD77) || defined(PLATFORM_GD77S) || defined(PLATFORM_DM1801) || defined(PLATFORM_DM1801A) || defined(PLATFORM_RD5R)
 static __attribute__((section(".data.$RAM2"))) uint8_t screenNotificationBufData[((DISPLAY_SIZE_X * DISPLAY_SIZE_Y) >> 3)];
 #else
-static  __attribute__((section(".ccmram"))) uint16_t screenNotificationBufData[DISPLAY_SIZE_X * DISPLAY_SIZE_Y];
+/* Форк (2026-09-19, розвідка docs/notification-buffer.md): повноекранний бекап
+ * (40960 Б = 62.5% усієї CCMRAM) прибрано. Раніше тут зберігалась копія ВСЬОГО
+ * екрана на кожен тік, поки видима БУДЬ-ЯКА картка сповіщення -- аби живий фон
+ * (годинник/S-метр/дані виклику) продовжував оновлюватись і коректно повертався
+ * при закритті. Тепер так: для більшості типів (SQUELCH/VOLUME/POWER/SMS -- і так
+ * на весь екран, фону не видно; звичайний MESSAGE/BEARING -- короткий таймаут,
+ * 1-4 с) бекап/відновлення пропускається взагалі -- картка малюється прямо в
+ * живий screenBufData, штовхається на LCD ОДИН раз при показі
+ * (uiNotificationRefresh()), і при закритті екран перемальовується з нуля
+ * (uiNotificationHide() -> menuSystemCallCurrentMenuTick(), той самий шлях, що
+ * вже використовує daytimeThemeApply()).
+ *
+ * ЄДИНИЙ виняток -- NOTIFICATION_ID_USER_APO: попередження про автовимкнення,
+ * до 60 с, і саме тому НЕБЕЗПЕЧНО лишати фон застиглим -- вхідний виклик, що
+ * надійде за цей час, інакше не буде видно (докладніше -- notification-buffer.md,
+ * розділ 3б). Для APO лишили старий бекап/відновлення, але не на весь екран --
+ * лише на смугу рядків, яку може зачепити displayMessage() (той самий код, яким
+ * малюється й сам APO-попап; максимум 4 рядки -- HAS_COLOURS).
+ *
+ * Межі смуги виведені з displayMessage()/displayDrawRoundRectWithDropShadow() для
+ * linesCount=4 (максимум, який дозволяє сам код): y = ((128-64)>>1)-3 = 29;
+ * displayDrawRoundRectWithDropShadow(1, y-1=28, 156, 16*4+6=70, 3, true) малює
+ * тінь (зсув +2 по x, той самий y) і рамку (зсув -2 по y) -- об'єднана площа:
+ * рядки [26, 97] (72 рядки), стовпці [1, 158]. NOTIFICATION_APO_BUF_H=72 --
+ * достатньо для ЦЬОГО коду; якщо колись зміниться формат displayMessage()
+ * (більше рядків, інший шрифт) -- цю константу треба перерахувати заново.
+ * Помилка в цих межах не є небезпечною (памʼять не переповнюється -- memcpy
+ * завжди рівно sizeof(screenNotificationBufData) в обидва боки), у гіршому
+ * випадку -- косметичний артефакт на краю картки APO, не крах. */
+#define NOTIFICATION_APO_BUF_Y0   26
+#define NOTIFICATION_APO_BUF_H    72
+static  __attribute__((section(".ccmram"))) uint16_t screenNotificationBufData[DISPLAY_SIZE_X * NOTIFICATION_APO_BUF_H];
 #endif
 
 typedef struct
@@ -175,11 +206,22 @@ void uiNotificationRefresh(void)
 {
 	if (notificationData.visible)
 	{
-		// copy the primary screen content
-		memcpy(screenNotificationBufData, displayGetPrimaryScreenBuffer(), sizeof(screenNotificationBufData));
+		// Форк (2026-09-19): див. великий коментар біля оголошення screenNotificationBufData.
+		bool isApo = (notificationData.id == NOTIFICATION_ID_USER_APO);
 
 #if defined(PLATFORM_MD9600) || defined(PLATFORM_GD77) || defined(PLATFORM_GD77S) || defined(PLATFORM_DM1801) || defined(PLATFORM_DM1801A) || defined(PLATFORM_RD5R)
+		// copy the primary screen content
+		memcpy(screenNotificationBufData, displayGetPrimaryScreenBuffer(), sizeof(screenNotificationBufData));
 		displayOverrideScreenBuffer(screenNotificationBufData);
+#else
+		if (isApo)
+		{
+			// Бекапимо лише смугу рядків APO-картки, не весь екран -- решта типів
+			// сюди взагалі не заходить (isApo == false).
+			memcpy(screenNotificationBufData,
+					(displayGetPrimaryScreenBuffer() + (NOTIFICATION_APO_BUF_Y0 * DISPLAY_SIZE_X)),
+					sizeof(screenNotificationBufData));
+		}
 #endif
 
 		// Draw whatever
@@ -343,7 +385,13 @@ void uiNotificationRefresh(void)
 #if defined(PLATFORM_MD9600) || defined(PLATFORM_GD77) || defined(PLATFORM_GD77S) || defined(PLATFORM_DM1801) || defined(PLATFORM_DM1801A) || defined(PLATFORM_RD5R)
 		displayRestorePrimaryScreenBuffer();
 #else
-		memcpy(displayGetPrimaryScreenBuffer(), screenNotificationBufData, sizeof(screenNotificationBufData));
+		if (isApo)
+		{
+			memcpy((displayGetPrimaryScreenBuffer() + (NOTIFICATION_APO_BUF_Y0 * DISPLAY_SIZE_X)),
+					screenNotificationBufData, sizeof(screenNotificationBufData));
+		}
+		// Інакше -- нічого не відновлюємо: screenBufData лишається з щойно намальованою
+		// карткою (саме так і задумано; фон повернеться при закритті, uiNotificationHide()).
 #endif
 	}
 }
@@ -373,12 +421,38 @@ bool uiNotificationIsVisible(void)
 
 void uiNotificationHide(bool immediateRender)
 {
+#if !(defined(PLATFORM_MD9600) || defined(PLATFORM_GD77) || defined(PLATFORM_GD77S) || defined(PLATFORM_DM1801) || defined(PLATFORM_DM1801A) || defined(PLATFORM_RD5R))
+	bool wasApo = (notificationData.id == NOTIFICATION_ID_USER_APO);
+#endif
+
 	notificationData.visible = false;
 	uiDataGlobal.displayQSOState = uiDataGlobal.displayQSOStatePrev;
 
 	if (immediateRender)
 	{
-		displayRender();
+#if !(defined(PLATFORM_MD9600) || defined(PLATFORM_GD77) || defined(PLATFORM_GD77S) || defined(PLATFORM_DM1801) || defined(PLATFORM_DM1801A) || defined(PLATFORM_RD5R))
+		if (!wasApo)
+		{
+			// Форк (2026-09-19): для типів БЕЗ безперервного бекапу (усе, крім APO --
+			// docs/notification-buffer.md) screenBufData після закриття містить лише
+			// саму картку, не живий фон. Перш ніж щось штовхати на LCD, перемальовуємо
+			// поточний екран з нуля -- той самий шлях, що й daytimeThemeApply()
+			// (uiUtilities.c): синтетична подія FUNC_REDRAW в обробник поточного меню.
+			// Він сам завершується власним displayRender() (перевірений патерн,
+			// вживаний саме для "перемалювати екран з нуля" деінде в кодовій базі),
+			// тож окремий displayRender() нижче тут не потрібен -- інакше вийшов би
+			// подвійний повний пуш на LCD (зайві ~12.5 мс DMA).
+			uiEvent_t redrawEvent = { .buttons = 0, .keys = NO_KEYCODE, .rotary = 0,
+					.function = FUNC_REDRAW, .events = FUNCTION_EVENT, .hasEvent = true,
+					.time = ticksGetMillis() };
+
+			menuSystemCallCurrentMenuTick(&redrawEvent);
+		}
+		else
+#endif
+		{
+			displayRender();
+		}
 	}
 }
 

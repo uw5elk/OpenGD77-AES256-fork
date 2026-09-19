@@ -105,7 +105,20 @@ void displayRender(void)
 {
 	if (uiNotificationIsVisible())
 	{
-		uiNotificationRefresh();
+#if !(defined(PLATFORM_MD9600) || defined(PLATFORM_GD77) || defined(PLATFORM_GD77S) || defined(PLATFORM_DM1801) || defined(PLATFORM_DM1801A) || defined(PLATFORM_RD5R))
+		// Форк (2026-09-19, docs/notification-buffer.md): періодичний тік (годинник/
+		// S-метр/шапка -- щось із них рано чи пізно кличе displayRender() кожні
+		// ~200 мс, поки видиме сповіщення) БІЛЬШЕ не оновлює фон під карткою для
+		// кожного типу -- лише для APO (NOTIFICATION_ID_USER_APO, єдиний тип із
+		// довгим, до 60 с, таймаутом, де живий фон/вхідний виклик справді важливі).
+		// Решта карток лишаються на LCD такими, якими їх намалював
+		// uiNotificationRefresh() один раз при показі -- оновлювати нічого не треба,
+		// аж доки картку не сховають (uiNotificationHide() перемалює екран з нуля).
+		if (uiNotificationGetId() == NOTIFICATION_ID_USER_APO)
+#endif
+		{
+			uiNotificationRefresh();
+		}
 	}
 	else
 	{
