@@ -156,6 +156,9 @@ static menuFunctionData_t menuFunctions[] =
 		{ menuRCTLRemote,           NULL, NULL, 0 },
 		{ menuRCTLConfig,           NULL, NULL, 0 },
 #endif
+#if defined(ENABLE_CALL_REPLAY)
+		{ menuCallReplay,           NULL, NULL, 0 },
+#endif
 		// *** Add new menus to be accessed using quickkey (ID: 0..31) above this line ***
 		{ uiMessageBox,             NULL, NULL, 0 },
 		{ menuHotspotMode,          NULL, NULL, 0 },
@@ -662,6 +665,10 @@ const menuItemNewData_t mainMenuItems[] =
 	{   8, MENU_FIRMWARE_INFO   },
 	{   9, MENU_OPTIONS         },
 	{   7, MENU_LAST_HEARD      },
+#if defined(ENABLE_CALL_REPLAY)
+	// Поруч з "Останні прийняті" -- та сама природа дії, дивись callReplay.h.
+	{ (int)(offsetof(stringsTable_t, call_replay) / LANGUAGE_TEXTS_LENGTH), MENU_CALL_REPLAY },
+#endif
 	{ 150, MENU_RADIO_INFOS     },
 	{ 173, MENU_SATELLITE       },
 #if defined(HAS_GPS) && !defined(FORK_NO_GPS_MENU)

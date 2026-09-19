@@ -337,6 +337,11 @@ const stringsTable_t ukrainianLanguage =
 .rctl_config                              = "Доступ RCTL", // MaxLen: 16
 #endif
 #endif
+#if defined(ENABLE_CALL_REPLAY)
+.call_replay                               = "Переслухати", // MaxLen: 16
+.call_replay_empty                         = "Немає запису", // MaxLen: 16
+.call_replay_playing                       = "Відтворення", // MaxLen: 16
+#endif
 #if defined(HAS_COLOURS)
 .smeter_header                           = "S-метр", // MaxLen: 16 (with ':' + .on or .off)
 #endif

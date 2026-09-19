@@ -34,6 +34,7 @@
 #include "functions/dmr_sms.h"    // encrypted-SMS RX reassembly (ENABLE_DMR_DATA + ENABLE_AES)
 #include "functions/dmr_rctl_tx.h" // RCTL RX reassembly (ENABLE_DMR_DATA + ENABLE_AES), паралельно з SMS
 #include "functions/dmr_rctl_cap.h" // тимчасове захоплення сирих burst для реверсу стокового протоколу
+#include "functions/callReplay.h" // "Переслухати" -- кільцевий буфер RX-голосу (ENABLE_CALL_REPLAY)
 #include "functions/settings.h"
 #if defined(USING_EXTERNAL_DEBUGGER)
 #include "SeggerRTT/RTT/SEGGER_RTT.h"
@@ -2894,7 +2895,15 @@ static void hrc6000Tick(void)
 			if (hrc.hasEncodedAudio || hrc.insertSilenceFrame)
 			{
 				// voice prompts take priority over incoming DMR audio
-				if ((voicePromptsIsPlaying() == false) && (soundMelodyIsPlaying() == false))
+				if ((voicePromptsIsPlaying() == false) && (soundMelodyIsPlaying() == false)
+#if defined(ENABLE_CALL_REPLAY)
+						// Форк: "Переслухати" теж має пріоритет над живим прийомом -- той самий
+						// принцип, що й для voicePrompts/melody вище (не змішувати два джерела
+						// аудіо на спільному звукобуфері). callReplayTick() сам перерве
+						// відтворення, щойно з'явиться нова несуча (callReplay.c).
+						&& (callReplayIsPlaying() == false)
+#endif
+						)
 				{
 					if ((WAV_BUFFER_COUNT - wavbuffer_count) < 3) // If we're running low on audio decoding storage
 					{
@@ -2907,6 +2916,17 @@ static void hrc6000Tick(void)
 					}
 					else
 					{
+#if defined(ENABLE_CALL_REPLAY)
+						// Форк: захоплення в кільце "Переслухати" -- лише РЕАЛЬНО прийняті кадри
+						// (не вставлена тиша), лише memcpy у критичній секції (docs/recording-
+						// feasibility.md, розділ 2.3). AES-виклики (dmrAesRxActive()) пропускаються
+						// всередині callReplayCaptureTick() -- дивись callReplay.h.
+						if (!(hrc.hasAbnormalExit || hrc.insertSilenceFrame))
+						{
+							callReplayCaptureTick((const uint8_t *)(DMR_frame_buffer + LC_DATA_LENGTH),
+									(dmrAesRxActive() != 0), ticksGetMillis());
+						}
+#endif
 						codecDecode((uint8_t *)((hrc.hasAbnormalExit || hrc.insertSilenceFrame) ? SILENCE_AUDIO : (DMR_frame_buffer + LC_DATA_LENGTH)), 3);
 					}
 				}

@@ -85,8 +85,14 @@ DEFS_UA=("${DEFS_COMMON[@]}" -DENABLE_AES -DENABLE_DMR_DATA -DLANGUAGE_BUILD_UKR
 # навмисно перевіряється на "голій" AES0-основі, БЕЗ ENABLE_AES/ENABLE_DMR_DATA --
 # саме там, куди звичайний DEFS_UA не заглядає, і де новий опкод має жити незалежно.
 DEFS_MEMDIAG=("${DEFS_COMMON[@]}" -DENABLE_MEM_DIAG)                       # build (ENABLE_AES=0) + ENABLE_MEM_DIAG
+# 2026-09-19: "Переслухати" (callReplay.c/menuCallReplay.c, docs/recording-feasibility.md,
+# сценарій A) -- прапорець сам по собі незалежний від ENABLE_AES/LANGUAGE_BUILD_UKRAINIAN
+# (currentLanguage->call_replay* під власним #if ENABLE_CALL_REPLAY, за патерном
+# messages/remote_control), але в CI (build.yml) УВІМКНЕНО лише разом із build-ukrainian --
+# тож перевіряємо саме ту реальну комбінацію прапорців, а не окрему "голу" основу.
+DEFS_CALLREPLAY=("${DEFS_UA[@]}" -DENABLE_CALL_REPLAY)                     # build-ukrainian + ENABLE_CALL_REPLAY
 
-CONFIGS=(AES0 AES1 UA MEMDIAG)
+CONFIGS=(AES0 AES1 UA MEMDIAG CALLREPLAY)
 
 # Щоб побачити попередження ВЛАСНОГО коду, запускай: SHOW_WARNINGS=1 ...
 # Три класи помилок, які МАЮТЬ валити перевірку.

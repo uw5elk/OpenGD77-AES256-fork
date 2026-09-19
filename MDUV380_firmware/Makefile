@@ -91,6 +91,16 @@ ifeq ($(ENABLE_MEM_DIAG),1)
 DEFS += -DENABLE_MEM_DIAG
 endif
 
+# "Переслухати": кільцевий буфер CCM з останніми ~30 с прийнятого RX DMR-голосу на
+# ВІДКРИТИХ каналах (docs/recording-feasibility.md, сценарій A). Захоплення -- один
+# memcpy у задачі hrc6000TaskFunction (не в перериванні), відтворення -- тим самим
+# кодек-шляхом, що й голосові підказки. Незалежний від ENABLE_AES/ENABLE_DMR_DATA --
+# сама фіча про AES не знає нічого, крім "пропустити кадри активного дешифрування".
+# Типово вимкнено -- звичайна збірка байт-у-байт як стоковий OpenGD77.
+ifeq ($(ENABLE_CALL_REPLAY),1)
+DEFS += -DENABLE_CALL_REPLAY
+endif
+
 CFLAGS  = $(CPU) $(DEFS) $(INCS) -Os -g3 -ffunction-sections -fdata-sections -Wall -MMD -MP
 LDSCRIPT = STM32F405VGTX_FLASH.ld
 LDFLAGS = $(CPU) -T$(LDSCRIPT) --specs=nano.specs -Wl,--gc-sections -Wl,-Map=$(BUILD)/$(TARGET).map -lc -lm -lnosys

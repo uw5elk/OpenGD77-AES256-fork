@@ -55,6 +55,7 @@
 #include "functions/dmr_sms.h"
 #include "functions/dmr_rctl_tx.h"
 #include "functions/dmr_rctl_cfg.h"   // dmrRctlIsInhibited (повний stun: сон рації)
+#include "functions/callReplay.h"     // "Переслухати" -- кільцевий буфер RX-голосу (ENABLE_CALL_REPLAY)
 #if defined(ENABLE_AES)
 // dmr_aes_hook.h уже підключено вище; тут лише тексти сповіщення.
 #if defined(LANGUAGE_BUILD_UKRAINIAN)
@@ -469,6 +470,11 @@ void applicationMainTask(void)
 	HRC6000Init();
 
 	dmrAesInit(); // AES state lives in .ccmram which the startup does not init; zero it (no-op unless ENABLE_AES)
+
+#if defined(ENABLE_CALL_REPLAY)
+	callReplayInit();         // те саме застереження -- кільце "Переслухати" теж у .ccmram
+	callReplayPlaybackInit(); // стан відтворення -- окремий .c (callReplayPlayback.c), окреме обнулення
+#endif
 
 	radioPostinit();
 
@@ -1562,6 +1568,9 @@ void applicationMainTask(void)
 		}
 
 		voicePromptsTick();
+#if defined(ENABLE_CALL_REPLAY)
+		callReplayTick(); // "Переслухати" -- та сама позиція в циклі, що й voicePromptsTick()
+#endif
 		soundTickMelody();
 		voxTick();
 		gpsTick();

@@ -336,6 +336,11 @@ const stringsTable_t englishLanguage =
 .rctl_config				= "RCTL access", // MaxLen: 16
 #endif
 #endif
+#if defined(ENABLE_CALL_REPLAY)
+.call_replay				= "Call replay", // MaxLen: 16
+.call_replay_empty			= "No recording", // MaxLen: 16
+.call_replay_playing			= "Playing", // MaxLen: 16
+#endif
 #if defined(HAS_COLOURS)
 .smeter_header				= "S-meter", // MaxLen: 16 (with ':' + .on or .off)
 #endif

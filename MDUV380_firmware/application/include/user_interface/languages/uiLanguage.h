@@ -346,6 +346,14 @@ typedef struct
    const char rctl_config[LANGUAGE_TEXTS_LENGTH];// RCTL: "RCTL access" enable/disable toggle under Options
 #endif
 #endif
+#if defined(ENABLE_CALL_REPLAY)
+   // "Переслухати" -- кільцевий буфер RX-голосу (2026-09-19, callReplay.c). Незалежний
+   // прапорець, не пов'язаний з ENABLE_AES/ENABLE_DMR_DATA (сама фіча -- лише про ВІДКРИТІ
+   // канали), тож власний блок, за тим самим патерном, що messages/remote_control вище.
+   const char call_replay[LANGUAGE_TEXTS_LENGTH];// назва пункту головного меню й заголовок екрана
+   const char call_replay_empty[LANGUAGE_TEXTS_LENGTH];// немає запису (порожній буфер)
+   const char call_replay_playing[LANGUAGE_TEXTS_LENGTH];// стан "відтворюється"
+#endif
 #if defined(HAS_COLOURS)
    // "S-метр у шапці" (Options>Display): показувати смугу+"S"+дБм у верхньому рядку
    // VFO/каналу замість статичної тонкої RSSI-смуги. Додано ОСТАННІМ під власним

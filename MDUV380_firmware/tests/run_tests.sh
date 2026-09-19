@@ -21,7 +21,10 @@ set -u
 TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP="$TESTS_DIR/../application"
 INC=(-I "$APP/include" -I "$APP/include/crypto")
-CFLAGS=(-O2 -Wall -Wextra -std=gnu11 -DENABLE_AES -DENABLE_DMR_DATA)
+# -DENABLE_CALL_REPLAY -- глобально, як і AES/DMR_DATA вище: лише test_call_replay
+# лінкує functions/callReplay.c (порожній translation unit без цього прапорця), решті
+# тестів прапорець просто не зустрічається -- нешкідливо додати його для всіх.
+CFLAGS=(-O2 -Wall -Wextra -std=gnu11 -DENABLE_AES -DENABLE_DMR_DATA -DENABLE_CALL_REPLAY)
 BUILD="$TESTS_DIR/.build"
 
 CC="${CC:-gcc}"
@@ -38,6 +41,7 @@ declare -A SRCS=(
 	[test_emb_sb]="$APP/source/crypto/dmr_aes.c"
 	[test_le_mi]="$APP/source/crypto/dmr_aes.c"
 	[test_dmr_sms_ack]=""   # самодостатній: контракт формату SMS-квитанції, без чужих джерел
+	[test_call_replay]="$APP/source/functions/callReplay.c"   # лише ЧИСТА кільцева логіка -- callReplayPlayback.c (codec/sound/trx/FreeRTOS) сюди навмисно не тягнеться
 )
 
 rm -rf "$BUILD" && mkdir -p "$BUILD"

@@ -352,6 +352,9 @@ enum MENU_SCREENS
 	MENU_RCTL_REMOTE,// RCTL: надіслати Radio Check іншій рації (Фаза 1б, PLANS.md §3)
 	MENU_RCTL_CONFIG,// RCTL: локальний перемикач "приймати команди" (Options, без allowlist)
 #endif
+#if defined(ENABLE_CALL_REPLAY)
+	MENU_CALL_REPLAY,// "Переслухати" -- кільцевий буфер RX-голосу (index-matched to menuFunctions[])
+#endif
 	// *** Add new menus to be accessed using quickkey (ID: 0..31) above this line ***
 	UI_MESSAGE_BOX,
 	UI_HOTSPOT_MODE,
@@ -485,6 +488,7 @@ menuStatus_t menuNumericalEntry(uiEvent_t *event, bool isFirstRun);
 menuStatus_t menuTxScreen(uiEvent_t *event, bool isFirstRun);
 menuStatus_t menuRSSIScreen(uiEvent_t *event, bool isFirstRun);
 menuStatus_t menuLastHeard(uiEvent_t *event, bool isFirstRun);
+menuStatus_t menuCallReplay(uiEvent_t *event, bool isFirstRun);// "Переслухати" (ENABLE_CALL_REPLAY)
 menuStatus_t menuGeneralOptions(uiEvent_t *event, bool isFirstRun);
 menuStatus_t menuRadioOptions(uiEvent_t *event, bool isFirstRun);
 menuStatus_t menuDisplayOptions(uiEvent_t *event, bool isFirstRun);
