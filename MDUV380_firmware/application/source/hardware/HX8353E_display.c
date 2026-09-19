@@ -114,7 +114,14 @@ void displayRender(void)
 		// Решта карток лишаються на LCD такими, якими їх намалював
 		// uiNotificationRefresh() один раз при показі -- оновлювати нічого не треба,
 		// аж доки картку не сховають (uiNotificationHide() перемалює екран з нуля).
-		if (uiNotificationGetId() == NOTIFICATION_ID_USER_APO)
+		//
+		// Форк (2026-09-19, фікс регресії): uiNotificationShow(..., immediateRender=
+		// false) (SQUELCH з VFO/каналу, деякі MESSAGE) НЕ штовхає картку сама -- вона
+		// лише виставляє pendingRender=true й покладається саме на цю перевірку, щоб
+		// картка вийшла на екран на найближчому тіку. Без цього доповнення картка для
+		// таких викликів не з'явилася б ВЗАГАЛІ (а не лише не оновлювався б фон) --
+		// точний баг, знайдений на залізі після a2211ac.
+		if ((uiNotificationGetId() == NOTIFICATION_ID_USER_APO) || uiNotificationIsPendingRender())
 #endif
 		{
 			uiNotificationRefresh();

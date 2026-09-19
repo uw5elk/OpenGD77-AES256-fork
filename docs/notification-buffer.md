@@ -500,3 +500,93 @@ APO на сам факт прийому виклику (лише на дії о�
 - плавність закриття (відсутність зайвого блимання) для кожного типу,
   особливо там, де раніше `menuSystemCallCurrentMenuTick()` викликається
   вперше з цього конкретного контексту.
+
+## Регресія й фікс (2026-09-19, та ж партія -- виявлено на залізі)
+
+Перше ж польове тестування "Що реалізовано" вище виявило регресію: попап
+**ШУМОПОДАВЛЕННЯ не з'являвся з VFO і каналу**. Гучність і потужність
+працювали, оскільки всі їхні виклики `uiNotificationShow()` -- з
+`immediateRender=true`.
+
+### Причина
+
+`uiNotificationShow(..., immediateRender=false)` (SQUELCH з
+`uiVFOMode.c:2253,2361` і `uiChannelMode.c:1510,1582`; частина MESSAGE --
+`menuChannelDetails.c:1871,1947,1952`, `menuAPRSOptions.c:533`,
+`aprs.c:1462`) виставляє `visible=true`, але картку не малює й не штовхає
+на LCD -- це робить лише `uiNotificationRefresh()`, а її викликає або сам
+`uiNotificationShow()` (тільки якщо `immediateRender==true`), або
+`displayRender()` на черговому тіку. **До цієї партії** `displayRender()`
+для видимого сповіщення викликав `uiNotificationRefresh()` БЕЗУМОВНО на
+кожному тіку (бо весь механізм тримався на повноекранному бекапі, що й так
+оновлював фон щотіку) -- тому `immediateRender=false` все одно "самозцілювалось"
+за один тік. Після переходу на "малюємо раз, не відновлюємо" (розділ вище)
+`displayRender()` викликає `uiNotificationRefresh()` лише для
+`NOTIFICATION_ID_USER_APO` -- і для решти типів `immediateRender=false`
+означало "картка не з'явиться НІКОЛИ", а не лише "фон під нею не оновиться".
+
+### Фікс: прапорець `pendingRender`
+
+Обрано перший із запропонованих варіантів -- прапорець "картка ще не
+виведена", а не "домальовування поверх наступного кадру" (другий варіант),
+бо для частини викликів (наприклад, `menuChannelDetails.c`) немає гарантії,
+що виклик, який щось малює на екрані, відбудеться одразу після
+`uiNotificationShow()` в тому самому стеку викликів -- прапорець коректний
+незалежно від того, коли саме прийде наступний `displayRender()`.
+
+- `uiNotificationData_t` отримало поле `pendingRender`: `true` з моменту
+  `visible=true` і до першого фактичного виклику `uiNotificationRefresh()`
+  для цього показу.
+- `uiNotificationShow()` виставляє `pendingRender=true` завжди (не лише
+  коли `immediateRender==false`) -- якщо `immediateRender==true`, наступний
+  же рядок викликає `uiNotificationRefresh()` і одразу скидає прапорець, тож
+  для цього шляху нічого не змінюється.
+- `uiNotificationRefresh()` скидає `pendingRender=false` на самому початку
+  (функція синхронна й повністю домальовує й штовхає картку до виходу).
+- `displayRender()` (`HX8353E_display.c`) викликає `uiNotificationRefresh()`,
+  якщо `id == NOTIFICATION_ID_USER_APO` **АБО** `uiNotificationIsPendingRender()`
+  -- тобто для APO, як і раніше, на кожному тіку, а для решти типів -- лише
+  доки картку не показано хоч раз.
+- `uiNotificationHide()` також скидає `pendingRender=false` (стан не
+  лишається "завислим" поза вікном його чинності).
+
+Жодної нової CCM-пам'яті: `notificationData` -- звичайна структура в RAM
+(без `__attribute__((section(".ccmram")))`), `pendingRender` -- один `bool`
+у ній. Розмір `screenNotificationBufData` (23 040 Б) не змінився -- 17 920 Б
+звільненої CCM лишаються вільними.
+
+На практиці для викликів на кшталт `uiVFOMode.c:2253` (SQUELCH перед
+`uiVFOModeUpdateScreen(0)`, яка сама завершується `displayRender()`) картка
+з'являється НЕГАЙНО, у тому самому виклику, що й раніше до цієї партії --
+не через ~200 мс на наступному періодичному тіку.
+
+### Перевірено (без заліза)
+
+Грепом підтверджено всі виклики `uiNotificationShow(...)` з
+`immediateRender=false` (9 місць, перелічені вище) і єдиний виклик
+`uiNotificationBearingShow(...)` (`uiChannelMode.c:1799`,
+`immediateRender=true`, цим багом не зачеплений). `uiNotificationHide(false)`
+(`menuSystem.c:212`, `uiPowerOff.c:51`) перевірено окремо (розділ нижче
+"чому uiNotificationHide(false) безпечний") -- обидва виклики одразу
+переходять до повного перемальовування власного екрана, тож застаріла
+картка в `screenBufData` перезаписується раніше, ніж щось іде на LCD.
+
+`tools/syntax_check.sh` (368 файлів × 4 конфігурації, 0 помилок),
+`check_string_encoding.py`, `check_menu_widths.py`, `check_smeter_align.py`,
+`tests/run_tests.sh` (9/9) -- усе чисто.
+
+### Чому `uiNotificationHide(false)` безпечний
+
+Обидва виклики з `immediateRender=false`:
+- `menuSystem.c:212` (`menuSystemPushMenuFirstRun()`, ховає прострочене
+  сповіщення перед першим рендером НОВОГО меню -- саме меню одразу ж
+  малює власний повний екран);
+- `uiPowerOff.c:51` (ховає попап VOLUME при вході в `uiPowerOff`, isFirstRun
+  одразу викликає `updateScreen()` -- `displayClearBuf()` + власний
+  повноекранний малюнок).
+
+В обох випадках виклик, що йде одразу за `uiNotificationHide(false)`,
+перезаписує `screenBufData` повністю ще ДО будь-якого наступного
+`displayRender()`/пушу на LCD -- тож застигла картка сповіщення, що
+лишилась у буфері, ніколи не потрапляє на екран. Спеціального фіксу тут не
+знадобилось.

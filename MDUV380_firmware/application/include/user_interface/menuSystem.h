@@ -286,6 +286,11 @@ bool uiNotificationHasTimedOut(void);
 bool uiNotificationIsVisible(void);
 void uiNotificationHide(bool immediateRender);
 uiNotificationID_t uiNotificationGetId(void);
+/* Форк (2026-09-19, фікс регресії immediateRender=false): картку показано
+ * (visible == true), але ще жодного разу не виштовхнуто на LCD -- displayRender()
+ * має негайно викликати uiNotificationRefresh() наступного тіку. Див. великий
+ * коментар біля uiNotificationShow() у uiNotification.c. */
+bool uiNotificationIsPendingRender(void);
 
 
 #if defined(HAS_GPS)

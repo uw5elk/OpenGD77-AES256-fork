@@ -530,6 +530,37 @@
   ризик -- переконатись, що справді непомітно), плавність закриття
   (відсутність зайвого блимання) для кожного типу.
 
+- **Буфер `screenNotificationBufData` -- РЕГРЕСІЯ й ФІКС (2026-09-19,
+  та ж партія, знайдено на залізі).** Перше польове тестування виявило: попап
+  **ШУМОПОДАВЛЕННЯ не з'являвся з VFO і каналу** (гучність/потужність
+  працювали -- їхні виклики завжди йдуть з `immediateRender=true`).
+  Причина: `uiNotificationShow(..., immediateRender=false)` (SQUELCH з
+  `uiVFOMode.c`/`uiChannelMode.c`, частина MESSAGE з `menuChannelDetails.c`/
+  `menuAPRSOptions.c`/`aprs.c` -- 9 місць разом) виставляла `visible=true`,
+  не малюючи картку одразу, і покладалась на те, що `displayRender()`
+  дотягне її на наступному тіку -- так і було ДО цієї партії (повноекранний
+  бекап оновлював фон щотіку безумовно), але вже НЕ так після переходу на
+  "малюємо раз" (`displayRender()` тепер кличе `uiNotificationRefresh()`
+  щотіку лише для APO). Фікс: нове поле `pendingRender` в
+  `uiNotificationData_t` -- `true` з моменту показу до першого фактичного
+  `uiNotificationRefresh()`; `displayRender()` тепер примусово рендерить,
+  доки `id == NOTIFICATION_ID_USER_APO` **АБО** `uiNotificationIsPendingRender()`.
+  Жодної нової CCM-памʼяті (`pendingRender` -- один `bool` у звичайній
+  RAM-структурі); розмір `screenNotificationBufData` (23 040 Б) не змінився,
+  17 920 Б звільненої CCM лишились вільними. Заодно перевірено (без фіксу --
+  проблеми не було): обидва виклики `uiNotificationHide(false)`
+  (`menuSystem.c` перед новим меню, `uiPowerOff.c` перед екраном вимкнення)
+  безпечні, бо одразу переходять до повного перемальовування власного
+  екрана. Деталі, повний список 9 перевірених місць і обґрунтування вибору
+  варіанта фіксу -- `docs/notification-buffer.md` (розділ "Регресія й
+  фікс"). Змінено: `uiNotification.c` (поле `pendingRender`,
+  `uiNotificationShow()`/`Refresh()`/`Hide()`, нова `uiNotificationIsPendingRender()`),
+  `menuSystem.h` (декларація), `HX8353E_display.c` (`displayRender()`).
+  Перевірено: `syntax_check.sh` (368×4 конфігурації, 0 помилок),
+  `check_string_encoding.py`, `check_menu_widths.py`, `check_smeter_align.py`,
+  `run_tests.sh` (9/9). **НЕ перевірено на залізі в цій сесії:** сам фікс
+  на реальній рації (чекаю на польове підтвердження, як і минулого разу).
+
 ## НЕ зроблено / відкладено
 
 1. ~~**ACK (квитанція «онлайн» у командира)**~~ — **ЗРОБЛЕНО, перевірено на залізі

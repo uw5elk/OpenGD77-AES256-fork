@@ -110,6 +110,16 @@ static  __attribute__((section(".ccmram"))) uint16_t screenNotificationBufData[D
 typedef struct
 {
 	bool                         visible;
+	/* Форк (2026-09-19, фікс регресії immediateRender=false, a2211ac): true від
+	 * моменту, коли visible стало true, і до першого фактичного
+	 * uiNotificationRefresh() для ЦЬОГО показу. uiNotificationShow(...,
+	 * immediateRender=false) більше не штовхає картку на LCD сама -- натомість
+	 * лишає pendingRender=true, а displayRender() (HX8353E_display.c) перевіряє
+	 * його щотіку й, поки true, примусово викликає uiNotificationRefresh() (так
+	 * само, як і для APO), доки картка нарешті не буде намальована. Після цього
+	 * pendingRender скидається, і для НЕ-APO типів подальші тіки знову нічого не
+	 * роблять -- картка лишається на LCD такою, якою її намалював цей один виклик. */
+	bool                         pendingRender;
 	ticksTimer_t                 hideTimer;
 	uiNotificationType_t         type;
 	uiNotificationID_t           id;
@@ -120,6 +130,7 @@ typedef struct
 static uiNotificationData_t notificationData =
 {
 		.visible = false,
+		.pendingRender = false,
 		.hideTimer = { 0, 0 },
 		.type = NOTIFICATION_TYPE_MAX,
 		.id = NOTIFICATION_ID_NONE,
@@ -188,6 +199,11 @@ void uiNotificationShow(uiNotificationType_t type, uiNotificationID_t id, uint32
 	if (valid)
 	{
 		notificationData.visible = true;
+		// Форк (2026-09-19): див. коментар біля поля pendingRender вище. Виставляємо
+		// ЗАВЖДИ, а не лише коли immediateRender==false -- якщо immediateRender==true,
+		// виклик uiNotificationRefresh() нижче одразу ж скине його назад у false,
+		// тож для цього шляху нічого не змінюється.
+		notificationData.pendingRender = true;
 		if (immediateRender)
 		{
 			uiNotificationRefresh();
@@ -208,6 +224,12 @@ void uiNotificationRefresh(void)
 	{
 		// Форк (2026-09-19): див. великий коментар біля оголошення screenNotificationBufData.
 		bool isApo = (notificationData.id == NOTIFICATION_ID_USER_APO);
+
+		// Форк (2026-09-19, фікс регресії immediateRender=false): цей виклик -- і є
+		// той самий "перший фактичний рендер", на який чекає pendingRender (див.
+		// коментар біля поля). Скидаємо одразу: функція нижче синхронно домальовує
+		// й штовхає картку до кінця, тож на момент повернення показ уже відбувся.
+		notificationData.pendingRender = false;
 
 #if defined(PLATFORM_MD9600) || defined(PLATFORM_GD77) || defined(PLATFORM_GD77S) || defined(PLATFORM_DM1801) || defined(PLATFORM_DM1801A) || defined(PLATFORM_RD5R)
 		// copy the primary screen content
@@ -426,6 +448,10 @@ void uiNotificationHide(bool immediateRender)
 #endif
 
 	notificationData.visible = false;
+	// Форк: разом із visible -- pendingRender стає нечинним (uiNotificationIsVisible()
+	// у displayRender() і так відсіє його), скидаємо для охайності стану, щоб не
+	// лишати "завислий" true поза вікном його чинності (показ-до-першого-рендера).
+	notificationData.pendingRender = false;
 	uiDataGlobal.displayQSOState = uiDataGlobal.displayQSOStatePrev;
 
 	if (immediateRender)
@@ -459,6 +485,11 @@ void uiNotificationHide(bool immediateRender)
 uiNotificationID_t uiNotificationGetId(void)
 {
 	return notificationData.id;
+}
+
+bool uiNotificationIsPendingRender(void)
+{
+	return notificationData.pendingRender;
 }
 
 /* Форк: спільна повноекранна картка "заголовок + велике значення + смуга-індикатор".
