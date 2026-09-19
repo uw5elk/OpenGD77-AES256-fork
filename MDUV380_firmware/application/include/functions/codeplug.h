@@ -363,6 +363,14 @@ typedef enum
 	                                        * а не поле в RCTL_CONFIG: конфіг пише CHIRP, а це -- суто
 	                                        * рантайм-стан, який веде сама прошивка. Змішати їх означало б,
 	                                        * що запис із ПК затирає лічильники захисту. Див. dmr_rctl_cfg.c */
+	CODEPLUG_CUSTOM_DATA_TYPE_CALL_REPLAY_CONFIG, /* Перемикач "Запис RX" для "Переслухати" (2026-09-19,
+	                                        * задача п.5) -- той самий генерик custom-data API, що й RCTL
+	                                        * вище, обраний НАВМИСНО замість біта в nonVolatileSettings
+	                                        * (обґрунтування -- великий коментар біля BIT_UNUSED_1 у
+	                                        * settings.h): має бути читаний/записуваний з gui_flasher.py,
+	                                        * а CPS-запис "EEPROM" (усб-команда 4) -- no-op на STM32-
+	                                        * платформах. Див. callReplayConfigLoad()/Save() у
+	                                        * callReplayPlayback.c. */
 } CodeplugCustomDataType_t;
 
 

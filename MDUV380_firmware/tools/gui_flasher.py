@@ -47,6 +47,7 @@ import stock_key_table as skt   # wrap/unwrap-логіка стокової та
 import custom_data as cd        # безпечний read/write custom-data блоків (тема/AES-селектор/
                                  # RCTL і т.д. в ОДНОМУ регіоні -- див. коментар у custom_data.py)
 import rctl_config as rctl      # формат блоку "RCTL" (allowlist віддаленого керування)
+import callreplay_config as crcfg  # формат блоку "CRPL" (перемикач "Запис RX" для "Переслухати")
 
 try:
     import serial  # той самий пакет, яким уже користується dmr_reboot_dfu.py
@@ -283,6 +284,10 @@ class FlasherApp(tk.Tk):
                                       command=self._open_rctl_config)
         self.rctl_button.pack(side="left", padx=8)
 
+        self.call_replay_button = ttk.Button(action_frame, text="Запис RX (Переслухати)...",
+                                      command=self._open_call_replay_config)
+        self.call_replay_button.pack(side="left", padx=8)
+
         self.progress = ttk.Progressbar(self, mode="determinate", maximum=100)
         self.progress.pack(fill="x", padx=12, pady=(0, 6))
 
@@ -514,6 +519,9 @@ class FlasherApp(tk.Tk):
 
     def _open_rctl_config(self):
         RctlConfigWindow(self)
+
+    def _open_call_replay_config(self):
+        CallReplayConfigWindow(self)
 
     def _on_flash_finished(self, ok, reason):
         self.flashing = False
@@ -1020,6 +1028,174 @@ class RctlConfigWindow(tk.Toplevel):
             print("Записано ({}), RCTL={}, дозволи=[{}], пункт меню={}. Звірка читанням: {}.".format(
                 msg, "увімкнено" if mask else "вимкнено", ",".join(names),
                 "схований" if menu_hidden else "видимий",
+                "OK" if verify_ok else "НЕЗБІГ"))
+
+    def _run_worker(self, fn, status_text):
+        self.busy = True
+        self.status_label.config(text=status_text, foreground="#14506b")
+        self._log("=" * 30)
+        self._log(status_text)
+
+        def worker():
+            old_stdout = sys.stdout
+            sys.stdout = QueueWriter(self.queue)
+            ok, reason = False, None
+            try:
+                fn()
+                ok = True
+            except Exception as e:  # noqa: BLE001
+                reason = str(e)
+            finally:
+                sys.stdout = old_stdout
+                self.queue.put(("done", (ok, reason)))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_worker_finished(self, ok, reason):
+        self.busy = False
+        if ok:
+            self.status_label.config(text="Готово.", foreground="#0a6b2a")
+        else:
+            self.status_label.config(text="Помилка.", foreground="#b00000")
+            self._log("!!! Помилка: {}".format(reason))
+            messagebox.showerror("Помилка", "Щось пішло не так: {}".format(reason))
+
+
+class CallReplayConfigWindow(tk.Toplevel):
+    """Перемикач "Запис RX" для "Переслухати" (functions/callReplayPlayback.c,
+    callReplayConfigLoad()/Save()) -- за зразком RctlConfigWindow вище, але набагато
+    простіший: один on/off, без масок команд і без окремого вигляду меню.
+
+    Пише блок "CRPL" у той самий custom-data регіон, що тема/AES-ключі/RCTL. Той самий
+    формат, що читає прошивка при завантаженні (callReplayConfigLoad(), applicationMain.c)
+    і при перемиканні в меню рації (Опції > Звук > "Запис RX", menuSoundOptions.c).
+
+    Блоку може не бути (нова/нечіпана рація) -- це ТИПОВЕ значення "Увімкнено" (задача,
+    п.5), а не помилка; читання показує це явним написом, не порожнім станом."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.title("TYT MD-UV390UKR -- Запис RX (Переслухати)")
+        self.geometry("440x300")
+        self.minsize(400, 260)
+
+        self.queue = queue.Queue()
+        self.busy = False
+
+        self._build_ui()
+        self.after(50, self._poll_queue)
+
+    def _build_ui(self):
+        pad = {"padx": 12, "pady": 6}
+
+        note = ttk.Label(
+            self,
+            text=('Керує тим самим перемикачем, що пункт "Запис RX" у меню рації '
+                  '(Опції > Звук). Вимкнено -- рація нічого не пише в буфер '
+                  '"Переслухати", і наявний запис одразу стирається. Типово -- '
+                  'увімкнено. Рація має бути УВІМКНЕНА У ЗВИЧАЙНОМУ РЕЖИМІ (не в DFU).'),
+            wraplength=400, justify="left", foreground="#8a5300",
+        )
+        note.pack(anchor="w", **pad)
+
+        self.enabled_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(self, text="Запис RX увімкнено",
+                        variable=self.enabled_var).pack(anchor="w", padx=12, pady=(4, 0))
+
+        btn_row = ttk.Frame(self)
+        btn_row.pack(fill="x", **pad)
+        ttk.Button(btn_row, text="Прочитати поточний стан", command=self._on_read).pack(side="left")
+        ttk.Button(btn_row, text="Записати на рацію", command=self._on_write).pack(side="left", padx=8)
+
+        self.status_label = ttk.Label(self, text="Натисни «Прочитати поточний стан».", foreground="#14506b")
+        self.status_label.pack(anchor="w", padx=12, pady=(4, 0))
+
+        log_frame = ttk.LabelFrame(self, text="Журнал")
+        log_frame.pack(fill="both", expand=True, **pad)
+        self.log_text = scrolledtext.ScrolledText(log_frame, height=6, state="disabled",
+                                                    font=("Consolas", 9))
+        self.log_text.pack(fill="both", expand=True, padx=6, pady=6)
+
+    # --- лог/прогрес -------------------------------------------------------------
+
+    def _log(self, text):
+        self.log_text.config(state="normal")
+        self.log_text.insert("end", text + "\n")
+        self.log_text.see("end")
+        self.log_text.config(state="disabled")
+
+    def _poll_queue(self):
+        try:
+            while True:
+                kind, payload = self.queue.get_nowait()
+                if kind == "log":
+                    self._log(payload)
+                elif kind == "state":
+                    self._apply_state(payload)
+                elif kind == "done":
+                    self._on_worker_finished(*payload)
+        except queue.Empty:
+            pass
+        self.after(50, self._poll_queue)
+
+    def _apply_state(self, state):
+        self.enabled_var.set(bool(state.get("enabled", True)))
+
+    # --- дії користувача -----------------------------------------------------------
+
+    def _on_read(self):
+        if self.busy:
+            return
+        self._run_worker(self._read_worker, "Читаю поточний стан...")
+
+    def _on_write(self):
+        if self.busy:
+            return
+        enabled = self.enabled_var.get()
+        if not enabled:
+            if not messagebox.askokcancel(
+                "Вимкнути запис RX?",
+                "Наявний запис у буфері «Переслухати» на рації одразу зітреться, і "
+                "рація перестане писати нові прийоми, доки запис не увімкнуть знову "
+                "(з меню рації або звідси). Продовжити?",
+            ):
+                return
+        self._run_worker(lambda: self._write_worker(enabled), "Записую...")
+
+    # --- фонові операції -----------------------------------------------------------
+
+    def _connect(self):
+        port = aes_key_store.find_port()
+        if not port:
+            raise RuntimeError(
+                "рацію не знайдено у звичайному режимі (VID:PID 1fc9:0094). "
+                "Переконайся, що вона увімкнена звичайним способом (НЕ в DFU) і кабель підключено."
+            )
+        ser = serial.Serial(port, 115200, timeout=0.6)
+        aes_key_store.show_cps(ser)
+        return ser
+
+    def _read_worker(self):
+        with self._connect() as ser:
+            payload = cd.read_block(ser, crcfg.TYPE_CALL_REPLAY_CONFIG, crcfg.PAYLOAD_LEN)
+            state = crcfg.parse_payload(payload) if payload else {
+                "version": crcfg.VERSION, "enabled": True,
+            }
+            self.queue.put(("state", state))
+            print("Стан: Запис RX = {}{}".format(
+                "увімкнено" if state.get("enabled", True) else "вимкнено",
+                "" if payload else " (блоку немає -- типове значення)"))
+
+    def _write_worker(self, enabled):
+        with self._connect() as ser:
+            payload = crcfg.build_payload(enabled)
+            ok, msg = cd.write_block(ser, crcfg.TYPE_CALL_REPLAY_CONFIG, payload)
+            if not ok:
+                raise RuntimeError(msg)
+            rb = cd.read_block(ser, crcfg.TYPE_CALL_REPLAY_CONFIG, crcfg.PAYLOAD_LEN)
+            verify_ok = (rb == payload)
+            print("Записано ({}), Запис RX = {}. Звірка читанням: {}.".format(
+                msg, "увімкнено" if enabled else "вимкнено",
                 "OK" if verify_ok else "НЕЗБІГ"))
 
     def _run_worker(self, fn, status_text):

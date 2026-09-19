@@ -34,6 +34,9 @@
 #include "functions/voicePrompts.h"
 #include "functions/rxPowerSaving.h"
 #include "interfaces/interrupts.h"
+#if defined(ENABLE_CALL_REPLAY)
+#include "functions/callReplay.h" // не рахувати відтворення "Переслухати" у статистику RX AGC нижче
+#endif
 
 
 #define MIC_AVERAGE_COUNTER_RELOAD     10
@@ -339,7 +342,14 @@ bool soundRefillData(uint32_t bufNum)
 		for(int j = 0; j < 2; j++)
 		{
 			if (((wavbuffer_read_idx % 16) == 0) &&
-					(voicePromptsIsPlaying() == false) && (soundMelodyIsPlaying() == false))
+					(voicePromptsIsPlaying() == false) && (soundMelodyIsPlaying() == false)
+#if defined(ENABLE_CALL_REPLAY)
+					// Форк: під час відтворення "Переслухати" у цьому буфері -- НЕ живий RX
+					// (це вже раз декодований запис), той самий принцип, що для підказок/
+					// мелодії вище -- не перераховувати АРУ-підсилення за цими семплами.
+					&& (callReplayIsPlaying() == false)
+#endif
+			)
 			{
 				if ((nonVolatileSettings.dmrRxAGC != 0) && (dmrRxAGCrxPeakAverage != 0))
 				{
@@ -371,7 +381,11 @@ bool soundRefillData(uint32_t bufNum)
 			}
 
 			// filter out some but not all kerchunkers
-			if ((dmrRxAGCpeakRx > 200) && (voicePromptsIsPlaying() == false) && (soundMelodyIsPlaying() == false))
+			if ((dmrRxAGCpeakRx > 200) && (voicePromptsIsPlaying() == false) && (soundMelodyIsPlaying() == false)
+#if defined(ENABLE_CALL_REPLAY)
+					&& (callReplayIsPlaying() == false) // те саме обґрунтування, що вище
+#endif
+			)
 			{
 				dmrRxAGCrxPeakAverage -= dmrRxAGCrxPeakAverage / DMR_RX_AGC_PEAK_SAMPLES_WINDOW_AVERAGE_SIZE;
 				dmrRxAGCrxPeakAverage += ((float)dmrRxAGCpeakRx) / DMR_RX_AGC_PEAK_SAMPLES_WINDOW_AVERAGE_SIZE;

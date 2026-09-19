@@ -341,6 +341,8 @@ const stringsTable_t ukrainianLanguage =
 .call_replay                               = "Переслухати", // MaxLen: 16
 .call_replay_empty                         = "Немає запису", // MaxLen: 16
 .call_replay_playing                       = "Відтворення", // MaxLen: 16
+.call_replay_disabled                      = "Запис вимкнено", // MaxLen: 16
+.call_replay_record                        = "Запис RX", // MaxLen: 16
 #endif
 #if defined(HAS_COLOURS)
 .smeter_header                           = "S-метр", // MaxLen: 16 (with ':' + .on or .off)

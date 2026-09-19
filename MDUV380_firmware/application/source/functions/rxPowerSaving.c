@@ -31,6 +31,9 @@
 #include "functions/ticks.h"
 #include <interfaces/clockManager.h>
 #include "usb/usb_com.h"
+#if defined(ENABLE_CALL_REPLAY)
+#include "functions/callReplay.h" // не заходити в еко-режим ПІД ЧАС відтворення "Переслухати" -- фікс хлопків
+#endif
 
 
 #define LOW_SPEED_CLOCK_ECO_THRESHOLD 2
@@ -142,6 +145,14 @@ void rxPowerSavingTick(uiEvent_t *ev, bool hasSignal)
 					(melody_play == NULL) && (voicePromptsIsPlaying() == false)
 #if defined(PLATFORM_MDUV380) || defined(PLATFORM_RT84_DM1701) || defined(PLATFORM_MD2017)
 					&& (voxIsEnabled() == false)
+#endif
+#if defined(ENABLE_CALL_REPLAY)
+					// Форк: "Переслухати" грає в тишу ефіру (нема живого RX) -- без цього
+					// гейту рівно тут еко-режим циклічно вимикав/вмикав AT1846S/HR-C6000
+					// ПІД ЧАС відтворення, кожен цикл -- чутний хлопок (польова перевірка
+					// 2026-09-19). Той самий принцип, що вже є для voicePromptsIsPlaying()
+					// у цьому ж виразі.
+					&& (callReplayIsPlaying() == false)
 #endif
 			)
 			{

@@ -353,6 +353,8 @@ typedef struct
    const char call_replay[LANGUAGE_TEXTS_LENGTH];// назва пункту головного меню й заголовок екрана
    const char call_replay_empty[LANGUAGE_TEXTS_LENGTH];// немає запису (порожній буфер)
    const char call_replay_playing[LANGUAGE_TEXTS_LENGTH];// стан "відтворюється"
+   const char call_replay_disabled[LANGUAGE_TEXTS_LENGTH];// картка "Запис вимкнено" (2026-09-19, задача п.5)
+   const char call_replay_record[LANGUAGE_TEXTS_LENGTH];// підпис пункту Options>Sound "Запис RX: Увімк/Вимк"
 #endif
 #if defined(HAS_COLOURS)
    // "S-метр у шапці" (Options>Display): показувати смугу+"S"+дБм у верхньому рядку

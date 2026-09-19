@@ -17,6 +17,10 @@
  *      повертає справді найстарішу ЖИВУ групу;
  *   6) callReplayOldestPhysIndex()/callReplayRawGroupAt() (внутрішній шов до
  *      callReplayPlayback.c) дають ТІ САМІ дані, що й callReplayPlaybackGroup(0..).
+ *   7) перемикач "Запис RX" (задача 2026-09-19, п.5): типово увімкнено одразу після
+ *      callReplayInit(); вимкнення ОДРАЗУ спорожнює кільце (не лишає старий запис);
+ *      захоплення -- НІЧОГО не пише, поки вимкнено; повторне увімкнення відновлює
+ *      звичайне захоплення "з чистого аркуша".
  */
 #include <stdint.h>
 #include <stdio.h>
@@ -215,6 +219,49 @@ static void test_overflow_wraparound(void)
 	expect("RawGroupAt(OldestPhysIndex()) overStart == PlaybackGroup(0)", rawOverStart == pbOverStart);
 }
 
+static void test_recording_enable_toggle(void)
+{
+	printf("7) перемикач \"Запис RX\":\n");
+	callReplayInit();
+
+	expect("IsRecordingEnabled() == true одразу після Init()", callReplayIsRecordingEnabled());
+
+	uint8_t buf[CALL_REPLAY_GROUP_BYTES];
+	makeGroup(buf, 1U);
+	callReplayCaptureTick(buf, false, 0U);
+	makeGroup(buf, 2U);
+	callReplayCaptureTick(buf, false, 60U);
+	expect("захоплення працює, поки увімкнено", callReplayGroupCount() == 2U);
+
+	callReplaySetRecordingEnabled(false);
+	expect("IsRecordingEnabled() == false одразу після вимкнення", callReplayIsRecordingEnabled() == false);
+	expect("буфер ОДРАЗУ спорожнів після вимкнення (не лишає старий запис)", callReplayIsEmpty());
+	expect("GroupCount() == 0 одразу після вимкнення", callReplayGroupCount() == 0U);
+
+	/* Поки вимкнено -- жодна спроба захоплення нічого не пише. */
+	makeGroup(buf, 3U);
+	callReplayCaptureTick(buf, false, 120U);
+	makeGroup(buf, 4U);
+	callReplayCaptureTick(buf, false, 180U);
+	expect("захоплення -- НІЧОГО не пише, поки вимкнено (спроба 1)", callReplayGroupCount() == 0U);
+	expect("буфер лишається порожнім, поки вимкнено (спроба 2)", callReplayIsEmpty());
+
+	/* Повторне увімкнення -- звичайне захоплення відновлюється з чистого аркуша. */
+	callReplaySetRecordingEnabled(true);
+	expect("IsRecordingEnabled() == true після повторного увімкнення", callReplayIsRecordingEnabled());
+	expect("буфер досі порожній одразу після увімкнення (нічого не з'явилось саме собою)", callReplayIsEmpty());
+
+	makeGroup(buf, 5U);
+	callReplayCaptureTick(buf, false, 1000U);
+	expect("захоплення відновилось після повторного увімкнення", callReplayGroupCount() == 1U);
+
+	const uint8_t *g;
+	bool overStart;
+	callReplayPlaybackGroup(0, &g, &overStart);
+	expect("новий запис -- новий захід (перший кадр з чистого аркуша)", overStart == true);
+	expect("вміст -- саме кадр, записаний ПІСЛЯ повторного увімкнення", groupSeq(g) == 5U);
+}
+
 int main(void)
 {
 	printf("test_call_replay:\n");
@@ -224,6 +271,7 @@ int main(void)
 	test_over_gap_boundary();
 	test_aes_skip();
 	test_overflow_wraparound();
+	test_recording_enable_toggle();
 
 	printf(fails ? "ПРОВАЛ (%d)\n" : "ПРОЙДЕНО\n", fails);
 	return fails ? 1 : 0;

@@ -1198,6 +1198,13 @@ static void handleEvent(uiEvent_t *ev)
 			return;
 		}
 
+#if defined(ENABLE_CALL_REPLAY)
+		if (callReplayToggleOnSK1(ev))
+		{
+			return;
+		}
+#endif
+
 		uint32_t tg = (LinkHead->talkGroupOrPcId & 0xFFFFFF);
 
 		// If Blue button is pressed during reception it sets the Tx TG to the incoming TG

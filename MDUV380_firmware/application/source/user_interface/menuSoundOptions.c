@@ -37,6 +37,7 @@
 #include "user_interface/menuSystem.h"
 #include "user_interface/uiLocalisation.h"
 #include "user_interface/uiUtilities.h"
+#include "functions/callReplay.h" // перемикач "Запис RX" нижче (ENABLE_CALL_REPLAY)
 
 #if defined(PLATFORM_GD77) || defined(PLATFORM_GD77S) || defined(PLATFORM_DM1801) || defined(PLATFORM_DM1801A) || defined(PLATFORM_RD5R)
 #define DMR_RX_AGC_MAX 16
@@ -76,6 +77,9 @@ enum
 	OPTIONS_AUDIO_DMR_RX_AGC,
 #if defined(PLATFORM_MD9600)
 	OPTIONS_SPEAKER_CLICK_SUPPRESS,
+#endif
+#if defined(ENABLE_CALL_REPLAY)
+	OPTIONS_CALL_REPLAY_RECORD, // "Запис RX" -- увімк/вимк захоплення для "Переслухати", поруч із dmr_rx_agc (задача 2026-09-19, п.5)
 #endif
 	NUM_SOUND_MENU_ITEMS
 };
@@ -277,6 +281,15 @@ static void updateScreen(bool isFirstRun)
 				case OPTIONS_SPEAKER_CLICK_SUPPRESS:
 					leftSide = currentLanguage->speaker_click_suppress;
 					rightSideConst = (settingsIsOptionBitSet(BIT_SPEAKER_CLICK_SUPPRESS) ? currentLanguage->on : currentLanguage->off);
+					break;
+#endif
+#if defined(ENABLE_CALL_REPLAY)
+				case OPTIONS_CALL_REPLAY_RECORD:
+					leftSide = currentLanguage->call_replay_record;
+					// Живий стан (callReplay.c), не флеш -- показує ПОПЕРЕДНІЙ перегляд ще до
+					// підтвердження ЗЕЛЕНОЮ, той самий принцип, що й інші пункти цього екрана
+					// (nonVolatileSettings тут теж лише "чернетка" до applySettings()).
+					rightSideConst = (callReplayIsRecordingEnabled() ? currentLanguage->on : currentLanguage->off);
 					break;
 #endif
 			}
@@ -540,6 +553,13 @@ static void handleEvent(uiEvent_t *ev)
 					settingsSetOptionBit(BIT_SPEAKER_CLICK_SUPPRESS, true);
 					break;
 #endif
+#if defined(ENABLE_CALL_REPLAY)
+				case OPTIONS_CALL_REPLAY_RECORD:
+					// Лише ЖИВИЙ стан -- на флеш пишемо одним разом у applySettings() (ЗЕЛЕНА),
+					// той самий патерн, що решта пунктів цього екрана (settingsSaveIfNeeded там же).
+					callReplaySetRecordingEnabled(true);
+					break;
+#endif
 			}
 		}
 		else if (KEYCHECK_PRESS(ev->keys, KEY_LEFT)
@@ -670,6 +690,13 @@ static void handleEvent(uiEvent_t *ev)
 					settingsSetOptionBit(BIT_SPEAKER_CLICK_SUPPRESS, false);
 					break;
 #endif
+#if defined(ENABLE_CALL_REPLAY)
+				case OPTIONS_CALL_REPLAY_RECORD:
+					// callReplaySetRecordingEnabled(false) одразу спорожнює буфер (задача, п.5) --
+					// живий ефект видно одразу, ще до підтвердження ЗЕЛЕНОЮ (як і решта пунктів).
+					callReplaySetRecordingEnabled(false);
+					break;
+#endif
 			}
 		}
 		else if ((ev->keys.event & KEY_MOD_PRESS) && (menuDataGlobal.menuOptionsTimeout > 0))
@@ -697,6 +724,16 @@ static void applySettings(void)
 {
 	// All parameters has already been applied
 	settingsSaveIfNeeded(true);
+
+#if defined(ENABLE_CALL_REPLAY)
+	// Перемикач "Запис RX" живе в ОКРЕМОМУ custom-data блоці, не в nonVolatileSettings
+	// (обґрунтування -- callReplay.h/settings.h), тож settingsSaveIfNeeded() вище його не
+	// торкається -- записуємо ЖИВИЙ (уже застосований під час редагування) стан окремо, тут.
+	// Зайвого запису у флеш при непотрібності немає сенсу боятись: цей екран і так пишеться
+	// нечасто (підтвердження меню), а не на кожен тік.
+	callReplayConfigSave(callReplayIsRecordingEnabled());
+#endif
+
 	resetOriginalSettingsData();
 }
 
@@ -715,6 +752,19 @@ static void exitCallback(void *data)
 		{
 			soundResetDMRRxAGCGain();
 		}
+
+#if defined(ENABLE_CALL_REPLAY)
+		// "Скасувати" (ЧЕРВОНА без підтвердження) -- перемикач "Запис RX" НІКОЛИ не писався
+		// на флеш під час редагування (лише живий стан, дивись KEY_RIGHT/LEFT-обробники й
+		// applySettings() вище), тож тут просто перечитуємо персистентний стан назад --
+		// відкидаючи будь-яку живу зміну, зроблену під час цього (скасованого) заходу в меню,
+		// той самий принцип, що memcpy(&nonVolatileSettings, ...) вище для решти пунктів.
+		// УВАГА: якщо під час редагування перемикач ставили в "Вимк", буфер записів уже
+		// спорожнився НЕЗВОРОТНО (callReplaySetRecordingEnabled(false) чистить його одразу,
+		// задача п.5) -- це навмисно, "Скасувати" відновлює лише сам ПЕРЕМИКАЧ, а не вміст
+		// буфера, який задача вимагає очищати негайно, а не по підтвердженню.
+		callReplayConfigLoad();
+#endif
 
 #if defined(PLATFORM_RD5R)
 		settingsSetDirty();

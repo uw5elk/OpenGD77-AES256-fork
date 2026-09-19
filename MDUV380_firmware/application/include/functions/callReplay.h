@@ -43,6 +43,46 @@
  * applicationMain.c одразу після dmrAesInit(). */
 void     callReplayInit(void);
 
+/* Перемикач "Запис RX: Увімк/Вимк" (2026-09-19). ЧИСТИЙ стан (простий bool у CCM,
+ * той самий модуль, що й кільце вище) -- НІЧОГО не знає про custom-data/флеш:
+ * збереження й синхронізація цього прапорця при старті/у меню -- відповідальність
+ * викликача (applicationMain.c при завантаженні, menuSoundOptions.c при
+ * перемиканні, через callReplayConfigLoad()/callReplayConfigSave() нижче), а не
+ * цього модуля -- той самий принцип "ін'єкції залежностей", що й aesActive/nowMs у
+ * callReplayCaptureTick() нижче: так само дозволяє хостовому тесту дригати цей
+ * стан напряму, без functions/codeplug.h (тягне апаратні типи, яких у хостовому
+ * тесті немає). За замовчуванням (одразу після callReplayInit()) -- Увімкнено. */
+bool     callReplayIsRecordingEnabled(void);
+/* false -- НІЧОГО не пише (перевірка -- перший рядок callReplayCaptureTick()), і
+ * кільце ОДРАЗУ спорожняється (не лишати старий запис у RAM після вимкнення, п.5
+ * задачі) -- викликає той самий callReplayInit() зсередини, який саме прапорець
+ * "запис увімкнено" не чіпає (це окремий, живий стан, а не частина того, що
+ * callReplayInit() обнуляє). ЛИШЕ живий стан -- на флеш нічого не пише (дивись
+ * callReplayConfigSave() нижче для запису). */
+void     callReplaySetRecordingEnabled(bool enabled);
+
+/* Персистентність перемикача (functions/callReplayPlayback.c, як і решта апаратного
+ * рушія -- окремий .c, щоб хостовий тест кільця не тягнув functions/codeplug.h).
+ * Формат -- малий custom-data блок (CODEPLUG_CUSTOM_DATA_TYPE_CALL_REPLAY_CONFIG,
+ * codeplug.h) у тому самому SPI-флеш регіоні, що вже займають тема/AES-ключі/RCTL --
+ * ОБҐРУНТУВАННЯ ВИБОРУ (а не біт у nonVolatileSettings.bitfieldOptions, як
+ * розглядалось спершу): великий коментар біля BIT_UNUSED_1 у settings.h. Коротко --
+ * має бути читаний/ЗАПИСУВАНИЙ з ПК (tools/gui_flasher.py, задача п.5), а CPS-запис
+ * "EEPROM" (usb_com.c, cpsHandleWriteCommand case 4) -- порожній no-op на STM32-
+ * платформах (MDUV380 емулює EEPROM у флеші й пише її лише через сектор-стиль
+ * flash-команд, для яких Python-стороні знадобився б крихкий офсет структури); а
+ * custom-data блок tools/custom_data.py вже вміє читати/писати безпечно (той самий
+ * generic API, що й RCTL). */
+/* Викликати з applicationMain.c ОДРАЗУ після callReplayInit() (той самий порядок,
+ * що й раніше з BIT_CALL_REPLAY_DISABLED): блоку може не бути (нова/нечіпана
+ * рація) -- тоді типове значення "Увімкнено" від callReplayInit() лишається як є. */
+void     callReplayConfigLoad(void);
+/* Пише блок на флеш, і ЛИШЕ при успіху -- застосовує enabled до живого стану
+ * (callReplaySetRecordingEnabled()); повертає false, якщо запис не вдався (флеш
+ * зайнятий/переповнений регіон) -- викликач (menuSoundOptions.c) тоді НЕ повинен
+ * вважати перемикання успішним. */
+bool     callReplayConfigSave(bool enabled);
+
 /* Те саме, але для стану ВІДТВОРЕННЯ (functions/callReplayPlayback.c) -- окрема
  * функція, бо цей стан живе в ІНШОМУ .c, ніж кільце вище (розбиття заради
  * хостового тесту, дивись великий коментар у callReplayPlayback.c). Викликати
@@ -106,6 +146,10 @@ uint32_t callReplayPlayTotalMs(void);
       // на byte-identical збірку не впливають (у типовій збірці ЖОДЕН виклик
       // нижче не існує в жодному .c -- дивись коментар вище файлу).
 static inline void     callReplayInit(void) { }
+static inline bool     callReplayIsRecordingEnabled(void) { return true; }
+static inline void     callReplaySetRecordingEnabled(bool e) { (void)e; }
+static inline void     callReplayConfigLoad(void) { }
+static inline bool     callReplayConfigSave(bool e) { (void)e; return false; }
 static inline void     callReplayPlaybackInit(void) { }
 static inline void     callReplayCaptureTick(const uint8_t *g, bool a, uint32_t n) { (void)g; (void)a; (void)n; }
 static inline uint32_t callReplayGroupCount(void) { return 0U; }

@@ -40,6 +40,9 @@
 #include "functions/dmr_sms.h"
 #include "crypto/dmr_aes_hook.h"
 #include "crypto/dmr_aes.h"   // DMR_AES_MAX_KEYS (межа діапазону слота ключа на каналі)
+#if defined(ENABLE_CALL_REPLAY)
+#include "functions/callReplay.h" // callReplayToggleOnSK1() нижче -- гаряча клавіша "Переслухати" (2026-09-19, задача п.6)
+#endif
 
 #if defined(ENABLE_AES)
 // Істина, поки ПОТОЧНИЙ ВИБРАНИЙ канал налаштований на шифрування (дублює логіку
@@ -3791,6 +3794,74 @@ bool repeatVoicePromptOnSK1(uiEvent_t *ev)
 
 	return false;
 }
+
+#if defined(ENABLE_CALL_REPLAY)
+/* Гаряча клавіша "Переслухати" (задача 2026-09-19, п.6). Обстеження вільних
+ * жестів на MD-UV390 Plus (лише SK1/SK2, жодної окремої функціональної
+ * клавіші й клавіатури на цій платформі -- BUTTON_ORANGE фізично не існує
+ * для PLATFORM_MDUV380, дивись buttons.c) не знайшло ЖОДНОЇ комбінації, яка
+ * була б повністю вільною ПРИ БУДЬ-ЯКИХ налаштуваннях: SK2 EXTRA_LONG_DOWN --
+ * Monitor mode (безумовно); SK1+SK2 утримувані разом -- reverse repeater (у
+ * VFO); SK1 SHORT_UP і SK1 EXTRA_LONG_DOWN -- повтор/оголошення голосової
+ * підказки, АЛЕ лише коли audioPromptMode >= AUDIO_PROMPT_MODE_VOICE_THRESHOLD
+ * (дивись repeatVoicePromptOnSK1() вище -- та сама умова, той самий рядок
+ * nonVolatileSettings.audioPromptMode). Коли голосові підказки вимкнені (Тиша/
+ * Гудки/Без клавіш) -- SK1 SHORT_UP УЖЕ сьогодні нічого не робить на головному
+ * екрані VFO/каналу (repeatVoicePromptOnSK1() поверне false і ніхто інший цей
+ * жест не читає, перевірено grep-ом по uiVFOMode.c/uiChannelMode.c).
+ *
+ * РІШЕННЯ: той самий жест (SK1 SHORT_UP), АЛЕ лише в тому самому "порожньому"
+ * режимі (audioPromptMode < VOICE_THRESHOLD) -- НУЛЬОВА зміна поведінки для
+ * типової (голосові підказки увімкнені за замовчуванням) конфігурації: там
+ * SK1 як і раніше повторює підказку, ця гілка навіть не викликається (дивись
+ * порядок виклику в uiVFOMode.c/uiChannelMode.c -- rebuildVoicePromptOnExtraLongSK1()
+ * і repeatVoicePromptOnSK1() йдуть ПЕРШИМИ й "з'їдають" подію, коли підказки
+ * увімкнено). Для тих, хто свідомо вимкнув голосові підказки (типова
+ * альтернативна конфігурація серед операторів) -- це перший коротким
+ * натисканням доступний перемикач старт/стоп з головного екрана, без заходу в
+ * меню, як просить задача.
+ *
+ * Альтернативи, розглянуті й відхилені: SK2 EXTRA_LONG_DOWN (Monitor mode
+ * активний БЕЗУМОВНО для всіх користувачів -- реальна регресія для функції,
+ * якою активно користуються); SK1 EXTRA_LONG_DOWN (той самий принцип, що
+ * нижче, спрацював би так само безпечно, але коротке натискання ергономічніше
+ * для play/stop, який може знадобитися повторно й швидко); чорд SK1+SK2 --
+ * той самий фізичний жест уже означає reverse repeater у VFO (утримання, а не
+ * дискретне натискання) -- конфлікт саме там, де тест I17 вимагає "нічого не
+ * зламано"; новий жест (подвійний клік) -- у прошивці немає механізму
+ * розпізнавання цього жесту, нова, неперевірена на залізі логіка. */
+bool callReplayToggleOnSK1(uiEvent_t *ev)
+{
+	if (BUTTONCHECK_SHORTUP(ev, BUTTON_SK1) && (BUTTONCHECK_DOWN(ev, BUTTON_SK2) == 0) && (ev->keys.key == 0))
+	{
+		if (nonVolatileSettings.audioPromptMode < AUDIO_PROMPT_MODE_VOICE_THRESHOLD)
+		{
+			if (callReplayIsPlaying())
+			{
+				callReplayStop();
+			}
+			else if (callReplayIsRecordingEnabled() == false)
+			{
+				uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 2000, currentLanguage->call_replay_disabled, true);
+			}
+			else if (callReplayIsEmpty())
+			{
+				uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 2000, currentLanguage->call_replay_empty, true);
+			}
+			else if (callReplayStart())
+			{
+				// Коротка картка на старті -- зрозуміло, що відтворення почалось
+				// (задача, п.6), той самий стиль, що повідомлення нижче.
+				uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 2000, currentLanguage->call_replay_playing, true);
+			}
+
+			return true;
+		}
+	}
+
+	return false;
+}
+#endif // ENABLE_CALL_REPLAY
 
 bool handleMonitorMode(uiEvent_t *ev)
 {

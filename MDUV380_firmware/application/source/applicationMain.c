@@ -474,6 +474,11 @@ void applicationMainTask(void)
 #if defined(ENABLE_CALL_REPLAY)
 	callReplayInit();         // те саме застереження -- кільце "Переслухати" теж у .ccmram
 	callReplayPlaybackInit(); // стан відтворення -- окремий .c (callReplayPlayback.c), окреме обнулення
+	// Перемикач "Запис RX" (2026-09-19) -- callReplayInit() вище щойно поставив
+	// його в true (типове значення модуля); тут підвантажуємо РЕАЛЬНИЙ стан із
+	// custom-data блоку на флеші (callReplayPlayback.c) -- якщо блоку ще немає
+	// (нова/нечіпана рація), типове значення (Увімкнено) лишається як є.
+	callReplayConfigLoad();
 #endif
 
 	radioPostinit();

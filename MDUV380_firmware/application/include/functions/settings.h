@@ -143,6 +143,23 @@ typedef enum
 	BIT_POWEROFF_SUSPEND            = (SETTINGS_BITS_BANK_0 | (1 << 8)),
 #endif
 	BIT_SATELLITE_MANUAL_AUTO       = (SETTINGS_BITS_BANK_0 | (1 << 9)),
+	// (2026-09-19) Розглядалось під "Переслухати" (перейменування BIT_UNUSED_1, той самий
+	// прийом, що BIT_SMS_MONITOR_ALL), АЛЕ відкинуто: перемикач "Запис RX" має бути читаний
+	// і ЗАПИСУВАНИЙ з gui_flasher.py (задача, п.5), а біт у bitfieldOptions живе всередині
+	// nonVolatileSettings, який на MDUV380 -- емульована "EEPROM" у SPI-флеші, записувана
+	// лише ЦІЛИМ блоком через сектор-стиль CPS 'X' (flash prepare/send/commit); сам CPS-код
+	// EEPROM-запису (usb_com.c, cpsHandleWriteCommand(), case 4) -- ПОРОЖНІЙ (ok=true, no-op)
+	// саме для STM32-платформ (MDUV380/MD9600/...), лише GD77/DM1801/RD5R мають там реальну
+	// I2C EEPROM. Патчити один біт "наосліп" з ПК означало б або дублювати офсет
+	// nonVolatileSettings-структури в Python (крихко: будь-яка зміна структури в C мовчки
+	// розбиває прошивальник і ризикує пошкодити налаштування користувача), або писати НОВИЙ
+	// CPS-протокол у usb_com.c (великий блок коду, критичний для звичайного програмування
+	// рації через штатний CPS -- завеликий ризик заради одного біта). Замість цього --
+	// НОВИЙ малий custom-data блок (той самий регіон і той самий генерик API, що вже
+	// використовує RCTL, дивись CODEPLUG_CUSTOM_DATA_TYPE_CALL_REPLAY_CONFIG у codeplug.h
+	// і callReplayConfigLoad()/callReplayConfigSave() у callReplayPlayback.c) -- туди
+	// tools/custom_data.py вже вміє писати БЕЗПЕЧНО (сектор-safe, не займає сусідні блоки).
+	// Лишається вільним для майбутнього використання.
 	BIT_UNUSED_1                    = (SETTINGS_BITS_BANK_0 | (1 << 10)),
 #if defined(PLATFORM_MD9600)
 	BIT_SPEAKER_CLICK_SUPPRESS      = (SETTINGS_BITS_BANK_0 | (1 << 11)),

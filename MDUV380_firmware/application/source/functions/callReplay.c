@@ -41,6 +41,14 @@ static __attribute__((section(".ccmram"))) uint8_t callReplayRing[CALL_REPLAY_GR
 /* Один біт на групу: чи ця група -- перша в новому "заході". (CALL_REPLAY_GROUPS+7)/8 = 63 Б. */
 static __attribute__((section(".ccmram"))) uint8_t callReplayOverBit[(CALL_REPLAY_GROUPS + 7U) / 8U];
 static __attribute__((section(".ccmram"))) callReplayCaptureState_t callReplayCap;
+/* Перемикач "Запис RX" -- окремо від callReplayCap вище: callReplayInit() обнуляє
+ * КІЛЬЦЕ, але НЕ цей прапорець (він переживає повторні callReplayInit()-виклики
+ * з callReplaySetRecordingEnabled(false), дивись callReplay.h). Значення одразу
+ * після callReplayInit() -- true (Увімкнено); реальне персистентне значення
+ * (custom-data блок, callReplayConfigLoad() у callReplayPlayback.c -- обґрунтування
+ * вибору цього сховища замість біта в nonVolatileSettings -- callReplay.h/settings.h)
+ * синхронізує викликач (applicationMain.c) одразу після callReplayInit(). */
+static __attribute__((section(".ccmram"))) bool callReplayRecordingEnabled;
 
 static inline void callReplayBitSet(uint8_t *bits, uint16_t idx)
 {
@@ -64,12 +72,40 @@ void callReplayInit(void)
 	callReplayCap.lastCaptureMs = 0U;
 	callReplayCap.hasCaptured = false;
 	memset(callReplayOverBit, 0, sizeof(callReplayOverBit));
+	callReplayRecordingEnabled = true; // типове значення; applicationMain.c одразу
+	                                    // після цього синхронізує реальне (флеш)
+}
+
+bool callReplayIsRecordingEnabled(void)
+{
+	return callReplayRecordingEnabled;
+}
+
+void callReplaySetRecordingEnabled(bool enabled)
+{
+	callReplayRecordingEnabled = enabled;
+
+	if (!enabled)
+	{
+		// Спорожнити буфер ОДРАЗУ -- не лишати старий запис у RAM після вимкнення
+		// (задача, п.5). callReplayInit() також обнуляє callReplayRecordingEnabled
+		// до true -- відновлюємо false одразу після, порядок важливий.
+		callReplayInit();
+		callReplayRecordingEnabled = false;
+	}
 }
 
 void callReplayCaptureTick(const uint8_t group[CALL_REPLAY_GROUP_BYTES], bool aesActive, uint32_t nowMs)
 {
 	uint16_t idx;
 	bool isNewOver;
+
+	if (callReplayRecordingEnabled == false)
+	{
+		// Запис вимкнено -- НІЧОГО не пишемо (задача, п.5). Буфер уже порожній
+		// (спорожнений у callReplaySetRecordingEnabled() у момент вимкнення).
+		return;
+	}
 
 	if (aesActive)
 	{

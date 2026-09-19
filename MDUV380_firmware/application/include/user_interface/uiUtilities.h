@@ -254,6 +254,11 @@ void uiUtilityBuildTgOrPCDisplayName(char *nameBuf, int bufferLen);
 void acceptPrivateCall(uint32_t id, int timeslot);
 bool rebuildVoicePromptOnExtraLongSK1(uiEvent_t *ev);
 bool repeatVoicePromptOnSK1(uiEvent_t *ev);
+#if defined(ENABLE_CALL_REPLAY)
+// Гаряча клавіша "Переслухати" (SK1 SHORT_UP, лише коли audioPromptMode < VOICE_THRESHOLD --
+// обґрунтування великим коментарем біля визначення, uiUtilities.c). Задача 2026-09-19, п.6.
+bool callReplayToggleOnSK1(uiEvent_t *ev);
+#endif
 bool handleMonitorMode(uiEvent_t *ev);
 void uiUtilityDisplayInformation(const char *str, displayInformation_t line, int8_t yOverride);
 void uiUtilityRenderQSODataAndUpdateScreen(void);

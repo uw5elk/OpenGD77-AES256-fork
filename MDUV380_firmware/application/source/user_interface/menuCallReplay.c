@@ -84,7 +84,16 @@ static void updateScreen(bool forceRedraw)
 		displayFillRect(0, 24, DISPLAY_SIZE_X, (DISPLAY_SIZE_Y - 24), true);
 	}
 
-	if (callReplayIsEmpty())
+	if (callReplayIsRecordingEnabled() == false)
+	{
+		// Перевірити ПЕРШИМ, до callReplayIsEmpty(): вимкнений запис завжди означає й
+		// порожній буфер (callReplaySetRecordingEnabled(false) спорожняє його одразу,
+		// дивись callReplay.c), але користувачу треба бачити ПРИЧИНУ ("вимкнено"), а
+		// не загальне "немає запису" -- інакше виглядає як апаратна проблема (задача,
+		// п.5).
+		displayPrintCentered(52, (char *)currentLanguage->call_replay_disabled, FONT_SIZE_3);
+	}
+	else if (callReplayIsEmpty())
 	{
 		displayPrintCentered(52, (char *)currentLanguage->call_replay_empty, FONT_SIZE_3);
 	}
@@ -127,6 +136,12 @@ static void handleEvent(uiEvent_t *ev)
 		if (callReplayIsPlaying())
 		{
 			callReplayStop();
+		}
+		else if (callReplayIsRecordingEnabled() == false)
+		{
+			// Той самий пріоритет, що в updateScreen() вище -- сказати ЧОМУ порожньо.
+			uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 2000,
+					currentLanguage->call_replay_disabled, true);
 		}
 		else if (callReplayIsEmpty())
 		{

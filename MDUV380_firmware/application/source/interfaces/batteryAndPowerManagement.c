@@ -41,6 +41,9 @@
 #include "hardware/radioHardwareInterface.h"
 #include "interfaces/gps.h"
 #include "interfaces/settingsStorage.h"
+#if defined(ENABLE_CALL_REPLAY)
+#include "functions/callReplay.h" // не зупиняти "Переслухати" на час очікування низько-батарейного сигналу нижче
+#endif
 
 //#define DEBUG_HARDWARE_SCREEN 1
 
@@ -173,7 +176,16 @@ void batteryChecking(uiEvent_t *ev)
 				{
 					voicePromptsTick();
 					soundTickMelody();
-
+#if defined(ENABLE_CALL_REPLAY)
+					// Форк: цей цикл -- зайнятий цикл очікування (osDelay(1)), тож звичайний
+					// applicationMainTask() (де живе callReplayTick()) тут не крутиться. Якщо
+					// "Переслухати" саме відтворюється, коли спрацював цей рідкісний збіг
+					// (низька батарея + активне сканування), без цього тіку його аудіо
+					// застоїться на час усього цього циклу (це НЕ умова виходу з циклу --
+					// чекаємо лише завершення низько-батарейного сигналу/підказки, а не
+					// завершення відтворення, воно може тривати до 30 с).
+					callReplayTick();
+#endif
 					osDelay(1);
 				}
 

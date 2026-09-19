@@ -24,7 +24,12 @@
 #include "functions/sound.h"          /* wavbuffer_count, audioAmp*, soundTick*, FreeRTOS task.h */
 #include "functions/trx.h"            /* trxTransmissionEnabled/trxIsTransmitting/trxCarrierDetected */
 #include "functions/voicePrompts.h"   /* voicePromptsIsPlaying() -- не зривати чужий звук */
+#include "functions/rxPowerSaving.h"  /* rxPowerSavingSetState(ECOPHASE_POWERSAVE_INACTIVE) -- фікс хлопків, дивись callReplayStart() */
+#include "functions/settings.h"       /* nonVolatileSettings.dmrRxAGC */
 #include "hardware/radioHardwareInterface.h" /* RADIO_DEVICE_PRIMARY, radioSetAudioPath */
+#include "functions/codeplug.h"       /* codeplugGetOpenGD77CustomDataBounded/SetOpenGD77CustomData --
+                                        * персистентність перемикача "Запис RX", дивись callReplayConfigLoad() */
+#include <string.h>                   /* memcmp/memcpy/memset для callReplayOnFlashCfg_t нижче */
 
 /* Повідомлення асерту -- лише для хостового компілятора (діагностика збірки, ніколи не
  * потрапляє на екран рації), тож навмисно англійською/ASCII -- check_string_encoding.py
@@ -76,6 +81,80 @@ void callReplayPlaybackInit(void)
 	callReplayPlay.boundaryHandled = false;
 }
 
+/* Персистентність перемикача "Запис RX" (задача 2026-09-19, п.5). Малий custom-data
+ * блок -- ОБҐРУНТУВАННЯ вибору цього способу (а не біт у nonVolatileSettings, як
+ * розглядалось спершу) -- великий коментар біля BIT_UNUSED_1 у settings.h і біля
+ * оголошень callReplayConfigLoad()/Save() у callReplay.h: коротко, перемикач має
+ * бути записуваний з tools/gui_flasher.py, а CPS-запис EEPROM -- no-op на MDUV380.
+ *
+ * Формат -- звичайна статична пам'ять (НЕ CCM): цей блок читається/пишеться рідко
+ * (старт і перемикання в меню), а не на кожному тіку, тож CCM-бюджет тут не
+ * вигравав би нічого -- той самий принцип, що dmrRctlOnFlashCfg_t у dmr_rctl_cfg.c. */
+typedef struct
+{
+	char    magic[4];   // "CRPL"
+	uint8_t version;    // 1
+	uint8_t enabled;     // 0/1 -- ПРЯМА полярність (на відміну від відкинутого BIT_CALL_REPLAY_DISABLED):
+	                     // тут інверсія не потрібна, бо ВІДСУТНІСТЬ блоку (нова/нечіпана рація) сама по
+	                     // собі означає "типове значення" -- callReplayConfigLoad() нижче лишає
+	                     // callReplayInit()-типове (Увімкнено), не записуючи нічого в цьому випадку.
+} callReplayOnFlashCfg_t;
+
+#define CALL_REPLAY_CFG_VERSION  1U
+
+void callReplayConfigLoad(void)
+{
+	callReplayOnFlashCfg_t cfg;
+
+	memset(&cfg, 0, sizeof(cfg));
+
+	if (codeplugGetOpenGD77CustomDataBounded(CODEPLUG_CUSTOM_DATA_TYPE_CALL_REPLAY_CONFIG,
+			(uint8_t *)&cfg, (int)sizeof(cfg)) &&
+			(memcmp(cfg.magic, "CRPL", 4) == 0))
+	{
+		callReplaySetRecordingEnabled(cfg.enabled != 0U);
+	}
+	// Блоку немає (нова/нечіпана рація) -- типове значення callReplayInit() (Увімкнено,
+	// задача п.5) лишається як є, нічого писати не треба.
+}
+
+bool callReplayConfigSave(bool enabled)
+{
+	callReplayOnFlashCfg_t cfg;
+
+	memset(&cfg, 0, sizeof(cfg));
+
+	// Знос флеша: applySettings() (menuSoundOptions.c) викликає це на КОЖНЕ підтвердження
+	// екрана Options>Sound, не лише коли саме цей пункт змінили -- той самий принцип, що
+	// dmrRctlSetInhibited() у dmr_rctl_cfg.c ("уже в потрібному стані -- зайвий запис не
+	// робимо"). Якщо на флеші вже лежить блок з ЦИМ самим enabled -- пропускаємо запис.
+	if (codeplugGetOpenGD77CustomDataBounded(CODEPLUG_CUSTOM_DATA_TYPE_CALL_REPLAY_CONFIG,
+			(uint8_t *)&cfg, (int)sizeof(cfg)) &&
+			(memcmp(cfg.magic, "CRPL", 4) == 0) &&
+			(cfg.version == CALL_REPLAY_CFG_VERSION) &&
+			(cfg.enabled == (enabled ? 1U : 0U)))
+	{
+		callReplaySetRecordingEnabled(enabled); // вже узгоджено -- лише живий стан, про всяк випадок
+		return true;
+	}
+
+	memset(&cfg, 0, sizeof(cfg));
+	memcpy(cfg.magic, "CRPL", 4);
+	cfg.version = CALL_REPLAY_CFG_VERSION;
+	cfg.enabled = (enabled ? 1U : 0U);
+
+	bool ok = codeplugSetOpenGD77CustomData(CODEPLUG_CUSTOM_DATA_TYPE_CALL_REPLAY_CONFIG, (uint8_t *)&cfg, (int)sizeof(cfg));
+
+	if (ok)
+	{
+		// Живий стан застосовуємо ЛИШЕ при успішному записі -- викликач (menuSoundOptions.c)
+		// не повинен вважати перемикання застосованим, якщо флеш не прийняв запис.
+		callReplaySetRecordingEnabled(enabled);
+	}
+
+	return ok;
+}
+
 bool callReplayIsPlaying(void)
 {
 	return callReplayPlay.active;
@@ -106,6 +185,27 @@ bool callReplayStart(void)
 	if ((callReplayGroupCount() == 0U) || callReplayBusyOnAir())
 	{
 		return false; // порожньо, або зараз прийом/передача (п. "Не стартувати...")
+	}
+
+	// Фікс "ритмічних хлопків" (польова перевірка 2026-09-19): без цих двох рядків
+	// -- вихід рівно той самий, що на початку voicePromptsPlay() -- ефір під час
+	// відтворення тихий (ми граємо із запису, живого сигналу немає), і без цього
+	// rxPowerSavingTick() (rxPowerSaving.c) за кілька секунд тиші сам почав би
+	// цикл ECOPHASE-присипляння приймача/HR-C6000 (кожен цикл цикл вимкнення-
+	// увімкнення AT1846S -- чутний хлопок). callReplayIsPlaying() нижче в
+	// rxPowerSaving.c не дає ЗАЙТИ в цей цикл ПІД ЧАС відтворення; тут -- та
+	// сама негайна побудка, що робить voicePromptsPlay(), про всяк випадок, якщо
+	// відтворення стартувало вже ПІД ЧАС активного еко-циклу (RX/HR-C6000 могли
+	// бути вимкнені саме в цю мить -- codecInit()/audioAmpEnable() нижче повинні
+	// піти з увімкненим трактом).
+	rxPowerSavingSetState(ECOPHASE_POWERSAVE_INACTIVE);
+
+	// Той самий порядок, що voicePromptsPlay(): скинути середнє АРУ ДО старту
+	// відтворення, а не після -- інакше перші кадри запису йдуть із застарілим
+	// (можливо, від попередньої тихої ділянки ефіру) гейном.
+	if (nonVolatileSettings.dmrRxAGC != 0)
+	{
+		soundResetDMRRxAGCGain();
 	}
 
 	taskENTER_CRITICAL();
