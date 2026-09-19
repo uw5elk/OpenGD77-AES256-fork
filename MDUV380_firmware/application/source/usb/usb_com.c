@@ -1972,6 +1972,47 @@ static void cpsHandleCommand(void)
 			}
 #endif
 #endif
+#if defined(ENABLE_MEM_DIAG)
+		case 0xB4: // DIAGNOSTIC (2026-09-19, розвідка docs/recording-feasibility.md): вимірювання
+				   // РЕАЛЬНОГО запасу пам'яті під навантаженням, замість статичного здогаду.
+				   // НАВМИСНО поза #if ENABLE_AES/ENABLE_DMR_DATA вище -- потрібен саме на "голій"
+				   // конфігурації (ENABLE_AES=0), щоб порівняти запас між усіма збірками матриці.
+				   // Під власним дефайном ENABLE_MEM_DIAG (типова збірка -- вимкнено, байт-у-байт
+				   // без змін). -> [cmd, len_hi, len_lo, 5x uint32 LE]:
+				   //   d0 = xPortGetFreeHeapSize()                       -- вільно в купі FreeRTOS, Б
+				   //   d1 = configTOTAL_HEAP_SIZE                        -- розмір купи FreeRTOS, Б
+				   //   d2 = uxTaskGetStackHighWaterMark(hrc6000Task)     -- запас стека, СЛОВА
+				   //   d3 = HRC6000_TASK_STACK_WORDS                     -- виділено стека, слова
+				   //   d4 = uxTaskGetStackHighWaterMark(NULL)            -- запас стека ГОЛОВНОЇ
+				   //        задачі (вона ж і обробляє цей запит -- tick_com_request() кличуть з
+				   //        applicationMainTask(), applicationMain.c:600), слова
+				   // Слово стека (portSTACK_TYPE) на цій платі -- 4 Б (Cortex-M4, 32-біт); ПК-бік
+				   // множить сам, тут не передаємо -- одна відома константа платформи.
+			{
+				uint32_t d[5];
+				int n = 0;
+
+				d[0] = (uint32_t)xPortGetFreeHeapSize();
+				d[1] = (uint32_t)configTOTAL_HEAP_SIZE;
+				d[2] = (uint32_t)uxTaskGetStackHighWaterMark(hrc6000Task.Handle);
+				d[3] = (uint32_t)HRC6000_TASK_STACK_WORDS;
+				d[4] = (uint32_t)uxTaskGetStackHighWaterMark(NULL);
+
+				for (int i = 0; i < 5; i++)
+				{
+					usbComSendBuf[3 + n++] = (uint8_t)(d[i]);
+					usbComSendBuf[3 + n++] = (uint8_t)(d[i] >> 8);
+					usbComSendBuf[3 + n++] = (uint8_t)(d[i] >> 16);
+					usbComSendBuf[3 + n++] = (uint8_t)(d[i] >> 24);
+				}
+				usbComSendBuf[0] = com_requestbuffer[0];
+				usbComSendBuf[1] = (uint8_t)((n >> 8) & 0xFF);
+				usbComSendBuf[2] = (uint8_t)(n & 0xFF);
+				hasToReply = true;
+				replyLength = n + 3;
+				return; // bypass the trailing generic '-' reply
+			}
+#endif
 		case 0:
 #if defined(HAS_GPS)
 			cpsStopGPSNMEA();

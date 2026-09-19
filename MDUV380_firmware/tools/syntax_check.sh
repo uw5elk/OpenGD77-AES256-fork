@@ -76,13 +76,17 @@ DEFS_COMMON=(
 	-DGITVERSION=syntaxcheck
 )
 
-# Три набори -- рівно ті самі прапорці, що й три job'и збірки в build.yml. Порядок
-# значення не має, але імена (перший стовпець у CONFIGS нижче) йдуть у звіт.
+# Набори -- рівно ті самі прапорці, що й job'и збірки в build.yml. Порядок значення
+# не має, але імена (перший стовпець у CONFIGS нижче) йдуть у звіт.
 DEFS_AES0=("${DEFS_COMMON[@]}")                                            # build (ENABLE_AES=0)
 DEFS_AES1=("${DEFS_COMMON[@]}" -DENABLE_AES)                               # build (ENABLE_AES=1)
 DEFS_UA=("${DEFS_COMMON[@]}" -DENABLE_AES -DENABLE_DMR_DATA -DLANGUAGE_BUILD_UKRAINIAN)  # build-ukrainian
+# 2026-09-19: ENABLE_MEM_DIAG (USB CPS 0xB4, розвідка docs/recording-feasibility.md)
+# навмисно перевіряється на "голій" AES0-основі, БЕЗ ENABLE_AES/ENABLE_DMR_DATA --
+# саме там, куди звичайний DEFS_UA не заглядає, і де новий опкод має жити незалежно.
+DEFS_MEMDIAG=("${DEFS_COMMON[@]}" -DENABLE_MEM_DIAG)                       # build (ENABLE_AES=0) + ENABLE_MEM_DIAG
 
-CONFIGS=(AES0 AES1 UA)
+CONFIGS=(AES0 AES1 UA MEMDIAG)
 
 # Щоб побачити попередження ВЛАСНОГО коду, запускай: SHOW_WARNINGS=1 ...
 # Три класи помилок, які МАЮТЬ валити перевірку.

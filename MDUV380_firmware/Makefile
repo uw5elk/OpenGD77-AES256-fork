@@ -81,6 +81,16 @@ ifeq ($(LANGUAGE_UKRAINIAN),1)
 DEFS += -DLANGUAGE_BUILD_UKRAINIAN
 endif
 
+# Dev-only: рантайм-діагностика вільної пам'яті (USB CPS 0xB4, tools/mem_diag.py).
+# Додано 2026-09-19 як передумову до docs/recording-feasibility.md -- показує
+# РЕАЛЬНИЙ (не статичний) запас купи FreeRTOS і стеків hrc6000Task/головної задачі
+# під навантаженням. Незалежний від ENABLE_AES/ENABLE_DMR_DATA -- саме тому й
+# окремий прапорець: потрібен і на "голій" конфігурації, щоб порівняти запас між
+# усіма збірками матриці. Типова збірка без цього прапорця -- байт-у-байт без змін.
+ifeq ($(ENABLE_MEM_DIAG),1)
+DEFS += -DENABLE_MEM_DIAG
+endif
+
 CFLAGS  = $(CPU) $(DEFS) $(INCS) -Os -g3 -ffunction-sections -fdata-sections -Wall -MMD -MP
 LDSCRIPT = STM32F405VGTX_FLASH.ld
 LDFLAGS = $(CPU) -T$(LDSCRIPT) --specs=nano.specs -Wl,--gc-sections -Wl,-Map=$(BUILD)/$(TARGET).map -lc -lm -lnosys

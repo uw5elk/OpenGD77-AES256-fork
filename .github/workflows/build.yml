@@ -74,6 +74,13 @@ jobs:
       - name: Report size
         working-directory: MDUV380_firmware
         run: arm-none-eabi-size build/openuv380-10w.elf
+      # Розвідка docs/recording-feasibility.md (2026-09-19): скільки насправді вільно
+      # RAM (128 КБ) і CCMRAM (64 КБ) СТАТИЧНО, і хто саме з'їдає місце -- див.
+      # tools/mem_report.py. Для ВСІХ конфігурацій матриці, не лише української:
+      # ENABLE_AES/ENABLE_DMR_DATA теж коштують пам'яті, і різниця цікава сама по собі.
+      - name: Звіт про пам'ять (RAM/CCMRAM, топ-20 об'єктів)
+        working-directory: MDUV380_firmware
+        run: python3 tools/mem_report.py build/openuv380-10w.elf --top 20
       - name: Assert codec-merge-capable size
         working-directory: MDUV380_firmware
         run: |
@@ -89,6 +96,12 @@ jobs:
             MDUV380_firmware/build/*.bin
             MDUV380_firmware/build/*.hex
             MDUV380_firmware/build/*.elf
+      # .map -- щоб можна було завантажити й подивитись поелементно (лінкерна карта
+      # секцій/символів), а не лише топ-20 із кроку вище.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openuv380-10w-aes${{ matrix.aes }}-map
+          path: MDUV380_firmware/build/*.map
 
   # Українська збірка: окрема робота, а не ще один пункт матриці вище, щоб не чіпати
   # наявні перевірки. Дає готовий .bin, який можна прошити з будь-якої ОС -- локальний
@@ -109,6 +122,9 @@ jobs:
       - name: Report size
         working-directory: MDUV380_firmware
         run: arm-none-eabi-size build/openuv380-10w.elf
+      - name: Звіт про пам'ять (RAM/CCMRAM, топ-20 об'єктів)
+        working-directory: MDUV380_firmware
+        run: python3 tools/mem_report.py build/openuv380-10w.elf --top 20
       # Артефакт вивантажуємо ДО перевірок: якщо якась із них колись спрацює хибно,
       # зібраний .bin все одно має лишитись доступним для завантаження.
       - uses: actions/upload-artifact@v4
@@ -118,6 +134,10 @@ jobs:
             MDUV380_firmware/build/*.bin
             MDUV380_firmware/build/*.hex
             MDUV380_firmware/build/*.elf
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openuv380-10w-ukrainian-map
+          path: MDUV380_firmware/build/*.map
       - name: Assert codec-merge-capable size
         working-directory: MDUV380_firmware
         run: |

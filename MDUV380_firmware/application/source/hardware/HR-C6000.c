@@ -3018,7 +3018,7 @@ void HRC6000InitTask(void)
 {
 	xTaskCreate(hrc6000TaskFunction,            /* pointer to the task */
 			"hrc6000Task",                      /* task name for kernel awareness debugging */
-			5000L / sizeof(portSTACK_TYPE),     /* task stack size */
+			HRC6000_TASK_STACK_WORDS,           /* task stack size -- іменована константа (HR-C6000.h) */
 			NULL,                               /* optional task startup argument */
 			(UBaseType_t)osPriorityNormal,      /* initial priority */
 			&hrc6000Task.Handle                 /* optional task handle to create */

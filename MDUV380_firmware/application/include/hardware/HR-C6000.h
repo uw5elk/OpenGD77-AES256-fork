@@ -40,6 +40,13 @@
 
 extern Task_t hrc6000Task;
 
+// Розмір стека задачі hrc6000Task, у СЛОВАХ (portSTACK_TYPE) -- винесено з
+// HRC6000InitTask() (HR-C6000.c) в іменовану константу 2026-09-19, щоб
+// діагностика вільної пам'яті (USB CPS 0xB4, ENABLE_MEM_DIAG) могла показати
+// "залишок / виділено" для цієї задачі, не дублюючи магічне число 5000 у двох
+// файлах. Значення НЕ змінено -- лише перейменовано.
+#define HRC6000_TASK_STACK_WORDS   (5000UL / sizeof(portSTACK_TYPE))
+
 #define DMR_FRAME_BUFFER_SIZE     64
 
 #define AMBE_AUDIO_LENGTH         27
