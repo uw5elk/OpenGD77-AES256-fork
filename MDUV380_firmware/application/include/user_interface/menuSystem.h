@@ -102,6 +102,14 @@ typedef enum
 #if defined(HAS_SOFT_VOLUME)
 	NOTIFICATION_TYPE_VOLUME,
 #endif
+#if defined(ENABLE_CALL_REPLAY)
+	/* Форк (2026-09-20): повноекранна картка "Переслухати" під час відтворення --
+	 * той самий displayLevelCard(), що й гучність/потужність/шумоподавлення (варіант
+	 * A з макета, задача). Контент (заголовок-режим, час, смуга прогресу) рахує
+	 * uiNotificationRefresh() з живих callReplayPlayedMs()/PlayTotalMs()/
+	 * IsLastTransitionMode() -- ЖОДНОГО збереженого тексту в notificationData.message. */
+	NOTIFICATION_TYPE_CALL_REPLAY,
+#endif
 	NOTIFICATION_TYPE_MESSAGE,
 	NOTIFICATION_TYPE_SMS,      /* форк: вхідне SMS -- на весь екран і ДО натискання RED */
 	NOTIFICATION_TYPE_BEARING,
@@ -116,6 +124,9 @@ typedef enum
 	NOTIFICATION_ID_VOLUME,
 #endif
 	NOTIFICATION_ID_POWER,
+#if defined(ENABLE_CALL_REPLAY)
+	NOTIFICATION_ID_CALL_REPLAY, /* форк (2026-09-20) -- дивись NOTIFICATION_TYPE_CALL_REPLAY вище */
+#endif
 	NOTIFICATION_ID_MESSAGE,
 	NOTIFICATION_ID_SMS,        /* форк: окремий id, щоб банер SMS не змішувався з рештою */
 	NOTIFICATION_ID_BEARING,

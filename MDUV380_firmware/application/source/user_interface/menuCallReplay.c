@@ -17,7 +17,7 @@
 
 static menuStatus_t menuCallReplayExitCode = MENU_STATUS_SUCCESS;
 static void updateScreen(bool forceRedraw);
-static void handleEvent(uiEvent_t *ev);
+static bool handleEvent(uiEvent_t *ev);
 
 /* Вибір режиму для НАСТУПНОГО старту з ЦЬОГО екрана (задача 2026-09-20, п.2).
  * Файлова статична (не локальна в menuCallReplay()) -- потрібна і handleEvent()
@@ -64,13 +64,28 @@ menuStatus_t menuCallReplay(uiEvent_t *ev, bool isFirstRun)
 
 		if (ev->hasEvent)
 		{
-			handleEvent(ev);
+			// Форк (2026-09-20, картка "Переслухати"): handleEvent() повертає true,
+			// коли КРАСНА вже вивела нас з цього екрана (callReplayStop() +
+			// menuSystemPopPreviousMenu() -- останній усередині сам малює й штовхає
+			// НОВИЙ поточний екран, VFO/канал/меню, через menuSystemPushMenuFirstRun()).
+			// Без цієї перевірки блок wasPlaying нижче однаково спрацював би на ЦЬОМУ
+			// ж тіку (callReplayIsPlaying() уже false після стопу) і своїм
+			// updateScreen(true) переписав би щойно правильно намальований НОВИЙ
+			// екран назад на "Переслухати" -- реальний баг, не повʼязаний із самою
+			// карткою, але вперше видимий саме зараз, коли стоп синхронно тягне за
+			// собою uiNotificationHide(true) (теж перемальовує поточний екран).
+			if (handleEvent(ev))
+			{
+				return menuCallReplayExitCode;
+			}
 		}
 
 		if (callReplayIsPlaying())
 		{
-			// Поки триває відтворення, оновлюємо прогрес -- той самий темп, що й
-			// RSSI-екран (RSSI_UPDATE_COUNTER_RELOAD, ~200 мс).
+			// Поки триває відтворення, екран належить повноекранній картці
+			// NOTIFICATION_TYPE_CALL_REPLAY (uiNotification.c) -- вона сама оновлюється
+			// з callReplayTick(). updateScreen(false) тут лишень тримає m/wasPlaying
+			// узгодженими; сама функція нічого не малює, поки грає (див. нижче).
 			if ((ev->time - m) > RSSI_UPDATE_COUNTER_RELOAD)
 			{
 				m = ev->time;
@@ -82,7 +97,8 @@ menuStatus_t menuCallReplay(uiEvent_t *ev, bool isFirstRun)
 		{
 			// Відтворення щойно САМОСТІЙНО зупинилось (кінець буфера, вхідний виклик,
 			// PTT -- callReplay.c), без натискання нашої кнопки -- підхопити це на
-			// екрані одразу, а не чекати на подію.
+			// екрані одразу, а не чекати на подію. (Стоп через RED сюди вже не
+			// доходить -- обробляється вище через ранній return.)
 			wasPlaying = false;
 			updateScreen(true);
 		}
@@ -94,6 +110,19 @@ menuStatus_t menuCallReplay(uiEvent_t *ev, bool isFirstRun)
 static void updateScreen(bool forceRedraw)
 {
 	char buffer[SCREEN_LINE_BUFFER_SIZE];
+
+	if (callReplayIsPlaying())
+	{
+		// Форк (2026-09-20, картка "Переслухати", варіант A): під час відтворення
+		// екран повністю належить повноекранній картці NOTIFICATION_TYPE_CALL_REPLAY
+		// (displayLevelCard(), uiNotification.c) -- вона сама раз на ~300 мс
+		// оновлюється з callReplayTick(). Малювати тут щось СВОЄ (як робив старий
+		// рядок "режим" + "зіграно/усього") означало б дублювати ту саму інформацію
+		// другим шляхом малювання, а displayRender() нижче все одно був би
+		// no-op'ом, поки картка видима (HX8353E_display.c) -- лише зайва робота
+		// щотіку. Нічого малювати не треба.
+		return;
+	}
 
 	if (forceRedraw)
 	{
@@ -119,23 +148,6 @@ static void updateScreen(bool forceRedraw)
 	{
 		displayPrintCentered(52, (char *)currentLanguage->call_replay_empty, FONT_SIZE_3);
 	}
-	else if (callReplayIsPlaying())
-	{
-		uint32_t playedS = (callReplayPlayedMs() / 1000U);
-		uint32_t totalS = ((callReplayPlayTotalMs() + 999U) / 1000U); // округлення вгору, як і нижче
-
-		// Режим АКТИВНОЇ сесії (callReplayIsLastTransitionMode()), а не поточний
-		// вибір на екрані (selectedLastTransitionMode могли встигнути перемкнути
-		// вже ПІД ЧАС відтворення -- LEFT/RIGHT нижче це ігнорує, але про всяк
-		// випадок читаємо саме те, що РЕАЛЬНО грає, задача п.2 "Картка на старті
-		// показує, який режим грає").
-		displayPrintCentered(40, (char *)(callReplayIsLastTransitionMode() ?
-				currentLanguage->call_replay_mode_last : currentLanguage->call_replay_mode_all), FONT_SIZE_3);
-		// Навмисно ASCII ("/", "s"), не кирилиця -- check_string_encoding.py дозволяє
-		// кирилицю лише в languages/*_ua.h, а не в .c (обґрунтування -- сам скрипт).
-		snprintf(buffer, SCREEN_LINE_BUFFER_SIZE, "%lu/%lus", (unsigned long)playedS, (unsigned long)totalS);
-		displayPrintCentered(64, buffer, FONT_SIZE_4);
-	}
 	else
 	{
 		// Округлення вгору -- "0s" для непорожнього буфера виглядало б як помилка.
@@ -158,7 +170,12 @@ static void updateScreen(bool forceRedraw)
 	displayRender();
 }
 
-static void handleEvent(uiEvent_t *ev)
+/* Повертає true, якщо цей виклик УЖЕ вивів нас з екрана "Переслухати"
+ * (menuSystemPopPreviousMenu() всередині KEY_RED -- новий поточний екран,
+ * VFO/канал/меню, уже намальований і штовхнутий на LCD, дивись
+ * menuSystemPushMenuFirstRun()). Викликач (menuCallReplay()) у цьому випадку
+ * має одразу вийти, не чіпаючи екран далі -- задача 2026-09-20. */
+static bool handleEvent(uiEvent_t *ev)
 {
 	if (KEYCHECK_SHORTUP(ev->keys, KEY_RED))
 	{
@@ -166,7 +183,7 @@ static void handleEvent(uiEvent_t *ev)
 		// одним натисканням (п. "Переривати відтворення: ... будь-яка кнопка виходу").
 		callReplayStop();
 		menuSystemPopPreviousMenu();
-		return;
+		return true;
 	}
 
 	// LEFT/RIGHT -- перемкнути обраний режим для наступного старту (задача
@@ -179,7 +196,7 @@ static void handleEvent(uiEvent_t *ev)
 	{
 		selectedLastTransitionMode = !selectedLastTransitionMode;
 		updateScreen(true);
-		return;
+		return false;
 	}
 
 	if (KEYCHECK_SHORTUP(ev->keys, KEY_GREEN))
@@ -208,8 +225,20 @@ static void handleEvent(uiEvent_t *ev)
 			(void)callReplayStart(); // false лише якщо зараз прийом/передача -- тоді просто нічого не станеться
 		}
 
+		// Форк: якщо цей GREEN щойно СТАРТУВАВ відтворення -- картка
+		// (uiNotificationShow(..., true) усередині callReplayStartAt()) уже
+		// показана й уже владіє екраном, тож updateScreen(true) тут одразу
+		// повертається без малювання (callReplayIsPlaying()==true, дивись
+		// updateScreen() вище) -- не зайвий виклик, а дешевий no-op. Якщо
+		// натомість ЗУПИНИВ (перша гілка вище) -- callReplayStop() уже встиг
+		// через uiNotificationHide(true) перемалювати цей самий екран
+		// (ми й далі на "Переслухати", RED сюди не доходить), тож цей виклик
+		// повторює те саме малювання -- не баг, лише один зайвий кадр раз на
+		// натискання, не щотіку.
 		updateScreen(true);
 	}
+
+	return false;
 }
 
 #endif // ENABLE_CALL_REPLAY

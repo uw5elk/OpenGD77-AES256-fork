@@ -26,10 +26,23 @@
 #include "functions/voicePrompts.h"   /* voicePromptsIsPlaying() -- не зривати чужий звук */
 #include "functions/rxPowerSaving.h"  /* rxPowerSavingSetState(ECOPHASE_POWERSAVE_INACTIVE) -- фікс хлопків, дивись callReplayStart() */
 #include "functions/settings.h"       /* nonVolatileSettings.dmrRxAGC */
+#include "functions/ticks.h"          /* ticksGetMillis() -- дросель картки, дивись CALL_REPLAY_NOTIFICATION_REFRESH_MS */
 #include "hardware/radioHardwareInterface.h" /* RADIO_DEVICE_PRIMARY, radioSetAudioPath */
 #include "functions/codeplug.h"       /* codeplugGetOpenGD77CustomDataBounded/SetOpenGD77CustomData --
                                         * персистентність перемикача "Запис RX", дивись callReplayConfigLoad() */
+#include "user_interface/menuSystem.h" /* uiNotificationShow/Hide/IsVisible/GetId + NOTIFICATION_*_CALL_REPLAY --
+                                         * картка відтворення (задача 2026-09-20), той самий шлях, що вже
+                                         * використовує functions/dmr_sms.c для банера SMS. */
 #include <string.h>                   /* memcmp/memcpy/memset для callReplayOnFlashCfg_t нижче */
+
+/* Картка "Переслухати" під час відтворення (задача 2026-09-20, варіант A з макета) --
+ * висить ДО КІНЦЯ відтворення (uiNotificationHasTimedOut() має спеціальний випадок для
+ * NOTIFICATION_TYPE_CALL_REPLAY у uiNotification.c), тож це значення ніколи фактично не
+ * спрацьовує -- лишень "про всяк випадок", як і 60000 для банера SMS (dmr_sms.c). */
+#define CALL_REPLAY_NOTIFICATION_TIMEOUT_MS   3600000U
+/* Як часто оновлювати час/смугу на картці, поки грає (задача: "приблизно раз на
+ * 250-500 мс"; НЕ щотіку -- displayLevelCard() перемальовує ввесь екран). */
+#define CALL_REPLAY_NOTIFICATION_REFRESH_MS   300U
 
 /* Повідомлення асерту -- лише для хостового компілятора (діагностика збірки, ніколи не
  * потрапляє на екран рації), тож навмисно англійською/ASCII -- check_string_encoding.py
@@ -59,12 +72,17 @@ typedef struct
 	                             // ("не перша група ЦІЄЇ сесії", а не буквально "не нульова"),
 	                             // і для played/total-ms нижче (прогрес відносно самого
 	                             // переходу, а не всього буфера).
-	bool     lastTransitionOnly; // режим "Останній перехід" -- лише для callReplayIsLastTransitionMode()
+	bool     lastTransitionOnly; // режим "Останній виклик" -- лише для callReplayIsLastTransitionMode()
 	                             // (картка екрана/сповіщення); на саму логіку відтворення в
 	                             // callReplayTick() не впливає -- той факт, що це єдиний захід
 	                             // у вікні [startIndex..total), уже гарантовано пошуком у
 	                             // callReplayFindLastOverStart() (жодного іншого isOverStart
 	                             // немає в цьому діапазоні, тож пауз і так не буде вставлено).
+	uint32_t lastNotifRefreshMs; // ticksGetMillis() останнього uiNotificationRefresh() картки
+	                             // (задача 2026-09-20) -- дросель на CALL_REPLAY_NOTIFICATION_REFRESH_MS,
+	                             // той самий ідіом віднімання, що ticksTimerHasExpired() (ticks.c):
+	                             // окреме поле, а не ticksTimer_t (8 Б), заради мінімального
+	                             // приросту CCM (лише 4 Б).
 	uint16_t pauseRemaining;    // скільки груп тиші лишилось вставити перед наступною
 	bool     boundaryHandled;   // пауза для поточної межі "over" вже вставлена
 } callReplayPlayState_t;
@@ -92,6 +110,7 @@ void callReplayPlaybackInit(void)
 	callReplayPlay.total = 0U;
 	callReplayPlay.startIndex = 0U;
 	callReplayPlay.lastTransitionOnly = false;
+	callReplayPlay.lastNotifRefreshMs = 0U;
 	callReplayPlay.pauseRemaining = 0U;
 	callReplayPlay.boundaryHandled = false;
 }
@@ -266,6 +285,19 @@ static bool callReplayStartAt(uint32_t startIndex, bool lastTransitionOnly)
 	codecInit(true);
 
 	taskEXIT_CRITICAL();
+
+	// Повноекранна картка "Переслухати" (задача 2026-09-20, варіант A) -- ПОЗА
+	// критичною секцією (displayLevelCard() штовхає повний кадр на LCD через SPI,
+	// довга операція, критичну секцію не тримаємо довше за потрібне). immediateRender=
+	// true -- картка з'являється одразу на старті, з обох джерел виклику (гаряча
+	// клавіша SK1 і меню "Переслухати", ОБИДВІ йдуть через цей спільний хелпер, тож
+	// малювати картку окремо в кожному з них не треба). lastNotifRefreshMs -- від
+	// МОМЕНТУ цього показу (він і є "перше" оновлення), щоб наступний періодичний
+	// рефреш у callReplayTick() не спрацював одразу ж повторно.
+	callReplayPlay.lastNotifRefreshMs = ticksGetMillis();
+	uiNotificationShow(NOTIFICATION_TYPE_CALL_REPLAY, NOTIFICATION_ID_CALL_REPLAY,
+			CALL_REPLAY_NOTIFICATION_TIMEOUT_MS, NULL, true);
+
 	return true;
 }
 
@@ -298,6 +330,19 @@ static void callReplayStopInternal(void)
 	soundTerminateSound();
 	codecInit(true);
 	taskEXIT_CRITICAL();
+
+	// Закрити картку "Переслухати" (задача 2026-09-20) -- ЄДИНЕ місце для ВСІХ причин
+	// зупинки (явний стоп SK1/RED, кінець буфера, переривання PTT/вхідним викликом --
+	// усі три шляхи callReplayStop()/callReplayTick() ведуть саме сюди), тож окремо
+	// ховати картку в кожному з них не треба. Перевірка ID -- про всяк випадок: якщо
+	// картку вже перекрила ІНША (наприклад, вхідне SMS), не чіпаємо її -- закриваємо
+	// ЛИШЕ якщо на екрані досі саме наша. immediateRender=true -- екран (VFO/канал/
+	// меню "Переслухати") коректно відновлюється одразу, без чекання на випадковий
+	// наступний перемальов.
+	if (uiNotificationIsVisible() && (uiNotificationGetId() == NOTIFICATION_ID_CALL_REPLAY))
+	{
+		uiNotificationHide(true);
+	}
 }
 
 void callReplayStop(void)
@@ -332,6 +377,26 @@ void callReplayTick(void)
 			callReplayStopInternal();
 		}
 		return;
+	}
+
+	// Картка "Переслухати" -- оновлюємо час/смугу приблизно раз на
+	// CALL_REPLAY_NOTIFICATION_REFRESH_MS (задача 2026-09-20), а НЕ щотіку:
+	// displayLevelCard() перемальовує ввесь екран через SPI, і робити це на кожен
+	// виклик callReplayTick() (набагато частіше за 60 мс/групу -- цей тік викликається
+	// з головного циклу, не з темпу самого відтворення) було б і зайвим навантаженням,
+	// і тим самим "повним перемальовуванням щотіку", якого задача явно просить уникати.
+	// Той самий ідіом віднімання, що ticksTimerHasExpired() (ticks.c) -- коректний і при
+	// перегортанні ticksGetMillis(). uiNotificationIsVisible()+GetId() -- захист про
+	// всяк випадок: якщо картку вже перекрила інша (наприклад, вхідне SMS), не малюємо
+	// поверх чужої -- callReplayStopInternal() однаково закриє ЛИШЕ свою, коли настане час.
+	if ((ticksGetMillis() - callReplayPlay.lastNotifRefreshMs) >= CALL_REPLAY_NOTIFICATION_REFRESH_MS)
+	{
+		callReplayPlay.lastNotifRefreshMs = ticksGetMillis();
+
+		if (uiNotificationIsVisible() && (uiNotificationGetId() == NOTIFICATION_ID_CALL_REPLAY))
+		{
+			uiNotificationRefresh();
+		}
 	}
 
 	if (voicePromptsIsPlaying() || soundMelodyIsPlaying())

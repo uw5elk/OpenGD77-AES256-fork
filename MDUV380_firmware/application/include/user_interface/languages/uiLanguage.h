@@ -355,7 +355,7 @@ typedef struct
    const char call_replay_playing[LANGUAGE_TEXTS_LENGTH];// стан "відтворюється"
    const char call_replay_disabled[LANGUAGE_TEXTS_LENGTH];// картка "Запис вимкнено" (2026-09-19, задача п.5)
    const char call_replay_record[LANGUAGE_TEXTS_LENGTH];// підпис пункту Options>Sound "Запис RX: Увімк/Вимк"
-   const char call_replay_mode_last[LANGUAGE_TEXTS_LENGTH];// режим "Останній перехід" (задача 2026-09-20) -- пункт меню й картка старту
+   const char call_replay_mode_last[LANGUAGE_TEXTS_LENGTH];// режим "Останній виклик" (перейменовано 2026-09-20 із "Останній перехід" -- та сама поведінка, грає остання передача) -- пункт меню й картка старту
    const char call_replay_mode_all[LANGUAGE_TEXTS_LENGTH];// режим "Останні ~30 с" (задача 2026-09-20) -- пункт меню й картка старту
 #endif
 #if defined(HAS_COLOURS)

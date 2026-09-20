@@ -147,6 +147,10 @@ static uiNotificationData_t notificationData =
 #endif
 #endif
 
+#if defined(ENABLE_CALL_REPLAY)
+#include "functions/callReplay.h"     /* callReplayPlayedMs/PlayTotalMs/IsLastTransitionMode -- картка нижче */
+#endif
+
 static void displayMessage(void);
 static void displaySmsFullScreen(void);
 static void displayLevelCard(const char *title, const char *valueText, int16_t pct);
@@ -179,6 +183,14 @@ void uiNotificationShow(uiNotificationType_t type, uiNotificationID_t id, uint32
 
 		case NOTIFICATION_TYPE_POWER:
 			break;
+
+#if defined(ENABLE_CALL_REPLAY)
+		case NOTIFICATION_TYPE_CALL_REPLAY:
+			// Контент -- живі callReplay* гетери, рахуються в uiNotificationRefresh()
+			// на кожному показі/оновленні; тут зберігати нічого не треба (message
+			// лишається порожнім, як і для SQUELCH/POWER/VOLUME вище).
+			break;
+#endif
 
 		case NOTIFICATION_TYPE_MESSAGE:
 		case NOTIFICATION_TYPE_SMS:
@@ -312,6 +324,37 @@ void uiNotificationRefresh(void)
 			}
 			break;
 
+#if defined(ENABLE_CALL_REPLAY)
+			case NOTIFICATION_TYPE_CALL_REPLAY:
+			{
+				// Форк (2026-09-20, задача "картка під час відтворення", варіант A з
+				// макета): та сама спільна displayLevelCard(), що й гучність/потужність/
+				// шумоподавлення вище -- жодного нового коду малювання. Заголовок --
+				// режим АКТИВНОЇ сесії ("Останній виклик"/"Останні 30 с",
+				// callReplayIsLastTransitionMode() -- та сама функція, що й картка-
+				// сповіщення на старті в callReplayPlayback.c/uiUtilities.c). Велике
+				// значення -- скільки ВЖЕ прозвучало, "m:ss" (задача: загальної
+				// тривалості НЕ показувати окремим числом -- лише в смузі прогресу
+				// нижче). Смуга -- played/total, той самий CLAMP(0..100), що й в decl
+				// displayLevelCard() (тут теж рахуємо тут, а не покладаємось лише на
+				// внутрішній clamp -- totalMs==0 (теоретично, якщо картку якимось чином
+				// покликали для НЕ активної сесії) не повинен ділити на нуль).
+				char valueText[SCREEN_LINE_BUFFER_SIZE];
+				uint32_t playedMs = callReplayPlayedMs();
+				uint32_t totalMs = callReplayPlayTotalMs();
+				uint32_t playedS = (playedMs / 1000U);
+				uint32_t mm = (playedS / 60U);
+				uint32_t ss = (playedS % 60U);
+				int16_t pct = (int16_t)((totalMs > 0U) ? (((uint64_t)playedMs * 100U) / totalMs) : 0U);
+				const char *title = (callReplayIsLastTransitionMode() ?
+						currentLanguage->call_replay_mode_last : currentLanguage->call_replay_mode_all);
+
+				snprintf(valueText, SCREEN_LINE_BUFFER_SIZE, "%lu:%02lu", (unsigned long)mm, (unsigned long)ss);
+				displayLevelCard(title, valueText, pct);
+			}
+			break;
+#endif
+
 			case NOTIFICATION_TYPE_MESSAGE:
 				displayMessage();
 				break;
@@ -427,6 +470,16 @@ bool uiNotificationHasTimedOut(void)
 	{
 		return false;
 	}
+#if defined(ENABLE_CALL_REPLAY)
+	/* Картка "Переслухати" (задача 2026-09-20): висить до кінця відтворення, а не по
+	 * таймауту -- закриває її сам callReplayStopInternal() (callReplayPlayback.c) явним
+	 * uiNotificationHide(), тим самим шляхом, що й банер SMS вище. msTimeout, переданий
+	 * у uiNotificationShow() для цього типу, свідомо великий і сюди й не має дійти. */
+	if (notificationData.visible && (notificationData.type == NOTIFICATION_TYPE_CALL_REPLAY))
+	{
+		return false;
+	}
+#endif
 	return (notificationData.visible && ticksTimerHasExpired(&notificationData.hideTimer));
 }
 

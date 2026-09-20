@@ -195,7 +195,7 @@ void callReplayRawGroupAt(uint16_t physIdx, const uint8_t **outGroup, bool *outI
 
 uint32_t callReplayFindLastOverStart(void)
 {
-	// Режим "Останній перехід" (задача 2026-09-20): треба playIndex, з якого
+	// Режим "Останній виклик" (задача 2026-09-20): треба playIndex, з якого
 	// почався НАЙНОВІШИЙ (найближчий до кінця) захід у ПОТОЧНОМУ живому вікні
 	// (0..count-1, від найстарішого до найновішого -- той самий порядок, що
 	// callReplayPlaybackGroup() вище). Шукаємо з КІНЦЯ (від найновішої групи

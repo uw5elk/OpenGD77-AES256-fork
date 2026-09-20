@@ -343,7 +343,7 @@ const stringsTable_t ukrainianLanguage =
 .call_replay_playing                       = "Відтворення", // MaxLen: 16
 .call_replay_disabled                      = "Запис вимкнено", // MaxLen: 16
 .call_replay_record                        = "Запис RX", // MaxLen: 16
-.call_replay_mode_last                      = "Останній перехід", // MaxLen: 16
+.call_replay_mode_last                      = "Останній виклик", // MaxLen: 16
 .call_replay_mode_all                       = "Останні 30 с", // MaxLen: 16
 #endif
 #if defined(HAS_COLOURS)
