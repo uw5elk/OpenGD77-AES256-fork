@@ -3796,70 +3796,109 @@ bool repeatVoicePromptOnSK1(uiEvent_t *ev)
 }
 
 #if defined(ENABLE_CALL_REPLAY)
-/* Гаряча клавіша "Переслухати" (задача 2026-09-19, п.6). Обстеження вільних
- * жестів на MD-UV390 Plus (лише SK1/SK2, жодної окремої функціональної
- * клавіші й клавіатури на цій платформі -- BUTTON_ORANGE фізично не існує
- * для PLATFORM_MDUV380, дивись buttons.c) не знайшло ЖОДНОЇ комбінації, яка
- * була б повністю вільною ПРИ БУДЬ-ЯКИХ налаштуваннях: SK2 EXTRA_LONG_DOWN --
- * Monitor mode (безумовно); SK1+SK2 утримувані разом -- reverse repeater (у
- * VFO); SK1 SHORT_UP і SK1 EXTRA_LONG_DOWN -- повтор/оголошення голосової
- * підказки, АЛЕ лише коли audioPromptMode >= AUDIO_PROMPT_MODE_VOICE_THRESHOLD
- * (дивись repeatVoicePromptOnSK1() вище -- та сама умова, той самий рядок
- * nonVolatileSettings.audioPromptMode). Коли голосові підказки вимкнені (Тиша/
- * Гудки/Без клавіш) -- SK1 SHORT_UP УЖЕ сьогодні нічого не робить на головному
- * екрані VFO/каналу (repeatVoicePromptOnSK1() поверне false і ніхто інший цей
- * жест не читає, перевірено grep-ом по uiVFOMode.c/uiChannelMode.c).
+/* Гаряча клавіша "Переслухати" (задача 2026-09-19, п.6; розширено 2026-09-20,
+ * п.2 -- режим "Останній перехід"). Обстеження вільних жестів на MD-UV390 Plus
+ * (лише SK1/SK2, жодної окремої функціональної клавіші й клавіатури на цій
+ * платформі -- BUTTON_ORANGE фізично не існує для PLATFORM_MDUV380, дивись
+ * buttons.c) не знайшло ЖОДНОЇ комбінації, яка була б повністю вільною ПРИ
+ * БУДЬ-ЯКИХ налаштуваннях: SK2 EXTRA_LONG_DOWN -- Monitor mode (безумовно);
+ * SK1+SK2 утримувані разом -- reverse repeater (у VFO); SK1 SHORT_UP і SK1
+ * EXTRA_LONG_DOWN -- повтор/оголошення голосової підказки, АЛЕ лише коли
+ * audioPromptMode >= AUDIO_PROMPT_MODE_VOICE_THRESHOLD (дивись
+ * repeatVoicePromptOnSK1()/rebuildVoicePromptOnExtraLongSK1() вище -- та сама
+ * умова, той самий рядок nonVolatileSettings.audioPromptMode; ПЕРЕВІРЕНО
+ * повторно 2026-09-20 для EXTRA_LONG_DOWN -- rebuildVoicePromptOnExtraLongSK1()
+ * має ідентичний гейт і повертає false, нічого не роблячи, коли підказки
+ * вимкнено, точнісінько як repeatVoicePromptOnSK1() для SHORT_UP). Коли
+ * голосові підказки вимкнені (Тиша/Гудки/Без клавіш) -- ОБИДВА жести УЖЕ
+ * сьогодні нічого не роблять на головному екрані VFO/каналу (обидві функції
+ * повернуть false і ніхто інший ці жести не читає, перевірено grep-ом по
+ * uiVFOMode.c/uiChannelMode.c).
  *
- * РІШЕННЯ: той самий жест (SK1 SHORT_UP), АЛЕ лише в тому самому "порожньому"
- * режимі (audioPromptMode < VOICE_THRESHOLD) -- НУЛЬОВА зміна поведінки для
- * типової (голосові підказки увімкнені за замовчуванням) конфігурації: там
- * SK1 як і раніше повторює підказку, ця гілка навіть не викликається (дивись
- * порядок виклику в uiVFOMode.c/uiChannelMode.c -- rebuildVoicePromptOnExtraLongSK1()
- * і repeatVoicePromptOnSK1() йдуть ПЕРШИМИ й "з'їдають" подію, коли підказки
+ * РІШЕННЯ: ті самі два жести (SK1 SHORT_UP і SK1 EXTRA_LONG_DOWN), АЛЕ лише в
+ * тому самому "порожньому" режимі (audioPromptMode < VOICE_THRESHOLD) --
+ * НУЛЬОВА зміна поведінки для типової (голосові підказки увімкнені за
+ * замовчуванням) конфігурації: там SK1 як і раніше повторює/оголошує підказку,
+ * ця гілка навіть не викликається (дивись порядок виклику в
+ * uiVFOMode.c/uiChannelMode.c -- rebuildVoicePromptOnExtraLongSK1() і
+ * repeatVoicePromptOnSK1() йдуть ПЕРШИМИ й "з'їдають" подію, коли підказки
  * увімкнено). Для тих, хто свідомо вимкнув голосові підказки (типова
- * альтернативна конфігурація серед операторів) -- це перший коротким
- * натисканням доступний перемикач старт/стоп з головного екрана, без заходу в
- * меню, як просить задача.
+ * альтернативна конфігурація серед операторів) -- це перший доступний з
+ * головного екрана перемикач, без заходу в меню, як просить задача:
+ *   - коротке SK1  -> "Останній перехід" (callReplayStartLastTransition());
+ *   - довге SK1    -> "Останні ~30 с" (callReplayStart()), той самий жест, що
+ *                      й EXTRA_LONG_DOWN для оголошення підказки -- симетрично
+ *                      з тим, що коротке SK1 сьогодні вже займає повтор;
+ *   - БУДЬ-ЯКЕ з двох натискань SK1 під час відтворення -- стоп (задача,
+ *     п.2: "будь-яке натискання SK1 під час відтворення -- стоп"), незалежно
+ *     від того, який режим зараз грає.
  *
  * Альтернативи, розглянуті й відхилені: SK2 EXTRA_LONG_DOWN (Monitor mode
  * активний БЕЗУМОВНО для всіх користувачів -- реальна регресія для функції,
- * якою активно користуються); SK1 EXTRA_LONG_DOWN (той самий принцип, що
- * нижче, спрацював би так само безпечно, але коротке натискання ергономічніше
- * для play/stop, який може знадобитися повторно й швидко); чорд SK1+SK2 --
- * той самий фізичний жест уже означає reverse repeater у VFO (утримання, а не
- * дискретне натискання) -- конфлікт саме там, де тест I17 вимагає "нічого не
- * зламано"; новий жест (подвійний клік) -- у прошивці немає механізму
- * розпізнавання цього жесту, нова, неперевірена на залізі логіка. */
+ * якою активно користуються); чорд SK1+SK2 -- той самий фізичний жест уже
+ * означає reverse repeater у VFO (утримання, а не дискретне натискання) --
+ * конфлікт саме там, де тест I17 вимагає "нічого не зламано"; новий жест
+ * (подвійний клік) -- у прошивці немає механізму розпізнавання цього жесту,
+ * нова, неперевірена на залізі логіка. */
 bool callReplayToggleOnSK1(uiEvent_t *ev)
 {
-	if (BUTTONCHECK_SHORTUP(ev, BUTTON_SK1) && (BUTTONCHECK_DOWN(ev, BUTTON_SK2) == 0) && (ev->keys.key == 0))
-	{
-		if (nonVolatileSettings.audioPromptMode < AUDIO_PROMPT_MODE_VOICE_THRESHOLD)
-		{
-			if (callReplayIsPlaying())
-			{
-				callReplayStop();
-			}
-			else if (callReplayIsRecordingEnabled() == false)
-			{
-				uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 2000, currentLanguage->call_replay_disabled, true);
-			}
-			else if (callReplayIsEmpty())
-			{
-				uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 2000, currentLanguage->call_replay_empty, true);
-			}
-			else if (callReplayStart())
-			{
-				// Коротка картка на старті -- зрозуміло, що відтворення почалось
-				// (задача, п.6), той самий стиль, що повідомлення нижче.
-				uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 2000, currentLanguage->call_replay_playing, true);
-			}
+	bool isShort = (BUTTONCHECK_SHORTUP(ev, BUTTON_SK1) && (BUTTONCHECK_DOWN(ev, BUTTON_SK2) == 0) && (ev->keys.key == 0));
+	// Той самий додатковий вираз, що й у rebuildVoicePromptOnExtraLongSK1() вище
+	// -- уникає хибного спрацювання, коли це насправді "SK2 усе ще тримають,
+	// SK1 щойно відпустили" (той самий фізичний edge-кейс, що й для оголошення
+	// підказки, тут той самий гейт audioPromptMode робить це чисто теоретичним,
+	// але лишаємо ідентичну умову заради узгодженості жестів).
+	bool isLong = (BUTTONCHECK_EXTRALONGDOWN(ev, BUTTON_SK1) && (BUTTONCHECK_DOWN(ev, BUTTON_SK2) == 0) &&
+			(BUTTONCHECK_SHORTUP(ev, BUTTON_SK2) == 0) && (ev->keys.key == 0));
 
-			return true;
+	if (!isShort && !isLong)
+	{
+		return false;
+	}
+
+	if (nonVolatileSettings.audioPromptMode >= AUDIO_PROMPT_MODE_VOICE_THRESHOLD)
+	{
+		return false; // голосові підказки увімкнені -- ця гілка не наша (дивись коментар вище)
+	}
+
+	if (callReplayIsPlaying())
+	{
+		// "Будь-яке натискання SK1 під час відтворення -- стоп" (задача 2026-09-20,
+		// п.2) -- незалежно від isShort/isLong і від того, який режим зараз грає.
+		callReplayStop();
+		return true;
+	}
+
+	if (callReplayIsRecordingEnabled() == false)
+	{
+		uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 2000, currentLanguage->call_replay_disabled, true);
+		return true;
+	}
+
+	if (callReplayIsEmpty())
+	{
+		uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 2000, currentLanguage->call_replay_empty, true);
+		return true;
+	}
+
+	if (isShort)
+	{
+		if (callReplayStartLastTransition())
+		{
+			// Коротка картка на старті -- який саме режим грає (задача, п.2:
+			// "Картка на старті показує, який режим грає").
+			uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 2000, currentLanguage->call_replay_mode_last, true);
+		}
+	}
+	else
+	{
+		if (callReplayStart())
+		{
+			uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 2000, currentLanguage->call_replay_mode_all, true);
 		}
 	}
 
-	return false;
+	return true;
 }
 #endif // ENABLE_CALL_REPLAY
 

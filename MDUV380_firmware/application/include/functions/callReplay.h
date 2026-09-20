@@ -114,6 +114,16 @@ uint32_t callReplayAvailableMs(void);
  * playIndex >= поточного count. */
 bool     callReplayPlaybackGroup(uint32_t playIndex, const uint8_t **outGroup, bool *outIsOverStart);
 
+/* Режим "Останній перехід" (задача 2026-09-20). Чиста функція (той самий клас, що
+ * callReplayPlaybackGroup() вище) -- шукає playIndex, з якого почався НАЙНОВІШИЙ
+ * (найближчий до кінця) захід у поточному живому вікні кільця. Якщо жодного початку
+ * заходу в живому вікні немає (єдиний захід довший за все кільце, справжній початок
+ * уже витіснено) -- повертає 0, тобто "почати з найстарішої ЖИВОЇ групи", рівно
+ * поведінка, якої вимагає задача ("грати все, що є"). На порожньому буфері (count==0)
+ * теж повертає 0 -- викликач (callReplayStartLastTransition() нижче) зобов'язаний
+ * спершу перевірити callReplayIsEmpty(), як і для звичайного callReplayStart(). */
+uint32_t callReplayFindLastOverStart(void);
+
 /* ВНУТРІШНЄ API для callReplayPlayback.c (окремий .c, апаратний рушій відтворення --
  * НЕ бере участі в хостовому тесті кільцевої логіки). Публічне лише тому, що обидва
  * файли компілюються окремо; ззовні модуля викликати немає сенсу.
@@ -132,13 +142,25 @@ void     callReplayRawGroupAt(uint16_t physIdx, const uint8_t **outGroup, bool *
  * Реалізація -- functions/callReplayPlayback.c, окремо від чистого кільця вище
  * (щоб хостовий тест кільцевої логіки не тягнув codec/sound/trx/FreeRTOS). */
 void     callReplayTick(void);
-/* false -- буфер порожній АБО зараз іде прийом/передача (не стартувало). */
+/* false -- буфер порожній АБО зараз іде прийом/передача (не стартувало). Режим
+ * "Останні ~30 с" -- відтворення від найстарішої живої групи (startIndex=0). */
 bool     callReplayStart(void);
+/* Режим "Останній перехід" (задача 2026-09-20): те саме, що callReplayStart(),
+ * але стартовий playIndex -- callReplayFindLastOverStart() замість 0, і пауз
+ * між заходами не вставляється (захід один). false -- ті самі причини, що й
+ * callReplayStart() (порожній буфер / зайнятий ефір). */
+bool     callReplayStartLastTransition(void);
 void     callReplayStop(void);
 bool     callReplayIsPlaying(void);
+/* Який режим грає ЗАРАЗ (для картки екрана/сповіщення) -- false, якщо взагалі
+ * не активне відтворення (не лише "останні 30 с"), як і решта Is*-гетерів тут. */
+bool     callReplayIsLastTransitionMode(void);
 /* Для екрана "Переслухати" -- прогрес поточного відтворення (0, якщо не активне).
- * total -- ЗНІМОК довжини буфера на момент callReplayStart(), не поточний
- * callReplayAvailableMs() (буфер міг дописатись під час відтворення). */
+ * total -- ЗНІМОК довжини буфера на момент старту, не поточний
+ * callReplayAvailableMs() (буфер міг дописатись під час відтворення). Обидва
+ * значення ВІДНОСНІ до стартового playIndex цієї сесії (0 для "усі ~30 с",
+ * callReplayFindLastOverStart() для "останній перехід") -- у режимі "останній
+ * перехід" прогрес і повна довжина показують лише сам перехід, а не весь буфер. */
 uint32_t callReplayPlayedMs(void);
 uint32_t callReplayPlayTotalMs(void);
 
@@ -156,12 +178,15 @@ static inline uint32_t callReplayGroupCount(void) { return 0U; }
 static inline bool     callReplayIsEmpty(void) { return true; }
 static inline uint32_t callReplayAvailableMs(void) { return 0U; }
 static inline bool     callReplayPlaybackGroup(uint32_t i, const uint8_t **g, bool *b) { (void)i; (void)g; (void)b; return false; }
+static inline uint32_t callReplayFindLastOverStart(void) { return 0U; }
 static inline uint16_t callReplayOldestPhysIndex(void) { return 0U; }
 static inline void     callReplayRawGroupAt(uint16_t i, const uint8_t **g, bool *b) { (void)i; (void)g; (void)b; }
 static inline void     callReplayTick(void) { }
 static inline bool     callReplayStart(void) { return false; }
+static inline bool     callReplayStartLastTransition(void) { return false; }
 static inline void     callReplayStop(void) { }
 static inline bool     callReplayIsPlaying(void) { return false; }
+static inline bool     callReplayIsLastTransitionMode(void) { return false; }
 static inline uint32_t callReplayPlayedMs(void) { return 0U; }
 static inline uint32_t callReplayPlayTotalMs(void) { return 0U; }
 #endif

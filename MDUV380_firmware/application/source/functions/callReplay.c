@@ -193,4 +193,48 @@ void callReplayRawGroupAt(uint16_t physIdx, const uint8_t **outGroup, bool *outI
 	*outIsOverStart = callReplayBitGet(callReplayOverBit, phys);
 }
 
+uint32_t callReplayFindLastOverStart(void)
+{
+	// Режим "Останній перехід" (задача 2026-09-20): треба playIndex, з якого
+	// почався НАЙНОВІШИЙ (найближчий до кінця) захід у ПОТОЧНОМУ живому вікні
+	// (0..count-1, від найстарішого до найновішого -- той самий порядок, що
+	// callReplayPlaybackGroup() вище). Шукаємо з КІНЦЯ (від найновішої групи
+	// до найстарішої), перша знайдена group з isOverStart==true -- то й є
+	// початок останнього заходу.
+	//
+	// Якщо isOverStart==true НЕ знайдено НІДЕ в живому вікні -- це означає, що
+	// єдиний (і водночас останній) захід у вікні довший за саме кільце, а його
+	// СПРАВЖНІЙ початок уже витіснено новими записами (перезаписана фізична
+	// позиція давно отримала НОВИЙ isOverStart-статус для НОВІШОЇ групи, що
+	// туди лягла). У такому разі playIndex 0 (найстаріша ЖИВА група) -- це й
+	// є "усе, що лишилось" від того заходу -- рівно поведінка, якої вимагає
+	// задача ("грати все, що є, від найстарішого"). Порожній буфер (count==0)
+	// -- окремо, повертаємо 0 (викликач зобов'язаний спершу перевірити
+	// callReplayIsEmpty(), як і для звичайного старту).
+	uint32_t count = callReplayCap.count;
+
+	if (count == 0U)
+	{
+		return 0U;
+	}
+
+	for (uint32_t i = count; i > 0U; i--)
+	{
+		uint32_t playIndex = i - 1U;
+		const uint8_t *group;
+		bool isOverStart;
+
+		// playIndex < count завжди тут -- callReplayPlaybackGroup() не може
+		// повернути false у цьому циклі.
+		(void)callReplayPlaybackGroup(playIndex, &group, &isOverStart);
+
+		if (isOverStart)
+		{
+			return playIndex;
+		}
+	}
+
+	return 0U; // жодного початку заходу в живому вікні -- дивись коментар вище
+}
+
 #endif // ENABLE_CALL_REPLAY

@@ -52,6 +52,19 @@ typedef struct
 	uint16_t startPhys;        // фізичний індекс НАЙСТАРІШОЇ групи -- заморожено на старті
 	uint32_t index;             // зсув від startPhys, 0..total-1
 	uint32_t total;              // знімок count на момент старту (буфер міг дописатись ПІД ЧАС відтворення -- ми в те вікно більше не заглядаємо, дивись коментар у callReplayTick())
+	uint32_t startIndex;         // playIndex, з якого ПОЧАЛАСЬ ця сесія відтворення (задача
+	                             // 2026-09-20): 0 для "усі ~30 с", callReplayFindLastOverStart()
+	                             // для "останній перехід". Потрібен ОКРЕМО від index (яке
+	                             // рухається вперед) -- і для правила паузи в callReplayTick()
+	                             // ("не перша група ЦІЄЇ сесії", а не буквально "не нульова"),
+	                             // і для played/total-ms нижче (прогрес відносно самого
+	                             // переходу, а не всього буфера).
+	bool     lastTransitionOnly; // режим "Останній перехід" -- лише для callReplayIsLastTransitionMode()
+	                             // (картка екрана/сповіщення); на саму логіку відтворення в
+	                             // callReplayTick() не впливає -- той факт, що це єдиний захід
+	                             // у вікні [startIndex..total), уже гарантовано пошуком у
+	                             // callReplayFindLastOverStart() (жодного іншого isOverStart
+	                             // немає в цьому діапазоні, тож пауз і так не буде вставлено).
 	uint16_t pauseRemaining;    // скільки груп тиші лишилось вставити перед наступною
 	bool     boundaryHandled;   // пауза для поточної межі "over" вже вставлена
 } callReplayPlayState_t;
@@ -77,6 +90,8 @@ void callReplayPlaybackInit(void)
 	callReplayPlay.startPhys = 0U;
 	callReplayPlay.index = 0U;
 	callReplayPlay.total = 0U;
+	callReplayPlay.startIndex = 0U;
+	callReplayPlay.lastTransitionOnly = false;
 	callReplayPlay.pauseRemaining = 0U;
 	callReplayPlay.boundaryHandled = false;
 }
@@ -160,14 +175,22 @@ bool callReplayIsPlaying(void)
 	return callReplayPlay.active;
 }
 
+bool callReplayIsLastTransitionMode(void)
+{
+	return (callReplayPlay.active && callReplayPlay.lastTransitionOnly);
+}
+
 uint32_t callReplayPlayedMs(void)
 {
-	return (callReplayPlay.active ? (callReplayPlay.index * 60U) : 0U);
+	// Відносно startIndex ЦІЄЇ сесії (задача 2026-09-20) -- у режимі "останній
+	// перехід" прогрес показує сам перехід, а не позицію в усьому буфері;
+	// у режимі "усі ~30 с" startIndex==0, тож поведінка не змінюється.
+	return (callReplayPlay.active ? ((callReplayPlay.index - callReplayPlay.startIndex) * 60U) : 0U);
 }
 
 uint32_t callReplayPlayTotalMs(void)
 {
-	return (callReplayPlay.active ? (callReplayPlay.total * 60U) : 0U);
+	return (callReplayPlay.active ? ((callReplayPlay.total - callReplayPlay.startIndex) * 60U) : 0U);
 }
 
 static bool callReplayBusyOnAir(void)
@@ -175,7 +198,12 @@ static bool callReplayBusyOnAir(void)
 	return (trxTransmissionEnabled || trxIsTransmitting || trxCarrierDetected(RADIO_DEVICE_PRIMARY));
 }
 
-bool callReplayStart(void)
+/* Спільна частина callReplayStart()/callReplayStartLastTransition() (задача
+ * 2026-09-20): УСЕ, що не залежить від того, ЯКИЙ playIndex -- стартовий --
+ * перевірки готовності, побудка з еко-режиму, скидання АРУ, підготовка
+ * аудіотракту. Різниця між двома режимами -- ЛИШЕ startIndex/index (0 vs.
+ * знайдений початок останнього заходу) і lastTransitionOnly-прапорець. */
+static bool callReplayStartAt(uint32_t startIndex, bool lastTransitionOnly)
 {
 	if (callReplayPlay.active)
 	{
@@ -222,7 +250,9 @@ bool callReplayStart(void)
 	// математично -- лишаю в TESTING.md на польову перевірку.
 	callReplayPlay.total = callReplayGroupCount();
 	callReplayPlay.startPhys = callReplayOldestPhysIndex();
-	callReplayPlay.index = 0U;
+	callReplayPlay.startIndex = startIndex;
+	callReplayPlay.index = startIndex;
+	callReplayPlay.lastTransitionOnly = lastTransitionOnly;
 	callReplayPlay.pauseRemaining = 0U;
 	callReplayPlay.boundaryHandled = false;
 	callReplayPlay.active = true;
@@ -237,6 +267,22 @@ bool callReplayStart(void)
 
 	taskEXIT_CRITICAL();
 	return true;
+}
+
+bool callReplayStart(void)
+{
+	return callReplayStartAt(0U, false);
+}
+
+bool callReplayStartLastTransition(void)
+{
+	// callReplayFindLastOverStart() -- чиста логіка в callReplay.c (хостовий тест
+	// покриває саме її); тут лише передаємо результат у спільний старт-хелпер.
+	// Порожній буфер: callReplayStartAt() сама поверне false нижче за
+	// callReplayGroupCount()==0U ще ДО використання цього значення, тож
+	// викликати callReplayFindLastOverStart() тут безпечно навіть на порожньому
+	// кільці (вона й сама повертає 0 у цьому випадку, дивись callReplay.c).
+	return callReplayStartAt(callReplayFindLastOverStart(), true);
 }
 
 static void callReplayStopInternal(void)
@@ -306,10 +352,13 @@ void callReplayTick(void)
 			phys = (uint16_t)((callReplayPlay.startPhys + callReplayPlay.index) % CALL_REPLAY_GROUPS);
 			callReplayRawGroupAt(phys, &group, &isOverStart);
 
-			if (isOverStart && (callReplayPlay.index > 0U) && (callReplayPlay.boundaryHandled == false))
+			if (isOverStart && (callReplayPlay.index > callReplayPlay.startIndex) && (callReplayPlay.boundaryHandled == false))
 			{
-				// Початок нового "заходу" (не першого в цьому відтворенні) --
-				// спершу коротка пауза, саму групу зіграємо наступного тіку.
+				// Початок нового "заходу" (не першого в ЦІЙ сесії відтворення --
+				// callReplayPlay.startIndex, а не буквально 0: задача 2026-09-20,
+				// інакше "останній перехід" (startIndex != 0) хибно отримав би
+				// зайву паузу перед самою першою зіграною групою) -- спершу
+				// коротка пауза, саму групу зіграємо наступного тіку.
 				callReplayPlay.pauseRemaining = CALL_REPLAY_OVER_PAUSE_GROUPS;
 				callReplayPlay.boundaryHandled = true;
 			}

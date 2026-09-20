@@ -342,6 +342,8 @@ const stringsTable_t englishLanguage =
 .call_replay_playing			= "Playing", // MaxLen: 16
 .call_replay_disabled			= "Recording off", // MaxLen: 16
 .call_replay_record			= "RX record", // MaxLen: 16
+.call_replay_mode_last			= "Last transition", // MaxLen: 16
+.call_replay_mode_all			= "Last 30s", // MaxLen: 16
 #endif
 #if defined(HAS_COLOURS)
 .smeter_header				= "S-meter", // MaxLen: 16 (with ':' + .on or .off)

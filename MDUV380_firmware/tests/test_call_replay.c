@@ -21,6 +21,12 @@
  *      callReplayInit(); вимкнення ОДРАЗУ спорожнює кільце (не лишає старий запис);
  *      захоплення -- НІЧОГО не пише, поки вимкнено; повторне увімкнення відновлює
  *      звичайне захоплення "з чистого аркуша".
+ *   8) callReplayFindLastOverStart() (задача 2026-09-20, режим "Останній перехід"):
+ *      порожній буфер -> 0; один перехід -> playIndex 0; кілька переходів -> playIndex
+ *      САМЕ останнього (не першого/середнього); фізичне обгортання кільця ПОСЕРЕД
+ *      останнього переходу -- пошук за ЛОГІЧНИМ playIndex не плутається з фізичним
+ *      wrap-around; останній перехід ДОВШИЙ за саму ємність кільця (справжній початок
+ *      уже витіснено) -> fallback 0 ("грати все, що є, від найстарішого").
  */
 #include <stdint.h>
 #include <stdio.h>
@@ -262,6 +268,165 @@ static void test_recording_enable_toggle(void)
 	expect("вміст -- саме кадр, записаний ПІСЛЯ повторного увімкнення", groupSeq(g) == 5U);
 }
 
+static void test_find_last_over_start(void)
+{
+	printf("8) пошук початку останнього переходу (callReplayFindLastOverStart, задача 2026-09-20):\n");
+
+	/* 8a) порожній буфер -- 0, як і задокументовано (викликач зобов'язаний сам
+	 * перевірити callReplayIsEmpty() перед стартом, ця функція лише не падає). */
+	callReplayInit();
+	expect("порожній буфер -> 0", callReplayFindLastOverStart() == 0U);
+
+	/* 8b) один-єдиний перехід -- початок останнього переходу == початок ЄДИНОГО
+	 * (playIndex 0). */
+	{
+		uint8_t buf[CALL_REPLAY_GROUP_BYTES];
+		uint32_t t = 0U;
+
+		callReplayInit();
+		for (uint32_t i = 0; i < 5U; i++)
+		{
+			makeGroup(buf, i);
+			callReplayCaptureTick(buf, false, t);
+			t += 60U;
+		}
+		expect("один перехід -> playIndex 0", callReplayFindLastOverStart() == 0U);
+	}
+
+	/* 8c) кілька переходів -- має повернути playIndex САМЕ ОСТАННЬОГО (найновішого),
+	 * а не першого чи середнього. */
+	{
+		uint8_t buf[CALL_REPLAY_GROUP_BYTES];
+		uint32_t t = 0U;
+
+		callReplayInit();
+		/* Перехід 1: playIndex 0..2 (3 групи). */
+		for (uint32_t i = 0; i < 3U; i++)
+		{
+			makeGroup(buf, i);
+			callReplayCaptureTick(buf, false, t);
+			t += 60U;
+		}
+		t += 600U; /* розрив > порогу -- новий перехід */
+		/* Перехід 2: playIndex 3..6 (4 групи). */
+		for (uint32_t i = 0; i < 4U; i++)
+		{
+			makeGroup(buf, 100U + i);
+			callReplayCaptureTick(buf, false, t);
+			t += 60U;
+		}
+		t += 600U;
+		/* Перехід 3 (останній): playIndex 7..9 (3 групи). */
+		for (uint32_t i = 0; i < 3U; i++)
+		{
+			makeGroup(buf, 200U + i);
+			callReplayCaptureTick(buf, false, t);
+			t += 60U;
+		}
+
+		expect("GroupCount() == 10 (3+4+3)", callReplayGroupCount() == 10U);
+
+		uint32_t lastStart = callReplayFindLastOverStart();
+		expect("кілька переходів -> playIndex саме ОСТАННЬОГО заходу (== 7)", lastStart == 7U);
+
+		const uint8_t *g;
+		bool overStart;
+		callReplayPlaybackGroup(lastStart, &g, &overStart);
+		expect("знайдений playIndex дійсно позначений як початок заходу", overStart == true);
+		expect("знайдений playIndex -- перша група ТРЕТЬОГО переходу (seq 200)", groupSeq(g) == 200U);
+	}
+
+	/* 8d) обгортання кільця ПОСЕРЕД останнього переходу -- заповнюємо кільце
+	 * "розігрівом" (окремий перехід, який ЦІЛКОМ витісниться), тоді короткий
+	 * перехід, тоді довгий ОСТАННІЙ перехід, що обгортає кільце (пише за
+	 * фізичний кінець масиву назад на початок), лишаючи в живому вікні лише
+	 * "хвіст" розігріву + короткий перехід + весь останній. Перевіряємо, що
+	 * пошук не плутається з фізичним wrap-around, бо ходить по ЛОГІЧНОМУ
+	 * playIndex (0..count-1), а не по фізичних індексах. */
+	{
+		uint8_t buf[CALL_REPLAY_GROUP_BYTES];
+		uint32_t t = 0U;
+		uint32_t seq = 0U;
+
+		callReplayInit();
+
+		/* "Розігрів" -- один довгий перехід трохи більший за половину кільця,
+		 * щоб після другого такого ж переходу фізичний writeIdx устиг кілька
+		 * разів пройти через кінець масиву (реальне обгортання), перш ніж
+		 * почнеться короткий і останній переходи нижче. */
+		for (uint32_t i = 0; i < (CALL_REPLAY_GROUPS + (CALL_REPLAY_GROUPS / 2U)); i++)
+		{
+			makeGroup(buf, seq++);
+			callReplayCaptureTick(buf, false, t);
+			t += 60U;
+		}
+		t += 600U; /* новий перехід -- короткий, 5 груп */
+		for (uint32_t i = 0; i < 5U; i++)
+		{
+			makeGroup(buf, seq++);
+			callReplayCaptureTick(buf, false, t);
+			t += 60U;
+		}
+		t += 600U; /* ОСТАННІЙ перехід -- довший за половину кільця, тож ГАРАНТОВАНО
+		            * обгортає фізичний масив хоч раз під час запису САМЕ ЦЬОГО переходу. */
+		uint32_t lastTransitionLen = (CALL_REPLAY_GROUPS / 2U) + 10U;
+		uint32_t lastTransitionFirstSeq = seq;
+		for (uint32_t i = 0; i < lastTransitionLen; i++)
+		{
+			makeGroup(buf, seq++);
+			callReplayCaptureTick(buf, false, t);
+			t += 60U;
+		}
+
+		expect("кільце заповнене (переповнення відбулось)", callReplayGroupCount() == CALL_REPLAY_GROUPS);
+
+		uint32_t lastStart = callReplayFindLastOverStart();
+		uint32_t expectedStart = (CALL_REPLAY_GROUPS - lastTransitionLen);
+
+		expect("обгортання ПОСЕРЕД останнього переходу -- playIndex все одно коректний",
+				lastStart == expectedStart);
+
+		const uint8_t *g;
+		bool overStart;
+		callReplayPlaybackGroup(lastStart, &g, &overStart);
+		expect("знайдена група -- дійсно позначена як початок заходу", overStart == true);
+		expect("знайдена група -- саме ПЕРША група останнього переходу", groupSeq(g) == lastTransitionFirstSeq);
+
+		/* Останній playIndex (найновіша група) -- останній записаний кадр. */
+		callReplayPlaybackGroup(CALL_REPLAY_GROUPS - 1U, &g, &overStart);
+		expect("найновіша група в живому вікні -- справді останній записаний кадр",
+				groupSeq(g) == (seq - 1U));
+	}
+
+	/* 8e) останній перехід ДОВШИЙ за саму ємність кільця -- справжній початок
+	 * заходу давно витіснено, isOverStart==true в живому вікні не знайти
+	 * ВЗАГАЛІ (перша жива група -- це вже СЕРЕДИНА того самого нескінченного
+	 * заходу, а не його початок) -- очікуємо fallback 0 ("грати все, що є"). */
+	{
+		uint8_t buf[CALL_REPLAY_GROUP_BYTES];
+		uint32_t t = 0U;
+		const uint32_t total = CALL_REPLAY_GROUPS + 50U; /* один довжелезний захід, без розривів */
+
+		callReplayInit();
+		for (uint32_t i = 0; i < total; i++)
+		{
+			makeGroup(buf, i);
+			callReplayCaptureTick(buf, false, t);
+			t += 60U; /* крок менший за поріг -- усе ОДИН захід */
+		}
+
+		expect("кільце заповнене", callReplayGroupCount() == CALL_REPLAY_GROUPS);
+		expect("перехід довший за буфер -> fallback 0 (грати все, що є)",
+				callReplayFindLastOverStart() == 0U);
+
+		const uint8_t *g;
+		bool overStart;
+		callReplayPlaybackGroup(0, &g, &overStart);
+		expect("playIndex 0 у цьому випадку -- НЕ початок заходу (справжній початок витіснено)",
+				overStart == false);
+	}
+}
+
 int main(void)
 {
 	printf("test_call_replay:\n");
@@ -272,6 +437,7 @@ int main(void)
 	test_aes_skip();
 	test_overflow_wraparound();
 	test_recording_enable_toggle();
+	test_find_last_over_start();
 
 	printf(fails ? "ПРОВАЛ (%d)\n" : "ПРОЙДЕНО\n", fails);
 	return fails ? 1 : 0;

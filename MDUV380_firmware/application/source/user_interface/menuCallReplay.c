@@ -19,6 +19,28 @@ static menuStatus_t menuCallReplayExitCode = MENU_STATUS_SUCCESS;
 static void updateScreen(bool forceRedraw);
 static void handleEvent(uiEvent_t *ev);
 
+/* Вибір режиму для НАСТУПНОГО старту з ЦЬОГО екрана (задача 2026-09-20, п.2).
+ * Файлова статична (не локальна в menuCallReplay()) -- потрібна і handleEvent()
+ * (перемикання LEFT/RIGHT, читання в GREEN), і updateScreen() (підпис на
+ * картці), а не лише самій menuCallReplay(), на відміну від m/wasPlaying нижче.
+ * НЕ скидається при вході в екран (isFirstRun) -- вибір лишається, поки рація
+ * ввімкнена, перепитувати щоразу незручно. Типове значення false ("Останні
+ * ~30 с") -- та сама поведінка, що була ЄДИНОЮ до цієї задачі, тож перший вхід
+ * у меню нічого не змінює для тих, хто ще не торкався LEFT/RIGHT.
+ *
+ * ЧОМУ LEFT/RIGHT, а не перетворення екрана на список (menuDisplayMenuList):
+ * той самий принцип, що й для вимикача "Запис RX" (він пішов у
+ * menuSoundOptions.c, а не сюди) -- тут усього ДВА взаємовиключні стани, а не
+ * список пунктів для гортання; список-меню додав би окремий екран заради
+ * одного bool і зайву навігацію (Зелена, щоб увійти в пункт, стрілки, щоб
+ * вибрати, Зелена ще раз, щоб підтвердити) там, де досить одного натискання.
+ * LEFT/RIGHT -- стандартний OpenGD77-жест "перемкнути значення на місці",
+ * яким уже користуються числові пункти меню налаштувань (та сама клавіатурна
+ * розкладка тут вільна: KEY_RED/KEY_GREEN зайняті під вихід/старт-стоп,
+ * дивись handleEvent() нижче, а KEY_LEFT/KEY_RIGHT цим екраном раніше не
+ * використовувались узагалі). */
+static bool selectedLastTransitionMode = false;
+
 menuStatus_t menuCallReplay(uiEvent_t *ev, bool isFirstRun)
 {
 	static uint32_t m = 0;
@@ -102,7 +124,13 @@ static void updateScreen(bool forceRedraw)
 		uint32_t playedS = (callReplayPlayedMs() / 1000U);
 		uint32_t totalS = ((callReplayPlayTotalMs() + 999U) / 1000U); // округлення вгору, як і нижче
 
-		displayPrintCentered(40, (char *)currentLanguage->call_replay_playing, FONT_SIZE_3);
+		// Режим АКТИВНОЇ сесії (callReplayIsLastTransitionMode()), а не поточний
+		// вибір на екрані (selectedLastTransitionMode могли встигнути перемкнути
+		// вже ПІД ЧАС відтворення -- LEFT/RIGHT нижче це ігнорує, але про всяк
+		// випадок читаємо саме те, що РЕАЛЬНО грає, задача п.2 "Картка на старті
+		// показує, який режим грає").
+		displayPrintCentered(40, (char *)(callReplayIsLastTransitionMode() ?
+				currentLanguage->call_replay_mode_last : currentLanguage->call_replay_mode_all), FONT_SIZE_3);
 		// Навмисно ASCII ("/", "s"), не кирилиця -- check_string_encoding.py дозволяє
 		// кирилицю лише в languages/*_ua.h, а не в .c (обґрунтування -- сам скрипт).
 		snprintf(buffer, SCREEN_LINE_BUFFER_SIZE, "%lu/%lus", (unsigned long)playedS, (unsigned long)totalS);
@@ -113,8 +141,18 @@ static void updateScreen(bool forceRedraw)
 		// Округлення вгору -- "0s" для непорожнього буфера виглядало б як помилка.
 		uint32_t availS = ((callReplayAvailableMs() + 999U) / 1000U);
 
+		// Обраний (LEFT/RIGHT) режим для НАСТУПНОГО старту -- окремим рядком над
+		// довжиною запису (задача, п.2: два пункти меню/вибір режиму, і видно,
+		// що саме буде грати при натисканні GREEN/коротке SK1/довге SK1). Той
+		// самий y=40/FONT_SIZE_3 + y=64/FONT_SIZE_4 макет, що й у гілці
+		// "відтворюється" вище (FONT_SIZE_3_HEIGHT=16 -> рядок на y=40 займає
+		// 40..56, FONT_SIZE_4_HEIGHT=32 -> рядок на y=64 займає 64..96, розрив
+		// 8px; старий y=52 для самого лише "Xs" тут більше не підходить --
+		// перекрився б із новим рядком режиму).
+		displayPrintCentered(40, (char *)(selectedLastTransitionMode ?
+				currentLanguage->call_replay_mode_last : currentLanguage->call_replay_mode_all), FONT_SIZE_3);
 		snprintf(buffer, SCREEN_LINE_BUFFER_SIZE, "%lus", (unsigned long)availS);
-		displayPrintCentered(52, buffer, FONT_SIZE_4);
+		displayPrintCentered(64, buffer, FONT_SIZE_4);
 	}
 
 	displayRender();
@@ -128,6 +166,19 @@ static void handleEvent(uiEvent_t *ev)
 		// одним натисканням (п. "Переривати відтворення: ... будь-яка кнопка виходу").
 		callReplayStop();
 		menuSystemPopPreviousMenu();
+		return;
+	}
+
+	// LEFT/RIGHT -- перемкнути обраний режим для наступного старту (задача
+	// 2026-09-20, п.2). Ігнорується ПІД ЧАС відтворення -- міняти вибір, поки
+	// щось уже грає, лише плутало б (те, що грає, і так завжди показує СВІЙ
+	// РЕАЛЬНИЙ режим окремо, callReplayIsLastTransitionMode() в updateScreen()
+	// вище, незалежно від цього перемикача).
+	if ((KEYCHECK_SHORTUP(ev->keys, KEY_LEFT) || KEYCHECK_SHORTUP(ev->keys, KEY_RIGHT)) &&
+			(callReplayIsPlaying() == false))
+	{
+		selectedLastTransitionMode = !selectedLastTransitionMode;
+		updateScreen(true);
 		return;
 	}
 
@@ -147,6 +198,10 @@ static void handleEvent(uiEvent_t *ev)
 		{
 			uiNotificationShow(NOTIFICATION_TYPE_MESSAGE, NOTIFICATION_ID_MESSAGE, 2000,
 					currentLanguage->call_replay_empty, true);
+		}
+		else if (selectedLastTransitionMode)
+		{
+			(void)callReplayStartLastTransition(); // false лише якщо зараз прийом/передача
 		}
 		else
 		{
